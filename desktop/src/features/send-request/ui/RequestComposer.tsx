@@ -8,7 +8,11 @@
  *
  * The row under the field takes whatever the page puts in it (`extras`): the
  * workspace a request will run in is another feature's control, and a feature
- * does not import another.
+ * does not import another. The same goes for stopping: while work runs and the
+ * field is empty, the page's `stop` control takes the send button's place, the
+ * way every chat window people already use does. The moment something is
+ * typed, sending is the action again - a new request is never blocked behind a
+ * running one.
  */
 
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
@@ -23,9 +27,11 @@ interface Props {
   disabled?: boolean;
   placeholder?: string;
   extras?: ReactNode;
+  /** Shown instead of the send button while the field is empty. */
+  stop?: ReactNode;
 }
 
-export function RequestComposer({ onSend, disabled = false, placeholder, extras }: Props) {
+export function RequestComposer({ onSend, disabled = false, placeholder, extras, stop }: Props) {
   const [text, setText] = useState("");
   const field = useRef<HTMLTextAreaElement>(null);
 
@@ -69,15 +75,19 @@ export function RequestComposer({ onSend, disabled = false, placeholder, extras 
         onKeyDown={onKeyDown}
       />
       <div className="dock-row">
-        {extras}
-        <button
-          type="submit"
-          className="send"
-          aria-label="Send"
-          disabled={disabled || text.trim().length === 0}
-        >
-          <ArrowUpIcon />
-        </button>
+        <div className="dock-extras">{extras}</div>
+        {stop && text.trim().length === 0 ? (
+          stop
+        ) : (
+          <button
+            type="submit"
+            className="send"
+            aria-label="Send"
+            disabled={disabled || text.trim().length === 0}
+          >
+            <ArrowUpIcon />
+          </button>
+        )}
       </div>
     </form>
   );

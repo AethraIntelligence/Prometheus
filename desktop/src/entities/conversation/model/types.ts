@@ -14,7 +14,23 @@ export type ObjectiveStatus =
   | "RUNNING"
   | "DONE"
   | "FAILED"
-  | "ESCALATED";
+  | "ESCALATED"
+  | "CANCELLED";
+
+/**
+ * Whether an action that needs approval is asked about, done or refused, for
+ * one request. The gate reads it in the runtime; the window only carries it.
+ */
+export type ApprovalChoice = "ASK" | "AUTO" | "DENY";
+
+/** How to go about a request, said beside it rather than inside it. */
+export interface Directions {
+  approvals: ApprovalChoice;
+  /** A catalog entry by name. Empty lets the runtime choose. */
+  model: string;
+}
+
+export const NO_DIRECTIONS: Directions = { approvals: "ASK", model: "" };
 
 /**
  * One turn: what was asked, and what came back.

@@ -34,7 +34,7 @@ import structlog
 from domain.errors import ConfigurationError, NotFoundError
 from domain.llm.catalog import ModelEntry
 from domain.llm.models import TaskKind
-from domain.providers.models import Connection
+from domain.providers.models import Connection, InstalledModels
 from domain.providers.protocols import (
     CatalogAdmin,
     ConnectionRepository,
@@ -168,12 +168,12 @@ class ProviderService:
 
     async def available_models(
         self, connection_name: str, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
-    ) -> tuple[str, ...]:
+    ) -> InstalledModels:
         """What this connection already has, where that can be asked."""
         connection = await self._require(connection_name, workspace_id)
-        if self._discover is None or not connection.base_url:
-            return ()
-        return await self._discover(connection.base_url)
+        if self._discover is None:
+            return InstalledModels()
+        return await self._discover(connection.kind, connection.base_url)
 
     async def add_model(
         self, entry: ModelEntry, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID

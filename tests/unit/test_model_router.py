@@ -168,3 +168,27 @@ def test_both_verifiers_will_not_take_the_bottom_of_a_catalog() -> None:
     for routing in (ObjectiveVerifier.routing, Verifier.routing):
         _, requirement, _ = routing()
         assert requirement.min_quality > 0.0
+
+
+def test_a_model_chosen_for_the_request_beats_the_default(router) -> None:
+    from domain.workforce.directions import Directions, given
+
+    with given(Directions(model="seeing")):
+        choice = router.select(TaskKind.EXECUTION, CapabilityRequirement(), RoutingHints())
+
+    assert choice.model == "vendor/vision"
+    assert choice.reason == "chosen for this request"
+
+
+def test_a_chosen_model_that_cannot_do_the_work_is_passed_over(router) -> None:
+    """A preference, not a requirement: the floor still filters first (ADR 0003)."""
+    from domain.workforce.directions import Directions, given
+
+    with given(Directions(model="cheap")):
+        choice = router.select(
+            TaskKind.EXECUTION,
+            CapabilityRequirement(required=frozenset({Capability.VISION})),
+            RoutingHints(),
+        )
+
+    assert choice.model == "vendor/vision"

@@ -49,7 +49,7 @@ from domain.employees.definition import EmployeeDefinition
 from domain.errors import PrometheusError
 from infrastructure.container import Container
 from infrastructure.knowledge.extraction import Extractors
-from infrastructure.llm.discovery import installed_models
+from infrastructure.llm.discovery import LocalModelDiscovery
 from infrastructure.llm.providers import KINDS
 from infrastructure.mcp.connector import cached_connector, mcp_connector
 from infrastructure.validation.approver import DeclaredApprover
@@ -376,6 +376,7 @@ def build_service(
                 runner=build_task_runner(container),
                 manager=build_manager(container),
                 tasks=container.task_repository,
+                objectives=container.objective_repository,
                 cancellations=container.cancellations,
                 approvals=waiter,
             ),
@@ -443,7 +444,7 @@ def build_providers(container: Container) -> ProviderService:
         container.catalog_repository,
         credentials=container.credential_store,
         kinds=KINDS,
-        discover=installed_models,
+        discover=LocalModelDiscovery(),
         on_change=reload,
     )
 

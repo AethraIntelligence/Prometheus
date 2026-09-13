@@ -32,6 +32,8 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
   const [open, setOpen] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(() => !narrow());
   const [heard, setHeard] = useState(0);
+  const [renamed, setRenamed] = useState(0);
+  const [section, setSection] = useState<"plugins" | undefined>(undefined);
 
   const switched = () => {
     setWorkspace((count) => count + 1);
@@ -48,6 +50,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
       <RuntimeProvider client={client} baseUrl={baseUrl}>
         <SettingsPage
           key={workspace}
+          initial={section}
           onSwitched={switched}
           onBack={() => go("work")}
         />
@@ -65,8 +68,16 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           refresh={heard}
           onSelect={(thread) => go("work", thread)}
           onNew={() => go("work", null)}
-          onSettings={() => go("settings")}
+          onSettings={(to) => {
+            setSection(to);
+            go("settings");
+          }}
           onClose={() => setRailOpen(false)}
+          onThreadChanged={(thread, change) => {
+            if (thread !== open) return;
+            if (change === "deleted") setOpen(null);
+            else setRenamed((count) => count + 1);
+          }}
         />
         <div
           className={railOpen ? "scrim on" : "scrim"}
@@ -78,6 +89,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           conversationId={open}
           onOpened={setOpen}
           onChanged={() => setHeard((count) => count + 1)}
+          refresh={renamed}
           onSwitched={switched}
           railOpen={railOpen}
           onOpenRail={() => setRailOpen(true)}

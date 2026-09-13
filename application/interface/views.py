@@ -31,7 +31,7 @@ from domain.llm.catalog import ModelEntry
 from domain.memory.models import MemoryItem
 from domain.policies.risk import at_least
 from domain.policies.rules import APPROVAL_THRESHOLD
-from domain.providers.models import Connection
+from domain.providers.models import Connection, InstalledModels
 from domain.tasks.task import Task, TaskEvent
 from domain.tools.models import ToolSpec
 from domain.tools.telemetry import ToolCallRecord
@@ -447,6 +447,24 @@ def provider_kind(kind: Any) -> dict[str, Any]:
         "label": kind.label,
         "needs_credential": kind.needs_credential,
         "default_base_url": kind.default_base_url,
+    }
+
+
+def installed_models(found: InstalledModels) -> dict[str, Any]:
+    """What a connection has, and whether the runner said so or its disk did.
+
+    `from_disk` is spelled out rather than left for the page to work out from
+    `reachable` and the list: a stopped runner with models on disk is the case
+    the window has to explain, and explaining it is not a rule the window should
+    be deriving.
+    """
+    return {
+        "models": list(found.names),
+        "supported": found.supported,
+        "reachable": found.reachable,
+        "from_disk": bool(found.names) and not found.reachable,
+        "runner": found.runner,
+        "address": found.address,
     }
 
 

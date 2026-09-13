@@ -207,3 +207,57 @@ export const PeopleIcon = (props: Props) => (
     <path d="M9.4 3a2 2 0 0 1 0 3.8M10.4 8.6c1 .4 1.7 1.5 2 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
   </svg>
 );
+
+export const ComposeIcon = (props: Props) => (
+  <svg viewBox="0 0 20 20" {...base} {...props}>
+    <path
+      d="M9.2 3.6H6a2.4 2.4 0 0 0-2.4 2.4v8A2.4 2.4 0 0 0 6 16.4h8a2.4 2.4 0 0 0 2.4-2.4v-3.2"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+    <path
+      d="M14.3 2.9a1.7 1.7 0 0 1 2.4 2.4l-6.2 6.2-3.1.7.7-3.1 6.2-6.2Z"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+export const DotsIcon = (props: Props) => (
+  <svg viewBox="0 0 16 16" {...base} {...props}>
+    <circle cx="3.4" cy="8" r="1.3" fill="currentColor" />
+    <circle cx="8" cy="8" r="1.3" fill="currentColor" />
+    <circle cx="12.6" cy="8" r="1.3" fill="currentColor" />
+  </svg>
+);
+
+export const PencilIcon = (props: Props) => (
+  <svg viewBox="0 0 16 16" {...base} {...props}>
+    <path
+      d="M10.9 2.6a1.6 1.6 0 0 1 2.3 2.3L5.6 12.5l-3 .8.8-3 7.5-7.7Z"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+export const TrashIcon = (props: Props) => (
+  <svg viewBox="0 0 16 16" {...base} {...props}>
+    <path
+      d="M2.6 4.2h10.8M6.4 4.2V2.8h3.2v1.4"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M3.9 4.2l.7 8.5a1.4 1.4 0 0 0 1.4 1.3h4a1.4 1.4 0 0 0 1.4-1.3l.7-8.5"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinejoin="round"
+    />
+  </svg>
+);

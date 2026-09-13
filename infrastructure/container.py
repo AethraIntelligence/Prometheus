@@ -259,15 +259,20 @@ class Container:
         hints: RoutingHints | None = None,
     ) -> LLM:
         """Pick a model for a piece of work and hand back a client for it."""
-        choice = self.model_router.select(
-            task_kind, requirement or CapabilityRequirement(), hints
-        )
-        # Debug, not info: clients are built when the runtime is assembled, so at
-        # info level this reads as though the work happened, and muddies a trace.
-        self.logger.debug(
-            "llm.routed", task_kind=str(task_kind), model=choice.model, reason=choice.reason
-        )
-        return self.llm_factory.for_choice(choice)
+        from infrastructure.llm.directed import DirectedLLM
+
+        def route() -> LLM:
+            choice = self.model_router.select(
+                task_kind, requirement or CapabilityRequirement(), hints
+            )
+            # Debug, not info: clients are built when the runtime is assembled,
+            # so at info level this reads as though the work happened.
+            self.logger.debug(
+                "llm.routed", task_kind=str(task_kind), model=choice.model, reason=choice.reason
+            )
+            return self.llm_factory.for_choice(choice)
+
+        return DirectedLLM(route(), route)
 
     # --- Workforce ------------------------------------------------------------
 

@@ -27,7 +27,7 @@ const KINDS = [
   },
 ];
 
-function scriptedRuntime({ withRunner = false } = {}) {
+function scriptedRuntime({ withRunner = false, stopped = false } = {}) {
   const state = {
     connections: [] as Record<string, unknown>[],
     models: [] as Record<string, unknown>[],
@@ -108,7 +108,24 @@ function scriptedRuntime({ withRunner = false } = {}) {
       });
     }
     if (path.includes("/installed")) {
-      return json({ models: withRunner ? ["a-small-model", "a-large-model"] : [] });
+      if (stopped) {
+        return json({
+          models: ["a-small-model"],
+          supported: true,
+          reachable: false,
+          from_disk: true,
+          runner: "Ollama",
+          address: "http://127.0.0.1:11434/v1",
+        });
+      }
+      return json({
+        models: withRunner ? ["a-small-model", "a-large-model"] : [],
+        supported: withRunner,
+        reachable: withRunner,
+        from_disk: false,
+        runner: withRunner ? "Ollama" : "",
+        address: withRunner ? "http://127.0.0.1:11434/v1" : "",
+      });
     }
     if (path === "/api/integrations") return json({ available: false, integrations: [] });
     if (path === "/api/tools") return json({ tools: [] });
@@ -203,6 +220,25 @@ describe("Settings → Providers", () => {
 
     const models = await screen.findByLabelText("Model");
     expect(within(models).getByText("a-small-model")).toBeInTheDocument();
+  });
+
+  it("still lists a stopped runner's models, and says it is not answering", async () => {
+    const { state, client } = scriptedRuntime({ stopped: true });
+    await show(client);
+    await addProvider("the-runner", { kind: "local" });
+    await waitFor(() => expect(state.connections).toHaveLength(1));
+
+    await userEvent.click(await screen.findByRole("button", { name: "New model" }));
+
+    const models = await screen.findByLabelText("Model");
+    expect(within(models).getByText("a-small-model")).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Ollama is not answering at http://127.0.0.1:11434/v1",
+    );
+    expect(screen.getByRole("button", { name: "Check again" })).toBeInTheDocument();
+
+    await userEvent.selectOptions(models, "a-small-model");
+    expect(screen.getByLabelText("Entry name")).toHaveValue("a-small-model");
   });
 
   it("falls back to typing where the provider cannot be asked", async () => {

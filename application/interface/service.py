@@ -216,6 +216,34 @@ class PrometheusService:
             ],
         }
 
+    async def rename_conversation(self, conversation_id: UUID, title: str) -> dict[str, Any] | None:
+        conversation = await self._d.conversations.get(conversation_id)
+        if conversation is None:
+            return None
+        renamed = conversation.renamed(title)
+        await self._d.conversations.save(renamed)
+        log.info("interface.conversation_renamed", conversation_id=str(conversation_id))
+        return views.conversation(renamed)
+
+    async def delete_conversation(self, conversation_id: UUID) -> bool:
+        """Take a thread out of the list, stopping whatever is still running in it.
+
+        The objectives are not deleted with it, for the reason a workspace's are
+        not: what was asked, what ran and what it did to the machine is history,
+        and the audit and memory that point at it must not start pointing at
+        nothing. Stopped first, because a thread that disappears while its work
+        carries on is work nobody can see or stop any more.
+        """
+        conversation = await self._d.conversations.get(conversation_id)
+        if conversation is None:
+            return False
+        for item in await self._d.objectives.for_conversation(conversation_id):
+            if not item.is_terminal:
+                await self._d.runs.cancel_objective(item.id)
+        deleted = await self._d.conversations.delete(conversation_id)
+        log.info("interface.conversation_deleted", conversation_id=str(conversation_id))
+        return deleted
+
     # --- Workspaces -----------------------------------------------------------
 
     async def list_workspaces(self) -> list[dict[str, Any]]:
@@ -380,6 +408,7 @@ class PrometheusService:
             text,
             conversation_id=conversation.id if conversation else None,
             workspace_id=request.workspace_id,
+            directions=request.directions,
         )
         log.info(
             "interface.request_submitted",
@@ -387,6 +416,8 @@ class PrometheusService:
             source=request.source.value,
             workspace_id=str(request.workspace_id),
             input_type=request.input_type.value,
+            approvals=request.directions.approvals.value,
+            model=request.directions.model or None,
             attachments=len(request.attachments),
             conversation_id=str(conversation.id) if conversation else None,
         )
@@ -594,9 +625,10 @@ class PrometheusService:
     async def remove_connection(self, name: str) -> None:
         await self._providers().remove_connection(name, await self._here())
 
-    async def list_installed_models(self, connection: str) -> list[str]:
-        """What a runner already has. Empty where it cannot be asked."""
-        return list(await self._providers().available_models(connection, await self._here()))
+    async def list_installed_models(self, connection: str) -> dict[str, Any]:
+        """What a runner already has, and whether it answered or its disk did."""
+        found = await self._providers().available_models(connection, await self._here())
+        return views.installed_models(found)
 
     async def list_models(self) -> list[dict[str, Any]]:
         providers = self._providers()

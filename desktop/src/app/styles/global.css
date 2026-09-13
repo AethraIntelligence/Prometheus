@@ -165,9 +165,30 @@ a {
 
 /* The shell draws the traffic lights over the content on macOS, so the first
    thing on the top row of whichever pane is leftmost has to start after them. */
-html[data-shell="mac"] .rail-top,
 html[data-shell="mac"] .app.rail-closed .head {
   padding-left: 80px;
+}
+
+/* On macOS the sidebar's top row *is* the traffic lights' row: the shell draws
+   them centred about 15px from the top of the window, so the collapse button
+   is centred on the same line and starts just past the green one, as the
+   system's own sidebars do. A 52px row put it a line below them. */
+html[data-shell="mac"] .rail-top {
+  height: 30px;
+  min-height: 0;
+  padding: 0 12px 0 74px;
+}
+
+html[data-shell="mac"] .rail-brand {
+  padding-top: 16px;
+}
+
+/* The same line when the sidebar is closed and the button that opens it moves
+   into the page's header: beside the lights, not centred in a taller bar. */
+html[data-shell="mac"] .app.rail-closed .head .icobtn {
+  align-self: flex-start;
+  margin-top: -1px;
+  margin-left: -6px;
 }
 
 /* ── sidebar ───────────────────────────── */
@@ -185,25 +206,27 @@ html[data-shell="mac"] .app.rail-closed .head {
 .rail-top {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 12px 8px;
+  gap: 4px;
+  padding: 10px 12px 2px;
   min-height: 52px;
 }
 
-.logo {
+.rail-brand {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.022em;
-  padding: 4px 6px;
-  flex: 1;
-  min-width: 0;
+  padding: 6px 12px 10px 18px;
 }
 
-.logo svg {
-  flex: none;
+.logo {
+  flex: 1;
+  min-width: 0;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .icobtn {
@@ -227,32 +250,40 @@ html[data-shell="mac"] .app.rail-closed .head {
   height: 17px;
 }
 
-.newbtn {
-  margin: 4px 12px 12px;
+/* The places: flat rows, an icon and a word, the way the list of threads below
+   them is drawn - a bordered button here read as a form in the middle of a list. */
+.rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 8px 6px;
+}
+
+.navrow {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 12px;
-  border-radius: 11px;
-  border: 1px solid var(--hair);
-  background: var(--bg);
-  font-size: 14px;
-  font-weight: 500;
-  transition: border-color 0.16s;
+  gap: 11px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 15px;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.14s;
 }
 
-.newbtn:hover {
-  border-color: var(--hair-2);
+.navrow:hover {
+  background: var(--hover);
 }
 
-.newbtn svg {
-  width: 14px;
-  height: 14px;
-  color: var(--grey);
+.navrow svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
 }
 
 .search {
-  margin: 0 12px 10px;
+  margin: 2px 12px 6px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -261,7 +292,7 @@ html[data-shell="mac"] .app.rail-closed .head {
   background: var(--field);
   border: 1px solid var(--hair);
   color: var(--grey-2);
-  font-size: 13.5px;
+  font-size: 14px;
 }
 
 .search svg {
@@ -277,7 +308,7 @@ html[data-shell="mac"] .app.rail-closed .head {
   outline: none;
   background: transparent;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 14px;
   padding: 0;
 }
 
@@ -289,34 +320,34 @@ html[data-shell="mac"] .app.rail-closed .head {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
-  padding: 2px 8px 12px;
+  padding: 0 8px 12px;
 }
 
 .tgroup {
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 500;
   color: var(--grey-2);
-  padding: 12px 8px 6px;
+  padding: 16px 10px 6px;
   margin: 0;
 }
 
 .tempty {
-  font-size: 13px;
-  color: var(--grey-2);
-  padding: 12px 10px;
+  font-size: 14px;
+  color: var(--placeholder);
+  padding: 2px 10px 8px;
   margin: 0;
 }
 
 .thread {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 8px 10px;
+  position: relative;
+  display: flex;
+  align-items: center;
   border-radius: 10px;
   transition: background 0.14s;
 }
 
-.thread:hover {
+.thread:hover,
+.thread.menu-open {
   background: var(--hover);
 }
 
@@ -324,23 +355,130 @@ html[data-shell="mac"] .app.rail-closed .head {
   background: var(--selected);
 }
 
+.thread-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 4px 7px 10px;
+  text-align: left;
+}
+
 .thread-title {
-  font-size: 14px;
-  font-weight: 400;
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: block;
 }
 
-.thread-meta {
+.thread-actions {
+  position: relative;
+  flex: none;
+  margin-right: 4px;
+}
+
+/* Out of the way until the row is pointed at, open or current: a column of
+   "…" down the list is noise in front of the titles people are reading. */
+.thread-more {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  color: var(--grey);
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+
+.thread:hover .thread-more,
+.thread.on .thread-more,
+.thread.menu-open .thread-more,
+.thread-more:focus-visible {
+  opacity: 1;
+}
+
+.thread-more:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.thread-more svg {
+  width: 15px;
+  height: 15px;
+}
+
+.thread.editing {
+  padding: 3px 4px;
+}
+
+.thread-rename {
+  width: 100%;
+  padding: 4px 7px;
+  border: 1px solid var(--hair-2);
+  border-radius: 8px;
+  background: var(--field);
+  font-size: 14.5px;
+  outline: none;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 164px;
+  padding: 5px;
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.3);
+}
+
+.menu button {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 3px;
-  font-size: 11.5px;
-  color: var(--grey-2);
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  text-align: left;
+}
+
+.menu button:hover {
+  background: var(--hover);
+}
+
+.menu button.danger {
+  color: var(--del);
+}
+
+.menu svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.mini.danger-fill {
+  background: var(--del);
+  color: #fff;
+}
+
+.mini.danger-fill:hover {
+  background: var(--del);
+  color: #fff;
+  opacity: 0.9;
 }
 
 .pip {
@@ -504,16 +642,24 @@ html[data-shell="mac"] .app.rail-closed .head {
 
 /* Nothing asked yet. The greeting and the field sit in the middle of the
    window rather than at the top and the bottom of an empty one - there is no
-   conversation for a docked composer to hold down. */
+   conversation for a docked composer to hold down.
+
+   Centred with auto margins, not `justify-content: center`. The two agree while
+   everything fits; when the greeting, the field and the workforce are taller
+   than the window, a centred flex column overflows upwards as far as downwards,
+   and the part above the top - the greeting and its breathing room - cannot be
+   scrolled to. Auto margins shrink to nothing instead, so the column starts at
+   the top with its padding kept. */
 .stream.blank {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  padding-top: 56px;
   padding-bottom: 26px;
 }
 
 .stream.blank .col {
   width: 100%;
+  margin-block: auto;
 }
 
 .stream.blank .greeting {
@@ -1092,8 +1238,16 @@ button.worked:hover {
   cursor: pointer;
 }
 
+.dock-extras {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
 .send {
-  margin-left: auto;
   width: 34px;
   height: 34px;
   border-radius: 50%;
@@ -1113,6 +1267,11 @@ button.worked:hover {
 .send svg {
   width: 15px;
   height: 15px;
+}
+
+.send.stop svg {
+  width: 13px;
+  height: 13px;
 }
 
 .hint {
@@ -1650,6 +1809,32 @@ article > .actions {
   color: var(--grey-2);
 }
 
+/* A list is drawn as the field beside it, not as the platform's menu button.
+   WebKit ignores the border, radius and padding above until its own appearance
+   is taken off, which left every list looking like a different application.
+   The chevron is two gradients rather than an image: the content security
+   policy allows no image the window did not ship, a data URI included. */
+.settings select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 30px;
+  line-height: 1.4;
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--grey) 50%),
+    linear-gradient(135deg, var(--grey) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 11.5px) 50%;
+  background-size: 4.5px 4.5px;
+  background-repeat: no-repeat;
+}
+
+.settings select:disabled {
+  cursor: default;
+  color: var(--grey-2);
+}
+
 .new-workspace input,
 .new-document input {
   width: 100%;
@@ -1823,6 +2008,27 @@ article > .actions {
   color: var(--grey);
   font-size: 13px;
   margin: 0 0 16px;
+}
+
+/* Why the model is a list, or is not one: under the field it is about, with the
+   one thing a person can do about it beside it. */
+.discovery {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--wait-text);
+}
+
+.discovery span {
+  flex: 1;
+  min-width: 0;
+}
+
+.discovery .mini {
+  flex: none;
 }
 
 .modal-body form {

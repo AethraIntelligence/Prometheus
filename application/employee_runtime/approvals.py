@@ -46,6 +46,8 @@ from domain.policies.rules import RuleBasedPolicyEngine
 from domain.secrets.models import redact
 from domain.tasks.task import Task, TaskStatus
 from domain.tools.protocols import RiskAssessor, Tool
+from domain.workforce import directions
+from domain.workforce.directions import ApprovalChoice
 
 log = structlog.get_logger(__name__)
 
@@ -120,6 +122,13 @@ class ApprovalGate:
             return GateOutcome(
                 allowed=False, reason=_DENIED.format(action=action, reason=decision.reason)
             )
+
+        if directions.current().approvals is ApprovalChoice.DENY:
+            # Checked before the approver, because refusing needs nobody: it is
+            # the one answer that is always the person's to give in advance.
+            reason = "this request was set to refuse anything that needs approval"
+            await self._record(task, definition, tool, action, "DENIED", reason)
+            return GateOutcome(allowed=False, reason=_DENIED.format(action=action, reason=reason))
 
         if self._service is None:
             # No configured way to ask means no way to say yes. Refusing is the

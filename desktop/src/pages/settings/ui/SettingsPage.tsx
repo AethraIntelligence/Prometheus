@@ -45,10 +45,12 @@ const SECTIONS: Section[] = [
 interface Props {
   onSwitched?: () => void;
   onBack?: () => void;
+  /** The section to open on, when the way in was a place rather than "Settings". */
+  initial?: SectionId;
 }
 
-export function SettingsPage({ onSwitched, onBack }: Props = {}) {
-  const [open, setOpen] = useState<SectionId>("workspaces");
+export function SettingsPage({ onSwitched, onBack, initial }: Props = {}) {
+  const [open, setOpen] = useState<SectionId>(initial ?? "workspaces");
   const current = SECTIONS.find((section) => section.id === open) ?? SECTIONS[0];
 
   return (

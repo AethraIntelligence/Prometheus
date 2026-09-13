@@ -200,7 +200,9 @@ def test_a_hosted_provider_offers_no_installed_list_and_that_is_not_an_error(
 
         answer = client.get("/api/providers/connections/openai-work/installed")
         assert answer.status_code == 200
-        assert answer.json() == {"models": []}
+        body = answer.json()
+        assert body["models"] == []
+        assert body["supported"] is False, "said plainly, not left for the page to infer"
 
 
 def test_work_cannot_be_sent_to_a_model_that_does_not_exist(client: TestClient) -> None:

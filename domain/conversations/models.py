@@ -50,6 +50,11 @@ class Conversation:
     def touched(self, at: datetime | None = None) -> Conversation:
         return replace(self, updated_at=at or datetime.now(UTC))
 
+    def renamed(self, title: str) -> Conversation:
+        """A name the person gave, which `titled_from` then never overwrites."""
+        text = " ".join(title.split())
+        return replace(self, title=text) if text else self
+
     def titled_from(self, request: str) -> Conversation:
         """Name an untitled thread after the first thing asked in it.
 

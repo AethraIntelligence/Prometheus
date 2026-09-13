@@ -14,6 +14,10 @@ class ConversationRepository(Protocol):
 
     async def get(self, conversation_id: UUID) -> Conversation | None: ...
 
+    async def delete(self, conversation_id: UUID) -> bool:
+        """Remove the thread. The objectives asked in it are history and stay."""
+        ...
+
     async def list_recent(
         self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
     ) -> list[Conversation]:

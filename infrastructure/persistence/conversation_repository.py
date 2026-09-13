@@ -84,6 +84,14 @@ class SqlConversationRepository:
             row = await session.get(ConversationRow, str(conversation_id))
             return _to_conversation(row) if row else None
 
+    async def delete(self, conversation_id: UUID) -> bool:
+        async with self._session() as session:
+            row = await session.get(ConversationRow, str(conversation_id))
+            if row is None:
+                return False
+            await session.delete(row)
+            return True
+
     async def list_recent(
         self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
     ) -> list[Conversation]:
@@ -109,6 +117,9 @@ class InMemoryConversationRepository:
     async def get(self, conversation_id: UUID) -> Conversation | None:
         found = self._conversations.get(conversation_id)
         return deepcopy(found) if found else None
+
+    async def delete(self, conversation_id: UUID) -> bool:
+        return self._conversations.pop(conversation_id, None) is not None
 
     async def list_recent(
         self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50

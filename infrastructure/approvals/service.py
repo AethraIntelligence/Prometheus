@@ -38,6 +38,8 @@ from uuid import UUID
 from domain.approvals.models import Approval, ApprovalRequest, ApprovalState
 from domain.approvals.protocols import ApprovalRepository
 from domain.errors import NotFoundError
+from domain.workforce import directions
+from domain.workforce.directions import ApprovalChoice
 from infrastructure.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -109,6 +111,10 @@ class LocalApprovalService:
             return ApprovalState.APPROVED, "configuration"
         if self._mode is ApprovalMode.DENY or not self._is_interactive():
             return ApprovalState.REJECTED, "no-approver"
+        # Only here, where this machine would have asked somebody: a request
+        # cannot talk a machine configured to refuse into doing the thing.
+        if directions.current().approvals is ApprovalChoice.AUTO:
+            return ApprovalState.APPROVED, "request"
         answer = self._confirmer(action.redacted())
         if not inspect.isawaitable(answer):
             # A synchronous confirmer is the terminal, and a person at a

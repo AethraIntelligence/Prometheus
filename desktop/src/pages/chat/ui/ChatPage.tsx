@@ -19,6 +19,7 @@
 import { useEffect, useRef } from "react";
 
 import { ApprovalCard } from "../../../entities/approval";
+import { DirectionChips } from "../../../features/choose-directions";
 import { ApprovalDecision } from "../../../features/decide-approval";
 import { RequestComposer } from "../../../features/send-request";
 import { StopButton } from "../../../features/stop-run";
@@ -33,6 +34,8 @@ interface Props {
   conversationId?: string | null;
   onOpened?: (conversationId: string) => void;
   onChanged?: () => void;
+  /** Changes when the open thread was changed from the list. */
+  refresh?: number;
   onSwitched?: () => void;
   railOpen?: boolean;
   onOpenRail?: () => void;
@@ -42,6 +45,7 @@ export function ChatPage({
   conversationId = null,
   onOpened,
   onChanged,
+  refresh,
   onSwitched,
   railOpen = true,
   onOpenRail,
@@ -56,11 +60,14 @@ export function ChatPage({
     trails,
     approvals,
     employees,
+    directions,
+    setDirections,
+    models,
     busy,
     send,
     stop,
     decide,
-  } = useChat(client, conversationId, { onOpened, onChanged });
+  } = useChat(client, conversationId, { onOpened, onChanged, refresh });
   const { active } = useWorkspaces(client);
 
   // Keep the newest thing in view. The stream is the page's own scroll, so a
@@ -114,7 +121,13 @@ export function ChatPage({
       <RequestComposer
         onSend={send}
         disabled={!ready}
-        extras={<WorkspaceBar onSwitched={onSwitched} />}
+        extras={
+          <>
+            <WorkspaceBar onSwitched={onSwitched} />
+            <DirectionChips directions={directions} models={models} onChange={setDirections} />
+          </>
+        }
+        stop={busy ? <StopButton onStop={stop} /> : undefined}
       />
       <p className="hint">Irreversible actions wait for you. Everything runs on this machine.</p>
     </>
@@ -127,9 +140,7 @@ export function ChatPage({
         chip={active?.name}
         railOpen={railOpen}
         onOpenRail={onOpenRail}
-      >
-        {busy && <StopButton onStop={stop} />}
-      </PageHead>
+      />
 
       {blank ? (
         <div className="stream blank">

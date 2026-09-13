@@ -46,7 +46,10 @@ from domain.approvals.protocols import ApprovalWaiter
 from domain.tasks.cancellation import Cancellations
 from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Task, TaskResult, TaskStatus
-from domain.workforce.protocols import Objective, ObjectiveResult
+from domain.workforce import directions as carried
+from domain.workforce.directions import NONE, Directions
+from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
+from domain.workforce.repository import ObjectiveRepository
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 log = structlog.get_logger(__name__)
@@ -66,12 +69,14 @@ class Runs:
         runner: TaskRunner,
         manager: PrometheusManager,
         tasks: TaskRepository,
+        objectives: ObjectiveRepository,
         cancellations: Cancellations,
         approvals: ApprovalWaiter,
     ) -> None:
         self._runner = runner
         self._manager = manager
         self._tasks = tasks
+        self._objectives_store = objectives
         self._cancellations = cancellations
         self._approvals = approvals
         self._running: dict[UUID, asyncio.Task[Task]] = {}
@@ -95,6 +100,7 @@ class Runs:
         *,
         conversation_id: UUID | None = None,
         workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
+        directions: Directions = NONE,
     ) -> Objective:
         """Record the objective, schedule Prometheus, and hand the objective back.
 
@@ -107,11 +113,18 @@ class Runs:
             request, workspace_id=workspace_id, conversation_id=conversation_id
         )
         work = asyncio.create_task(
-            self._manager.handle_objective(objective), name=f"prometheus-objective-{objective.id}"
+            self._carry(objective, directions), name=f"prometheus-objective-{objective.id}"
         )
         self._objectives[objective.id] = work
         work.add_done_callback(lambda _: self._objectives.pop(objective.id, None))
         return objective
+
+    async def _carry(self, objective: Objective, directions: Directions) -> ObjectiveResult:
+        # Set inside the coroutine rather than around `create_task`, so the
+        # directions belong to this objective's context and to every task it
+        # starts - and never to the request handler that happened to submit it.
+        with carried.given(directions):
+            return await self._manager.handle_objective(objective)
 
     def is_thinking(self, objective_id: UUID) -> bool:
         return objective_id in self._objectives
@@ -167,15 +180,37 @@ class Runs:
         outside state, only the decision about what to do next - while its tasks
         are asked to stop the cooperative way, which is what keeps whatever they
         had already done.
+
+        Then the record is closed, whether or not anything here was carrying it.
+        Cancelling the coroutine writes nothing, and an objective left behind by
+        a process that is gone has no coroutine to cancel; either way the row
+        would stay at the stage it had reached, and every interface would go on
+        showing it as work in progress for good.
         """
         work = self._objectives.get(objective_id)
         for task_id in list(self._running):
             self._cancellations.cancel(task_id, "The objective was stopped.")
             self._approvals.release(task_id)
-        if work is None:
-            return False
-        work.cancel()
-        return True
+        if work is not None:
+            work.cancel()
+            await asyncio.gather(work, return_exceptions=True)
+        await self._close(objective_id)
+        return work is not None
+
+    async def _close(self, objective_id: UUID) -> None:
+        objective = await self._objectives_store.get(objective_id)
+        if objective is None or objective.is_terminal:
+            return
+        stopped = objective.to(
+            ObjectiveStatus.CANCELLED,
+            ObjectiveResult(
+                objective_id=objective_id,
+                summary="Stopped before it was finished.",
+                status=ObjectiveStatus.CANCELLED,
+            ),
+        )
+        await self._objectives_store.save(stopped)
+        log.info("objective.cancelled", objective_id=str(objective_id))
 
     async def aclose(self) -> None:
         """Stop carrying anything, without leaving a run half-written.
@@ -184,19 +219,30 @@ class Runs:
         its own terminal state; only a run that ignores that is cancelled
         outright, and a run interrupted that way is resumable by construction.
         """
+        # Remembered before cancelling: a finished coroutine takes itself out of
+        # the map. An objective is not resumable the way a task is, so one this
+        # process was carrying is closed rather than left looking busy in every
+        # window opened after the next start.
+        carried_objectives = list(self._objectives)
         for work in self._objectives.values():
             work.cancel()
         for task_id in list(self._running):
             self._cancellations.cancel(task_id, "The interface is shutting down.")
             self._approvals.release(task_id)
         pending = [*self._running.values(), *self._objectives.values()]
-        if not pending:
-            return
-        done, still_running = await asyncio.wait(pending, timeout=SHUTDOWN_GRACE_SECONDS)
-        del done
-        for run in still_running:
-            run.cancel()
-        await asyncio.gather(*still_running, return_exceptions=True)
+        if pending:
+            done, still_running = await asyncio.wait(pending, timeout=SHUTDOWN_GRACE_SECONDS)
+            del done
+            for run in still_running:
+                run.cancel()
+            await asyncio.gather(*still_running, return_exceptions=True)
+        for objective_id in carried_objectives:
+            try:
+                await self._close(objective_id)
+            except Exception as error:  # a store already closing must not stop the shutdown
+                log.warning(
+                    "objective.not_closed", objective_id=str(objective_id), error=str(error)
+                )
 
     # --- Approvals ------------------------------------------------------------
 

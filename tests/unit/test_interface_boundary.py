@@ -55,6 +55,7 @@ class RecordingManager:
         self._objectives = objectives
         self.received: list[tuple[str, UUID | None]] = []
         self.workspaces: list[str | None] = []
+        self.directions: list = []
 
     async def receive(self, request: str, workspace_id=None, conversation_id=None) -> Objective:
         self.received.append((request, conversation_id))
@@ -68,6 +69,9 @@ class RecordingManager:
         return objective
 
     async def handle_objective(self, objective: Objective) -> ObjectiveResult:
+        from domain.workforce import directions
+
+        self.directions.append(directions.current())
         finished = objective.to(
             ObjectiveStatus.DONE,
             ObjectiveResult(
@@ -156,6 +160,7 @@ def build(
                 runner=None,  # type: ignore[arg-type]
                 manager=manager,  # type: ignore[arg-type]
                 tasks=tasks,
+                objectives=objectives,
                 cancellations=_NoCancellations(),
                 approvals=parts["waiter"],
             ),
@@ -477,3 +482,68 @@ def test_an_activity_event_says_what_it_is_without_exposing_the_runtime() -> Non
     assert shown["message"] == "fs.write"
     assert shown["step"] == 3
     assert set(shown) == {"task_id", "objective_id", "kind", "message", "step", "payload", "at"}
+
+
+# --- How a request is carried out, and stopping it -----------------------------
+
+
+async def test_what_a_request_says_about_how_reaches_the_run_that_does_it() -> None:
+    from domain.workforce import directions
+    from domain.workforce.directions import ApprovalChoice, Directions
+
+    service, parts = build()
+    chosen = Directions(approvals=ApprovalChoice.AUTO, model="balanced")
+
+    await service.submit(UserRequest(content="Sort my files", directions=chosen))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert parts["manager"].directions == [chosen]
+    assert directions.current() == directions.NONE, "carried by the run, not left behind"
+
+
+async def test_stopping_an_objective_nobody_is_carrying_closes_it() -> None:
+    """The window said "Reading your request..." through every restart.
+
+    A process that died took the coroutine with it, and stopping cancelled a
+    coroutine that was not there and wrote nothing - so the row stayed RECEIVED
+    and every interface went on reading it as work in progress.
+    """
+    service, parts = build()
+    left_behind = Objective.create("Sort my files")
+    await parts["objectives"].save(left_behind)
+
+    stopped = await service.cancel_objective(left_behind.id)
+
+    assert stopped is not None and stopped["stopped"] is False
+    record = await parts["objectives"].get(left_behind.id)
+    assert record.status is ObjectiveStatus.CANCELLED
+    assert record.result is not None, "an answered turn is one no interface shows as busy"
+
+
+async def test_a_thread_can_be_renamed_and_keeps_the_name() -> None:
+    service, _ = build()
+    thread = await service.create_conversation()
+
+    renamed = await service.rename_conversation(UUID(thread["id"]), "  Supplier   renewals ")
+    await service.submit(
+        UserRequest(content="What is due next month?", conversation_id=UUID(thread["id"]))
+    )
+
+    assert renamed["title"] == "Supplier renewals"
+    listed = await service.get_conversation(UUID(thread["id"]))
+    assert listed["title"] == "Supplier renewals"
+
+
+async def test_deleting_a_thread_stops_its_work_and_keeps_the_history() -> None:
+    service, parts = build()
+    thread = await service.create_conversation()
+    running = Objective.create("Sort my files", conversation_id=UUID(thread["id"]))
+    await parts["objectives"].save(running)
+
+    assert await service.delete_conversation(UUID(thread["id"])) is True
+
+    assert await service.get_conversation(UUID(thread["id"])) is None
+    kept = await parts["objectives"].get(running.id)
+    assert kept is not None and kept.status is ObjectiveStatus.CANCELLED
+    assert await service.delete_conversation(UUID(thread["id"])) is False

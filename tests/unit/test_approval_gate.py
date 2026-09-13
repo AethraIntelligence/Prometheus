@@ -255,3 +255,19 @@ async def test_the_task_stops_waiting_even_if_asking_blew_up() -> None:
 
 async def _record(seen: list[TaskStatus], value: TaskStatus) -> None:
     seen.append(value)
+
+
+# --- What the request said about asking ---------------------------------------
+
+
+async def test_a_request_set_to_refuse_is_refused_without_asking(task: Task) -> None:
+    from domain.workforce.directions import ApprovalChoice, Directions, given
+
+    service = ScriptedApprovalService.approving()
+    with given(Directions(approvals=ApprovalChoice.DENY)):
+        outcome = await ApprovalGate(service).check(
+            RiskyTool("fs.write"), {"path": "a"}, task, definition()
+        )
+
+    assert not outcome.allowed
+    assert service.requests == [], "refusing in advance needs nobody to answer"

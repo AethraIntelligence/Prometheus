@@ -13,6 +13,7 @@ const MARK: Record<ObjectiveStatus, { tone: string; label: string }> = {
   DONE: { tone: "", label: "Done" },
   FAILED: { tone: "fail", label: "Failed" },
   ESCALATED: { tone: "wait", label: "Fell short" },
+  CANCELLED: { tone: "", label: "Stopped" },
 };
 
 export function markFor(status: ObjectiveStatus | null | undefined): { tone: string; label: string } {

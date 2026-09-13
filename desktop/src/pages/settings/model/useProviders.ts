@@ -10,7 +10,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { providerApi, type ProviderSettings } from "../../../entities/provider";
+import {
+  providerApi,
+  type InstalledModels,
+  type ProviderSettings,
+} from "../../../entities/provider";
 import {
   addConnection,
   addModel,
@@ -37,7 +41,7 @@ export interface ProvidersState {
   addEntry: (submission: ModelSubmission) => Promise<void>;
   dropEntry: (name: string) => Promise<void>;
   route: (taskKind: string, entryName: string) => Promise<void>;
-  installed: (connection: string) => Promise<string[]>;
+  installed: (connection: string) => Promise<InstalledModels>;
 }
 
 export function useProviders(client: RuntimeClient): ProvidersState {

@@ -1066,6 +1066,7 @@ def _report_objective(result) -> None:
         ObjectiveStatus.DONE: "green",
         ObjectiveStatus.FAILED: "red",
         ObjectiveStatus.ESCALATED: "yellow",
+        ObjectiveStatus.CANCELLED: "yellow",
     }.get(result.status, "white")
 
     typer.echo(f"\n{result.summary}")

@@ -17,7 +17,7 @@ from domain.capabilities.models import Capability
 from domain.errors import ConfigurationError, NotFoundError
 from domain.llm.catalog import ModelEntry
 from domain.llm.models import TaskKind
-from domain.providers.models import Connection
+from domain.providers.models import Connection, InstalledModels
 from domain.secrets.models import Secret
 from domain.workspace.models import DEFAULT_WORKSPACE_ID
 
@@ -222,24 +222,22 @@ async def test_a_model_can_only_name_a_connection_that_exists() -> None:
 async def test_what_the_runner_already_has_is_offered_rather_than_typed() -> None:
     """A field where a person types a model name accepts a typo silently."""
 
-    async def discover(base_url: str) -> tuple[str, ...]:
-        assert base_url == "http://127.0.0.1:11434/v1"
-        return ("gemma4:31b-cloud", "lfm2:24b")
+    async def discover(kind: str, base_url: str) -> InstalledModels:
+        assert (kind, base_url) == ("local", "http://127.0.0.1:11434/v1")
+        return InstalledModels(("gemma4:31b-cloud", "lfm2:24b"), supported=True, reachable=True)
 
     providers, _, _, _ = service(discover=discover)
     await providers.add_connection("ollama", "local")
 
-    assert await providers.available_models("ollama") == ("gemma4:31b-cloud", "lfm2:24b")
+    found = await providers.available_models("ollama")
+    assert found.names == ("gemma4:31b-cloud", "lfm2:24b")
 
 
-async def test_a_runner_that_is_not_running_offers_nothing_rather_than_failing() -> None:
-    async def discover(base_url: str) -> tuple[str, ...]:
-        return ()
-
-    providers, _, _, _ = service(discover=discover)
+async def test_a_machine_that_cannot_discover_says_the_kind_cannot_be_asked() -> None:
+    providers, _, _, _ = service()
     await providers.add_connection("ollama", "local")
 
-    assert await providers.available_models("ollama") == ()
+    assert await providers.available_models("ollama") == InstalledModels()
 
 
 # --- Where work goes ----------------------------------------------------------

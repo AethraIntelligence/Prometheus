@@ -7,7 +7,7 @@ from uuid import UUID
 
 from domain.llm.catalog import ModelEntry
 from domain.llm.models import TaskKind
-from domain.providers.models import Connection
+from domain.providers.models import Connection, InstalledModels
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 
@@ -66,11 +66,11 @@ class CatalogAdmin(Protocol):
 
 
 class ModelDiscovery(Protocol):
-    """What a runner already has, so a person picks from a list.
+    """What a connection already has, so a person picks from a list.
 
-    A callable rather than a class in the adapters: there is one implementation
-    and it is one function, and a protocol here is what keeps the application
-    service from importing it.
+    Given the kind as well as the address, because which question to ask - and
+    whether there is one - depends on what is at the other end. Asking every
+    address the one runner's question is what this replaced.
     """
 
-    async def __call__(self, base_url: str) -> tuple[str, ...]: ...
+    async def __call__(self, kind: str, base_url: str) -> InstalledModels: ...

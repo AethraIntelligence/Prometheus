@@ -1,6 +1,7 @@
 export { providerApi } from "./api/provider-api";
 export type {
   Connection,
+  InstalledModels,
   ModelEntry,
   ProviderKind,
   ProviderSettings,

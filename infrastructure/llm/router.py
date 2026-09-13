@@ -22,6 +22,7 @@ from __future__ import annotations
 from domain.capabilities.models import CapabilityRequirement
 from domain.errors import ConfigurationError
 from domain.llm.models import ModelChoice, RoutingHints, TaskKind
+from domain.workforce import directions
 from infrastructure.llm.catalog import ModelCatalog, ModelEntry
 
 
@@ -55,6 +56,20 @@ class CapabilityAwareModelRouter:
                     else ""
                 )
             )
+
+        # The person's choice for this request, above the configured default and
+        # still below the requirements: it is looked for among the candidates,
+        # so a model that cannot do this piece of work is passed over here and
+        # the choice holds for every piece that it can.
+        chosen = directions.current().model
+        for entry in candidates:
+            if chosen and entry.name == chosen:
+                return ModelChoice(
+                    provider=entry.provider,
+                    model=entry.model,
+                    reason="chosen for this request",
+                    connection=entry.connection,
+                )
 
         preferred = self._catalog.defaults.get(task_kind)
         for entry in candidates:

@@ -36,4 +36,16 @@ describe("RequestComposer", () => {
 
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  it("puts the stop control where send is while work runs and nothing is typed", async () => {
+    const onSend = vi.fn();
+    render(<RequestComposer onSend={onSend} stop={<button type="button">Stop</button>} />);
+
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Tell Prometheus what you need"), "Next thing");
+
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
 });

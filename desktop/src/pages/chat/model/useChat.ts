@@ -17,8 +17,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { watchObjective, type ActivityEvent } from "../../../entities/activity";
 import { approvalApi, type Approval } from "../../../entities/approval";
-import { conversationApi, type Message, type Thread } from "../../../entities/conversation";
+import {
+  NO_DIRECTIONS,
+  conversationApi,
+  type Directions,
+  type Message,
+  type Thread,
+} from "../../../entities/conversation";
 import { employeeApi, type Employee } from "../../../entities/employee";
+import { providerApi, type ModelEntry } from "../../../entities/provider";
 import { decideApproval } from "../../../features/decide-approval";
 import { stopObjective } from "../../../features/stop-run";
 import type { RuntimeClient } from "../../../shared/api";
@@ -41,6 +48,11 @@ export interface ChatState {
   trails: Record<string, ActivityEvent[]>;
   approvals: Approval[];
   employees: Employee[];
+  /** What the next request will say about how to go about it. */
+  directions: Directions;
+  setDirections: (next: Directions) => void;
+  /** The models a person may prefer: the catalog's, minus what cannot hold a conversation. */
+  models: ModelEntry[];
   busy: boolean;
   send: (request: string) => Promise<void>;
   stop: () => Promise<void>;
@@ -52,6 +64,8 @@ export interface ChatHooks {
   onOpened?: (conversationId: string) => void;
   /** Something the sidebar lists changed: a request was made, or a run ended. */
   onChanged?: () => void;
+  /** Changes when the thread on screen was changed from elsewhere - renamed in the list. */
+  refresh?: number;
 }
 
 export function useChat(
@@ -65,6 +79,8 @@ export function useChat(
   const [trails, setTrails] = useState<Record<string, ActivityEvent[]>>({});
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [directions, setDirections] = useState<Directions>(NO_DIRECTIONS);
+  const [models, setModels] = useState<ModelEntry[]>([]);
   const watching = useRef<string | null>(null);
   const unwatch = useRef<(() => void) | null>(null);
   // Which thread is on screen, readable from callbacks that outlive a render: a
@@ -118,12 +134,36 @@ export function useChat(
         setReady(true);
       } catch (error) {
         if (!cancelled) fail(error);
+        return;
+      }
+      try {
+        const catalog = await providerApi.all(client);
+        if (cancelled) return;
+        // An embedding model cannot answer anybody. Which entries can is the
+        // catalog's own declaration, read rather than guessed at.
+        setModels(
+          (catalog.models ?? []).filter((entry) => entry.capabilities.includes("TEXT_REASONING")),
+        );
+      } catch {
+        // Without a list the chip is not shown and the router chooses, which is
+        // what every request did before there was a chip.
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [client, fail]);
+
+  // A new task starts from the defaults; a thread keeps what was chosen in it
+  // for as long as it is on screen.
+  useEffect(() => {
+    if (!conversationId) setDirections(NO_DIRECTIONS);
+  }, [conversationId]);
+
+  const refresh = hooks.refresh ?? 0;
+  useEffect(() => {
+    if (refresh && shown.current) void reread(shown.current);
+  }, [refresh, reread]);
 
   // The thread the frame names. Nothing is loaded for one this page opened
   // itself - it is already on screen.
@@ -209,7 +249,7 @@ export function useChat(
           told.current.onOpened?.(opened.id);
         }
         const into = current.id;
-        const message = await conversationApi.send(client, into, request);
+        const message = await conversationApi.send(client, into, request, directions);
         setThread((now) =>
           now && now.id === into ? { ...now, messages: [...now.messages, message] } : now,
         );
@@ -218,7 +258,7 @@ export function useChat(
         fail(error);
       }
     },
-    [client, thread, adopt, fail],
+    [client, thread, directions, adopt, fail],
   );
 
   const stop = useCallback(async () => {
@@ -253,6 +293,9 @@ export function useChat(
     trails,
     approvals,
     employees,
+    directions,
+    setDirections,
+    models,
     busy,
     send,
     stop,

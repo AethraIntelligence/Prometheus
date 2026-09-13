@@ -24,7 +24,17 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
+from domain.workforce.directions import NONE, ApprovalChoice, Directions
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
+
+__all__ = [
+    "ApprovalChoice",
+    "Attachment",
+    "Directions",
+    "InputType",
+    "RequestSource",
+    "UserRequest",
+]
 
 
 class RequestSource(StrEnum):
@@ -77,6 +87,10 @@ class UserRequest:
     conversation_id: UUID | None = None
     attachments: tuple[Attachment, ...] = ()
     workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    #: How to go about it - whether to ask before an action that needs approval,
+    #: and which model to prefer. Beside the text rather than inside it, so that
+    #: something other than a model reads it (`domain/workforce/directions.py`).
+    directions: Directions = NONE
     #: Anything the adapter wants kept with the request and does not want the
     #: core to interpret - a window id, a chat id, a client version.
     metadata: dict[str, Any] = field(default_factory=dict)

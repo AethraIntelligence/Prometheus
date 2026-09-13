@@ -31,12 +31,21 @@ class ObjectiveStatus(StrEnum):
     DONE = "DONE"
     FAILED = "FAILED"
     ESCALATED = "ESCALATED"
+    #: A person stopped it. Not FAILED: nothing went wrong, and a thread that
+    #: read "Failed" under every request somebody changed their mind about
+    #: would teach them the word means nothing.
+    CANCELLED = "CANCELLED"
 
 
 #: Statuses an objective cannot move out of. An objective that has been
 #: escalated is finished as far as Prometheus is concerned: it is now the user's.
 TERMINAL_OBJECTIVE_STATUSES: frozenset[ObjectiveStatus] = frozenset(
-    {ObjectiveStatus.DONE, ObjectiveStatus.FAILED, ObjectiveStatus.ESCALATED}
+    {
+        ObjectiveStatus.DONE,
+        ObjectiveStatus.FAILED,
+        ObjectiveStatus.ESCALATED,
+        ObjectiveStatus.CANCELLED,
+    }
 )
 
 

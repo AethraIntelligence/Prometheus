@@ -59,7 +59,13 @@ from app.config.container import (
 )
 from app.config.settings import Settings, get_settings
 from application.interface.activity import ActivityEvent
-from application.interface.contracts import InputType, RequestSource, UserRequest
+from application.interface.contracts import (
+    ApprovalChoice,
+    Directions,
+    InputType,
+    RequestSource,
+    UserRequest,
+)
 from application.interface.service import ApprovalsDisabledError, PrometheusService
 from application.scheduling.scheduler import Scheduler
 from domain.errors import (
@@ -117,6 +123,15 @@ class NewObjective(BaseModel):
     #: machine is working in, which is what a surface without a selector wants
     #: and what every request meant before there was more than one.
     workspace_id: str | None = None
+    #: How to go about it, as chosen under the field. Absent means ask before
+    #: anything that needs approval and let the router choose the model - what
+    #: every request meant before a window could say otherwise.
+    approvals: ApprovalChoice = ApprovalChoice.ASK
+    model: str = Field(default="", max_length=120)
+
+
+class ConversationEdit(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
 
 
 class NewConversation(BaseModel):
@@ -375,6 +390,19 @@ def _routes(app: FastAPI) -> None:
         found = await _guarded(_service(request).get_conversation(conversation_id))
         return _found(found, f"Unknown conversation: {conversation_id}")
 
+    @app.patch("/api/conversations/{conversation_id}")
+    async def rename_thread(
+        request: Request, conversation_id: UUID, body: ConversationEdit
+    ) -> dict[str, Any]:
+        found = await _guarded(_service(request).rename_conversation(conversation_id, body.title))
+        return _found(found, f"Unknown conversation: {conversation_id}")
+
+    @app.delete("/api/conversations/{conversation_id}")
+    async def delete_thread(request: Request, conversation_id: UUID) -> dict[str, Any]:
+        if not await _guarded(_service(request).delete_conversation(conversation_id)):
+            raise HTTPException(status_code=404, detail=f"Unknown conversation: {conversation_id}")
+        return {"deleted": True}
+
     @app.post("/api/conversations/{conversation_id}/messages", status_code=201)
     async def say(
         request: Request, conversation_id: UUID, body: NewObjective
@@ -541,11 +569,11 @@ def _routes(app: FastAPI) -> None:
     async def installed_models(request: Request, name: str) -> dict[str, Any]:
         """What the runner behind this connection already has.
 
-        Empty where it cannot be asked - a hosted provider, or a runner that is
-        not running - and that is a list, not an error: the page offers a text
-        field instead, and nothing about the settings stops working.
+        Never an error for a runner that is not running or a provider that
+        cannot be asked: the body says which of those it is, and the page offers
+        a text field beside the reason rather than instead of one.
         """
-        return {"models": await _settings_change(_service(request).list_installed_models(name))}
+        return await _settings_change(_service(request).list_installed_models(name))
 
     @app.post("/api/providers/models", status_code=201)
     async def add_model(request: Request, body: NewModel) -> dict[str, Any]:
@@ -738,6 +766,7 @@ async def _ask(
                     input_type=body.input_type,
                     conversation_id=conversation_id,
                     workspace_id=WorkspaceId(named),
+                    directions=Directions(approvals=body.approvals, model=body.model.strip()),
                 )
             )
         )

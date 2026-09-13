@@ -45,6 +45,25 @@ export interface ModelEntry {
   used_for: string[];
 }
 
+/**
+ * What a connection's runner has, as the core found it.
+ *
+ * `from_disk` arrives decided: a runner that is not up but whose models are on
+ * this disk is the case the form has to explain, and working it out here from
+ * the other fields would be the window deciding what the runtime meant.
+ */
+export interface InstalledModels {
+  models: string[];
+  /** Whether this kind of provider can be asked at all. False for a hosted one. */
+  supported: boolean;
+  /** Whether the runner answered just now. */
+  reachable: boolean;
+  from_disk: boolean;
+  /** Which runner answered or whose models these are, for a person to read. */
+  runner: string;
+  address: string;
+}
+
 export interface ProviderSettings {
   kinds: ProviderKind[];
   connections: Connection[];

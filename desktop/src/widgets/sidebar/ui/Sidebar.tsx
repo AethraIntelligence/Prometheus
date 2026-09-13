@@ -6,15 +6,28 @@
  * which page is up are the frame's state, told to it and told back through the
  * callbacks, so the list and the page cannot disagree about where the person is.
  *
+ * Laid out the way the chat windows people already use are: the name on its
+ * own line, a short list of places as flat rows, and the threads under a quiet
+ * heading - one line each, with their state as a dot only when there is one
+ * worth noticing. A second line of "Done" under every finished thread was a
+ * list that said the same word twenty times.
+ *
  * A thread nobody has said anything in is not listed. Those exist - a window
  * used to open one every time it started - and a list of blank rows is a list
  * that teaches a person to stop reading it.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
-import { useRuntime } from "../../../shared/api";
-import { GearIcon, LogoMark, PanelIcon, PlusIcon, SearchIcon } from "../../../shared/ui";
+import {
+  ThreadActions,
+  ThreadTitleField,
+  deleteThread,
+  renameThread,
+} from "../../../features/manage-thread";
+import { report, useRuntime } from "../../../shared/api";
+import { describe } from "../../../shared/lib";
+import { ComposeIcon, GearIcon, PanelIcon, PlugIcon, SearchIcon } from "../../../shared/ui";
 import { groupByDay, markFor } from "../model/presentation";
 import { useThreads } from "../model/useThreads";
 
@@ -25,8 +38,10 @@ interface Props {
   refresh: number;
   onSelect: (conversationId: string) => void;
   onNew: () => void;
-  onSettings: () => void;
+  onSettings: (section?: "plugins") => void;
   onClose: () => void;
+  /** A thread was renamed or deleted from the list. */
+  onThreadChanged?: (conversationId: string, change: "renamed" | "deleted") => void;
 }
 
 export function Sidebar({
@@ -37,69 +52,159 @@ export function Sidebar({
   onNew,
   onSettings,
   onClose,
+  onThreadChanged,
 }: Props) {
   const client = useRuntime();
-  const { threads, workspace, spent } = useThreads(client, refresh);
+  const [changed, setChanged] = useState(0);
+  const { threads, workspace, spent } = useThreads(client, refresh + changed);
   const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  // Shown in place of the list's answer until the list is read again, so a
+  // rename does not flicker back to the old name for one poll.
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  const [gone, setGone] = useState<Set<string>>(new Set());
+  const field = useRef<HTMLInputElement>(null);
 
   const groups = useMemo(() => {
     const wanted = search.trim().toLowerCase();
     const shown = threads
-      .filter((thread) => thread.messages > 0)
+      .filter((thread) => thread.messages > 0 && !gone.has(thread.id))
+      .map((thread) => (titles[thread.id] ? { ...thread, title: titles[thread.id] } : thread))
       .filter((thread) => !wanted || thread.title.toLowerCase().includes(wanted));
     return groupByDay(shown);
-  }, [threads, search]);
+  }, [threads, search, titles, gone]);
+
+  const openSearch = () => {
+    setSearching(true);
+    setTimeout(() => field.current?.focus(), 0);
+  };
+
+  const rename = async (id: string, title: string | null) => {
+    setRenaming(null);
+    if (!title) return;
+    setTitles((known) => ({ ...known, [id]: title }));
+    try {
+      await renameThread(client, id, title);
+      setChanged((count) => count + 1);
+      onThreadChanged?.(id, "renamed");
+    } catch (error) {
+      setTitles(({ [id]: _dropped, ...rest }) => rest);
+      void report(describe(error));
+    }
+  };
+
+  const remove = async (id: string) => {
+    try {
+      await deleteThread(client, id);
+      setGone((known) => new Set(known).add(id));
+      setChanged((count) => count + 1);
+      onThreadChanged?.(id, "deleted");
+    } catch (error) {
+      void report(describe(error));
+    }
+  };
 
   return (
     <aside className="rail" aria-label="Tasks">
       <div className="rail-top" data-tauri-drag-region>
-        <span className="logo" data-tauri-drag-region>
-          <LogoMark width={16} height={16} />
-          Prometheus
-        </span>
         <button type="button" className="icobtn" aria-label="Collapse sidebar" onClick={onClose}>
           <PanelIcon />
         </button>
       </div>
 
-      <button type="button" className="newbtn" onClick={onNew}>
-        <PlusIcon />
-        New task
-      </button>
+      <div className="rail-brand" data-tauri-drag-region>
+        <span className="logo" data-tauri-drag-region>
+          Prometheus
+        </span>
+        <button type="button" className="icobtn" aria-label="Search tasks" onClick={openSearch}>
+          <SearchIcon />
+        </button>
+      </div>
 
-      <label className="search">
-        <SearchIcon />
-        <input
-          value={search}
-          placeholder="Search tasks"
-          aria-label="Search tasks"
-          onChange={(event) => setSearch(event.target.value)}
-        />
-      </label>
+      <nav className="rail-nav" aria-label="Places">
+        <button type="button" className="navrow" onClick={onNew}>
+          <ComposeIcon />
+          New task
+        </button>
+        <button type="button" className="navrow" onClick={() => onSettings("plugins")}>
+          <PlugIcon />
+          Plugins
+        </button>
+      </nav>
+
+      {searching && (
+        <label className="search">
+          <SearchIcon />
+          <input
+            ref={field}
+            value={search}
+            placeholder="Search tasks"
+            aria-label="Search tasks"
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setSearch("");
+                setSearching(false);
+              }
+            }}
+            onBlur={() => {
+              if (!search) setSearching(false);
+            }}
+          />
+        </label>
+      )}
 
       <nav className="threads" aria-label="Threads">
         {groups.length === 0 && (
-          <p className="tempty">{search ? "Nothing by that name." : "Nothing asked here yet."}</p>
+          <>
+            <p className="tgroup">Recents</p>
+            <p className="tempty">{search ? "Nothing by that name." : "No tasks yet"}</p>
+          </>
         )}
         {groups.map((group) => (
           <div key={group.label}>
             <p className="tgroup">{group.label}</p>
             {group.threads.map((thread) => {
               const mark = markFor(thread.status);
+              const on = thread.id === selected;
+              const classes = ["thread", on && "on", menuFor === thread.id && "menu-open"]
+                .filter(Boolean)
+                .join(" ");
+              if (renaming === thread.id) {
+                return (
+                  <div key={thread.id} className={`${classes} editing`}>
+                    <ThreadTitleField
+                      initial={thread.title}
+                      onDone={(title) => void rename(thread.id, title)}
+                    />
+                  </div>
+                );
+              }
               return (
-                <button
-                  key={thread.id}
-                  type="button"
-                  className={thread.id === selected ? "thread on" : "thread"}
-                  aria-current={thread.id === selected ? "page" : undefined}
-                  onClick={() => onSelect(thread.id)}
-                >
-                  <span className="thread-title">{thread.title || "Untitled"}</span>
-                  <span className="thread-meta">
-                    <i className={`pip ${mark.tone}`} aria-hidden="true" />
-                    {mark.label}
-                  </span>
-                </button>
+                <div key={thread.id} className={classes}>
+                  <button
+                    type="button"
+                    className="thread-open"
+                    aria-current={on ? "page" : undefined}
+                    title={mark.label}
+                    onClick={() => onSelect(thread.id)}
+                    onDoubleClick={() => setRenaming(thread.id)}
+                  >
+                    <span className="thread-title">{thread.title || "Untitled"}</span>
+                    {mark.tone && (
+                      <i className={`pip ${mark.tone}`} aria-label={mark.label} role="img" />
+                    )}
+                  </button>
+                  <ThreadActions
+                    title={thread.title}
+                    open={menuFor === thread.id}
+                    onOpen={(open) => setMenuFor(open ? thread.id : null)}
+                    onRename={() => setRenaming(thread.id)}
+                    onDelete={() => remove(thread.id)}
+                  />
+                </div>
               );
             })}
           </div>
@@ -111,7 +216,7 @@ export function Sidebar({
           type="button"
           className={settingsOpen ? "acct on" : "acct"}
           aria-label="Settings"
-          onClick={onSettings}
+          onClick={() => onSettings()}
         >
           <span className="avatar" aria-hidden="true">
             {(workspace || "P").slice(0, 1).toUpperCase()}

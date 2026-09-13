@@ -117,3 +117,30 @@ async def test_only_pending_approvals_are_listed(repository) -> None:
     await service.request(request())
 
     assert await repository.list_pending() == []
+
+
+async def test_a_request_that_said_do_not_ask_is_approved_without_asking(repository) -> None:
+    from domain.workforce.directions import ApprovalChoice, Directions, given
+
+    asked = []
+    service = LocalApprovalService(
+        repository, confirmer=lambda r: asked.append(r) or False, is_interactive=lambda: True
+    )
+    action = request()
+
+    with given(Directions(approvals=ApprovalChoice.AUTO)):
+        assert await service.request(action) is ApprovalState.APPROVED
+
+    assert asked == []
+    stored = await repository.get(action.id)
+    assert stored.resolved_by == "request", "done under a standing yes, and recorded as such"
+
+
+async def test_a_request_cannot_talk_a_refusing_machine_into_it(repository) -> None:
+    """Not asking widens only what this machine would have asked a person about."""
+    from domain.workforce.directions import ApprovalChoice, Directions, given
+
+    service = LocalApprovalService(repository, mode=ApprovalMode.DENY, is_interactive=lambda: True)
+
+    with given(Directions(approvals=ApprovalChoice.AUTO)):
+        assert await service.request(request()) is ApprovalState.REJECTED

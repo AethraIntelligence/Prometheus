@@ -25,6 +25,22 @@ describe("conversationApi", () => {
       request: "Summarise these notes",
       source: "desktop",
       input_type: "text",
+      approvals: "ASK",
+      model: "",
     });
+  });
+
+  it("carries how to go about a request beside it, never inside the text", async () => {
+    const fetchMock = answering({ id: "m1" });
+
+    await conversationApi.send(new RuntimeClient(BASE), "thread-1", "Tidy the folder", {
+      approvals: "AUTO",
+      model: "balanced",
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.request).toBe("Tidy the folder");
+    expect(body.approvals).toBe("AUTO");
+    expect(body.model).toBe("balanced");
   });
 });

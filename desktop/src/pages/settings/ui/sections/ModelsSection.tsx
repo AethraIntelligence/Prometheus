@@ -177,7 +177,7 @@ export function ModelsSection() {
       {adding === "model" && (
         <Modal
           title="Add model"
-          note="Where the provider can be asked what it has, the model is a list rather than a field."
+          note="A model on this machine is picked from what its runner has; a hosted one is named as its provider names it."
           onClose={() => setAdding(null)}
         >
           <AddModelForm

@@ -69,3 +69,26 @@ class Connection:
 
     def with_secret(self, secret_name: str) -> Connection:
         return replace(self, secret_name=secret_name, updated_at=datetime.now(UTC))
+
+
+@dataclass(frozen=True, slots=True)
+class InstalledModels:
+    """What a connection can be asked it has, and how sure that answer is.
+
+    Three answers a settings page has to tell apart, and a bare list of names
+    could not: the runner answered (`reachable`), the runner is not running but
+    the models it would serve are on this disk (`reachable` false, names
+    present), and this kind of provider cannot be asked at all (`supported`
+    false). The second is the one that used to look like the third - a stopped
+    runner turned the list into an empty text field with no word about why.
+    """
+
+    names: tuple[str, ...] = ()
+    #: Whether this kind of provider can be asked what it has at all.
+    supported: bool = False
+    #: Whether the runner answered just now. False with names means read off disk.
+    reachable: bool = False
+    #: Which runner answered, or whose models were found - a label for a person.
+    runner: str = ""
+    #: The address that was asked.
+    address: str = ""

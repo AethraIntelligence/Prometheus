@@ -1,5 +1,5 @@
 import type { RuntimeClient } from "../../../shared/api";
-import type { ProviderSettings } from "../model/types";
+import type { InstalledModels, ProviderSettings } from "../model/types";
 
 export const providerApi = {
   /** Everything the settings screen shows, in one request. */
@@ -7,11 +7,21 @@ export const providerApi = {
     return client.get<ProviderSettings>("/api/providers");
   },
 
-  /** What a runner already has. Empty where it cannot be asked. */
-  async installed(client: RuntimeClient, connection: string): Promise<string[]> {
-    const body = await client.get<{ models: string[] }>(
+  /** What a runner already has, and whether it answered or only its disk did. */
+  async installed(client: RuntimeClient, connection: string): Promise<InstalledModels> {
+    const body = await client.get<Partial<InstalledModels>>(
       `/api/providers/connections/${encodeURIComponent(connection)}/installed`,
     );
-    return body.models;
+    // Filled out rather than trusted whole, as the settings body is: a runtime
+    // from before the fields existed answers with the list alone.
+    const models = body.models ?? [];
+    return {
+      models,
+      supported: body.supported ?? models.length > 0,
+      reachable: body.reachable ?? models.length > 0,
+      from_disk: body.from_disk ?? false,
+      runner: body.runner ?? "",
+      address: body.address ?? "",
+    };
   },
 };
