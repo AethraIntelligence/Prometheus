@@ -179,7 +179,7 @@ class Container:
         the window is a settings page that appears not to work.
         """
         self._catalog = catalog
-        for built in ("model_router", "llm_factory"):
+        for built in ("model_router", "llm_factory", "_embedding_client"):
             self.__dict__.pop(built, None)
 
     @cached_property
@@ -633,6 +633,13 @@ class Container:
         """
         if not self.settings.knowledge_enabled:
             return None
+        from infrastructure.llm.embeddings import RoutedEmbeddings
+
+        return RoutedEmbeddings(lambda: self._embedding_client)
+
+    @cached_property
+    def _embedding_client(self) -> EmbeddingProvider | None:
+        """The client for the model chosen now. Dropped with the catalog."""
         try:
             choice = self.model_router.select(
                 TaskKind.EMBEDDING,
@@ -652,7 +659,11 @@ class Container:
             return None
         from infrastructure.knowledge.retriever import HybridRetriever
 
-        return HybridRetriever(store, embeddings=self.embeddings)
+        return HybridRetriever(
+            store,
+            embeddings=self.embeddings,
+            min_similarity=self.settings.knowledge_min_similarity,
+        )
 
     # --- Memory -----------------------------------------------------------------
 

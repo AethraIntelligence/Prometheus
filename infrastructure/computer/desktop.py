@@ -37,8 +37,7 @@ from infrastructure.observability.logging import get_logger
 log = get_logger(__name__)
 
 INSTALL_HINT = (
-    "Desktop computer use needs its driver. Install it with: "
-    "uv sync --extra desktop"
+    "Desktop computer use needs its driver, which `uv sync` installs. Run it again: uv sync"
 )
 
 #: How long the platform waits to be told which application is in front. The

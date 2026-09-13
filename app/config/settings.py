@@ -150,6 +150,11 @@ class Settings(BaseSettings):
     #: the goal, the assignment and what was recalled is already most of what a
     #: run can carry.
     knowledge_recall_limit: int = 4
+    #: The cosine similarity below which a passage is not the answer to a
+    #: question. It depends on the embedding model: measured on bge-m3 and
+    #: nomic-embed-text here, unrelated questions reached 0.51 and relevant
+    #: ones started at 0.56. Changing the model is a reason to measure again.
+    knowledge_min_similarity: float = 0.53
 
     # --- Local interface -----------------------------------------------------
     #: The loopback address, and not configurable to anything else by accident.

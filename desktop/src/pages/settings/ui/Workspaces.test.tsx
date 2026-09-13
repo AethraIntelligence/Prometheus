@@ -37,6 +37,7 @@ function document(status: string) {
     media_type: "text/markdown",
     status,
     searchable: true,
+    needs_indexing: status !== "INDEXED",
     chunks: 3,
     size_bytes: 120,
     error: "",
@@ -199,7 +200,7 @@ describe("Settings → Documents", () => {
     ).toBeInTheDocument();
   });
 
-  it("re-indexes on request, because the model that embedded it may have changed", async () => {
+  it("re-indexes on request a document the core says is missing its vectors", async () => {
     const { state, client } = scriptedRuntime({ documents: [document("EXTRACTED")] });
     show(client);
     await goTo("Documents");

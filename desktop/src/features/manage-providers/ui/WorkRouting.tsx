@@ -5,6 +5,11 @@
  * here decides what any of them mean. Choosing "let the router decide" is a
  * real option rather than an absence: without a default the platform ranks the
  * candidates itself, which is what a fresh installation does.
+ *
+ * Each row offers the models that can do that kind of work, read off the two
+ * flags the runtime sends: an embedding model for embedding, a model that
+ * writes for everything else. Offering all of them was how the document index
+ * could be pointed at a chat model and planning at `nomic-embed-text`.
  */
 
 import type { ModelEntry } from "../../../entities/provider";
@@ -17,7 +22,13 @@ interface Props {
   disabled?: boolean;
 }
 
-export function WorkRouting({ kinds, defaults, models, onRoute, disabled }: Props) {
+export function WorkRouting({
+  kinds,
+  defaults,
+  models,
+  onRoute,
+  disabled,
+}: Props) {
   return (
     <table className="routing" aria-label="Where work goes">
       <tbody>
@@ -32,11 +43,15 @@ export function WorkRouting({ kinds, defaults, models, onRoute, disabled }: Prop
                 aria-label={`Model for ${kind.toLowerCase()}`}
               >
                 <option value="">the router decides</option>
-                {models.map((entry) => (
-                  <option key={entry.name} value={entry.name}>
-                    {entry.name}
-                  </option>
-                ))}
+                {models
+                  .filter((entry) =>
+                    kind === "EMBEDDING" ? entry.embeds : entry.generates_text,
+                  )
+                  .map((entry) => (
+                    <option key={entry.name} value={entry.name}>
+                      {entry.name}
+                    </option>
+                  ))}
               </select>
             </td>
           </tr>

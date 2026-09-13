@@ -89,6 +89,15 @@ class Document:
     def is_searchable(self) -> bool:
         return self.status in (DocumentStatus.EXTRACTED, DocumentStatus.INDEXED)
 
+    @property
+    def needs_indexing(self) -> bool:
+        """Text without meaning: the embedding server was down, or never there.
+
+        A document embedded by a model since replaced is re-indexed when the
+        model changes, so this is the one case a person has to start.
+        """
+        return self.status is not DocumentStatus.INDEXED
+
 
 @dataclass(frozen=True, slots=True)
 class Chunk:

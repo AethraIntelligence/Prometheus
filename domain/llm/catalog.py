@@ -43,6 +43,20 @@ class ModelEntry:
     #: made rather than after it returns a wrong answer (ADR 0016).
     dimensions: int = 0
 
+    @property
+    def embeds(self) -> bool:
+        return Capability.EMBEDDING in self.capabilities
+
+    @property
+    def generates_text(self) -> bool:
+        """False for an entry that only turns text into vectors.
+
+        Such an entry satisfies any requirement that names no capability - and
+        the manager's own stages name none - so without this a chat request was
+        sent to `nomic-embed-text`, which answered "does not support chat".
+        """
+        return not self.capabilities or self.capabilities != frozenset({Capability.EMBEDDING})
+
     def cost_of(self, prompt_tokens: int, output_tokens: int) -> float:
         return (
             prompt_tokens * self.input_cost_per_1k_usd

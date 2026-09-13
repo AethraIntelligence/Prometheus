@@ -10,7 +10,7 @@ import { useState } from "react";
 
 import { DocumentCard, type Document } from "../../../../entities/document";
 import { AddDocumentForm, DocumentActions } from "../../../../features/manage-documents";
-import { useRuntime } from "../../../../shared/api";
+import { chooseFiles, useRuntime } from "../../../../shared/api";
 import { Modal, PlusIcon } from "../../../../shared/ui";
 import { useDocuments } from "../../model/useDocuments";
 
@@ -18,6 +18,32 @@ export function DocumentsSection() {
   const client = useRuntime();
   const documents = useDocuments(client);
   const [adding, setAdding] = useState(false);
+
+  // The system's dialog where there is one; a path field only in a browser,
+  // where no page can learn where a chosen file lives on disk.
+  //
+  // A dialog that refuses to open is said on the screen like a runtime's
+  // refusal: the first version of this let the rejection go unhandled, and a
+  // person who clicked "New document" saw nothing happen at all.
+  const addDocuments = async () => {
+    try {
+      const chosen = await chooseFiles({ multiple: true, title: "Add documents" });
+      if (chosen === null) setAdding(true);
+      else if (chosen.length > 0) await documents.addAll(chosen);
+    } catch (error) {
+      documents.fail(error);
+    }
+  };
+
+  const updateDocument = async (id: string) => {
+    try {
+      const chosen = await chooseFiles({ title: "Choose the new version" });
+      const path = chosen === null ? window.prompt("Path to the new version")?.trim() : chosen[0];
+      if (path) await documents.replace(id, path);
+    } catch (error) {
+      documents.fail(error);
+    }
+  };
 
   return (
     <>
@@ -45,7 +71,7 @@ export function DocumentsSection() {
               <button
                 type="button"
                 className="addbtn"
-                onClick={() => setAdding(true)}
+                onClick={() => void addDocuments()}
                 disabled={!documents.ready}
               >
                 <PlusIcon />
@@ -63,6 +89,7 @@ export function DocumentsSection() {
                   actions={
                     <DocumentActions
                       document={document}
+                      onUpdate={updateDocument}
                       onReindex={documents.reindex}
                       onRemove={documents.remove}
                     />

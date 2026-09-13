@@ -105,6 +105,22 @@ async def test_a_reading_of_no_work_is_overruled_by_a_narrower_question() -> Non
     assert "What is the weather in Milan now?" in triage.last_request.messages[-1].content
 
 
+async def test_an_answer_from_the_users_own_documents_is_not_second_guessed() -> None:
+    llm = FakeLLM(
+        [reply(json.dumps({"needs_work": False, "answer": "Twelve euros (Delivery policy)."}))]
+    )
+    triage = FakeLLM([])
+
+    intent = await IntentReader(llm, triage=triage).read(
+        "How much is express delivery?",
+        [],
+        documents=("[Delivery policy] Express delivery costs twelve euros.",),
+    )
+
+    assert not intent.needs_work
+    assert triage.requests == []
+
+
 async def test_talk_both_readings_agree_on_is_answered() -> None:
     llm = FakeLLM([reply(json.dumps({"needs_work": False, "answer": "Hello!"}))])
 

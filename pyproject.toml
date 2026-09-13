@@ -26,28 +26,17 @@ dependencies = [
     # Windows, and nothing from the operating system's own keychain - the
     # backend has to run on a server too.
     "cryptography>=44.0",
+    # Everything below used to be an extra, and every extra was a step a person
+    # who had just cloned the repository did not know to take: a document that
+    # silently would not add, an employee that failed on its first web page.
+    # One `uv sync` installs the whole platform. What each one can do is still
+    # decided at run time - the desktop driver moves nothing unless
+    # PROMETHEUS_FLAGS__COMPUTER_USE is on and an application is allowed.
+    "playwright>=1.48",  # the browser tools; the engine itself is fetched on first start
+    "pypdf>=5.1",  # reading a PDF
+    "asyncpg>=0.30",  # the PostgreSQL backend (ADR 0017)
+    "pyautogui>=0.9.54",  # the desktop surface, off by a flag
 ]
-
-[project.optional-dependencies]
-# The browser is an extra: a workforce whose employees only read files should
-# not download a browser engine to install the platform.
-# uv sync --extra browser && uv run playwright install chromium
-browser = ["playwright>=1.48"]
-# The native desktop driver is a separate extra from the browser one, and off by
-# a flag as well: installing the platform must not install something that can
-# move the user's mouse.
-# uv sync --extra desktop
-desktop = ["pyautogui>=0.9.54"]
-# Reading a PDF. An extra rather than a dependency for the same reason: the
-# platform reads text, HTML and Markdown out of the box, and a machine whose
-# documents are all Markdown should not install a PDF parser to say so.
-# uv sync --extra documents
-documents = ["pypdf>=5.1"]
-# The second storage backend. An extra because the default needs no server and
-# no driver: a person who does not run PostgreSQL should not install a
-# PostgreSQL driver in order to use a SQLite file (ADR 0017).
-# uv sync --extra postgres
-postgres = ["asyncpg>=0.30"]
 
 [project.scripts]
 prometheus = "app.cli.main:app"

@@ -19,6 +19,8 @@ expression.
 
 from __future__ import annotations
 
+from re import findall
+
 #: Semantic weighs more because it is what this phase exists for: a lexical
 #: index finds "shipping" by the word "shipping" and not by the word "delivery".
 #: Lexical is kept, and kept substantial, because it is what finds an invoice
@@ -31,6 +33,25 @@ LEXICAL_WEIGHT = 0.35
 #: A retrieval that pads its answer to the limit with whatever scored lowest
 #: puts irrelevant text in front of a model as though it were evidence.
 CUTOFF_RATIO = 0.35
+
+
+#: How much of a question a passage has to contain, word for word, to be
+#: returned on its words alone when the embedding model did not recognise it.
+#: The text index matches any one word, and `normalise` makes the best match
+#: worth 1.0 however weak it was - so "what is the capital of France?" came back
+#: with a delivery policy because both contain "the". Half keeps what the
+#: lexical half is for (an invoice number, a surname: short queries, all there)
+#: and drops a passage that shares one word with a sentence.
+MIN_WORD_COVERAGE = 0.5
+
+
+def coverage(question: str, passage: str) -> float:
+    """The share of the question's words that the passage contains."""
+    asked = {word.casefold() for word in findall(r"\w+", question) if len(word) > 2}
+    if not asked:
+        return 0.0
+    present = {word.casefold() for word in findall(r"\w+", passage)}
+    return len(asked & present) / len(asked)
 
 
 def blend(lexical: float, semantic: float) -> float:

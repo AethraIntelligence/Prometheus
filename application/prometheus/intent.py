@@ -90,7 +90,7 @@ class IntentReader:
 
         needs_work = bool(parsed.get("needs_work", True))
         answer = str(parsed.get("answer", "")).strip()
-        if not needs_work and not await self._is_talk(request):
+        if not needs_work and not documents and not await self._is_talk(request):
             # A second opinion, asked as one narrow question, before a reply is
             # believed. The reading's own flag is one field of a long form, and
             # a local model filled it "no work" for today's weather, an
@@ -98,6 +98,11 @@ class IntentReader:
             # all three from nothing. Asked only "look it up, or reply?", the
             # same model sorted every one of them correctly. Where the two
             # disagree it is work: a slow answer beats an invented one.
+            #
+            # Not asked when the user's own documents were quoted: the triage
+            # sees only the sentence, called "how much is express delivery" a
+            # lookup, and sent an employee to the web for 128 page reads to
+            # find what the uploaded policy already said.
             log.info("prometheus.intent_overruled", restatement=parsed.get("restatement", ""))
             needs_work, answer = True, ""
         if not needs_work and not answer:

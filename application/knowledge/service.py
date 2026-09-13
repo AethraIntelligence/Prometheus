@@ -139,6 +139,33 @@ class KnowledgeService:
         await self._store.save(document)
         return await self._index(document, text)
 
+    async def replace_file(self, document_id: UUID, path: Path) -> Document:
+        """Put a newer version of the file in place of what this document holds.
+
+        The same document afterwards - its id, its title - with the new file's
+        text and passages. Adding the new version instead would leave two
+        documents that disagree, both quoted with a source, and nothing to say
+        which one is current.
+        """
+        document = await self._store.get(document_id)
+        if document is None:
+            raise DocumentNotFoundError(f"Unknown document: {document_id}")
+        resolved = path.expanduser()
+        if not resolved.is_file():
+            raise PrometheusError(f"There is no file at {resolved}")
+        text = self._extractors.extract(resolved, "")
+        if not text.strip():
+            raise PrometheusError(f"{resolved.name} has no text in it.")
+        updated = document.to(
+            DocumentStatus.EXTRACTED,
+            source=str(resolved),
+            checksum=sha256(text.encode("utf-8")).hexdigest(),
+            size_bytes=resolved.stat().st_size,
+            error="",
+        )
+        await self._store.save(updated)
+        return await self._index(updated, text)
+
     async def reindex(self, document_id: UUID) -> Document:
         """Cut and embed a document again, with whatever model is configured now.
 
@@ -156,6 +183,31 @@ class KnowledgeService:
         if not text.strip():
             raise PrometheusError(f"{document.title} has no stored text to re-index.")
         return await self._index(document, text)
+
+    async def reindex_stale(
+        self, *, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    ) -> int:
+        """Re-index every document embedded by a model other than today's.
+
+        Called after the embedding model is changed. Without it the new model
+        was chosen, every stored vector became incomparable with a query's, and
+        retrieval quietly fell back to matching words - for a person who had
+        just picked a better model and would see answers get worse. Returns how
+        many were re-indexed; none when nothing can embed, since re-indexing
+        would only strip the vectors that are there.
+        """
+        model = self._embeddings.model if self._embeddings is not None else ""
+        if not model:
+            return 0
+        done = 0
+        for document in await self._store.list(workspace_id=workspace_id):
+            chunks = await self._store.chunks_for(document.id)
+            if chunks and any(chunk.embedding_model != model for chunk in chunks):
+                await self._index(document, "\n\n".join(chunk.content for chunk in chunks))
+                done += 1
+        if done:
+            log.info("knowledge.reindexed_for_model", model=model, documents=done)
+        return done
 
     async def delete(self, document_id: UUID) -> bool:
         return await self._store.delete(document_id)
@@ -190,7 +242,7 @@ class KnowledgeService:
         is the difference between a document somebody has to add again and one
         the platform can complete on its own.
         """
-        if self._embeddings is None or not chunks:
+        if self._embeddings is None or not self._embeddings.model or not chunks:
             return chunks, DocumentStatus.EXTRACTED if chunks else DocumentStatus.FAILED
         model = self._embeddings.model
         done: list[Chunk] = []

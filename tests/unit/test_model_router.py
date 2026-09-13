@@ -192,3 +192,24 @@ def test_a_chosen_model_that_cannot_do_the_work_is_passed_over(router) -> None:
         )
 
     assert choice.model == "vendor/vision"
+
+
+def test_an_embedding_model_is_never_given_text_to_write() -> None:
+    """Found in the call log: a request naming no capability - the manager's
+    own stages name none - reached `nomic-embed-text`, which does not chat."""
+    catalog = ModelCatalog.from_dict(
+        {
+            "models": {
+                "embedding": {"provider": "local", "model": "embed", "capabilities": ["EMBEDDING"],
+                              "quality": 0.9},
+                "chat": {"provider": "local", "model": "chat", "capabilities": ["TEXT_REASONING"],
+                         "quality": 0.1},
+            },
+            "defaults": {"embedding": "embedding"},
+        }
+    )
+    router = CapabilityAwareModelRouter(catalog)
+
+    assert router.select(TaskKind.EXTRACTION, CapabilityRequirement()).model == "chat"
+    embedding = CapabilityRequirement(required=frozenset({Capability.EMBEDDING}))
+    assert router.select(TaskKind.EMBEDDING, embedding).model == "embed"

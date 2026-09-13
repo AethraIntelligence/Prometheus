@@ -9,6 +9,7 @@ that would answer a stop signal.
 from __future__ import annotations
 
 import platform
+import sys
 
 import pytest
 
@@ -68,12 +69,13 @@ async def test_with_the_flag_off_nothing_is_even_loaded() -> None:
         await DesktopComputer(enabled=False).click(1, 1)
 
 
-async def test_a_missing_driver_says_how_to_install_it() -> None:
+async def test_a_missing_driver_says_how_to_install_it(monkeypatch: pytest.MonkeyPatch) -> None:
     computer = DesktopComputer(enabled=True)
+    # The driver is a dependency now; a broken environment is simulated, and a
+    # test must never be the thing that moves a real mouse.
+    monkeypatch.setitem(sys.modules, "pyautogui", None)
 
-    with pytest.raises(ConfigurationError, match="uv sync --extra desktop"):
-        # No driver is installed in the test environment, which is the point:
-        # installing the platform must not install something that moves a mouse.
+    with pytest.raises(ConfigurationError, match="uv sync"):
         await computer.click(1, 1)
 
 

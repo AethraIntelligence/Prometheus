@@ -41,6 +41,10 @@ export interface ModelEntry {
   output_cost_per_1k_usd: number;
   quality: number;
   dimensions: number;
+  /** Decided by the core: whether it turns text into vectors. */
+  embeds: boolean;
+  /** Decided by the core: whether it can be given text to write. */
+  generates_text: boolean;
   /** Kinds of work currently routed here, decided by the core. */
   used_for: string[];
 }

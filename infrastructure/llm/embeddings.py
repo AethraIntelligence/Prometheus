@@ -25,10 +25,13 @@ above catches it and falls back to the text index rather than failing a run.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+
 import httpx
 
-from domain.errors import ProviderError
+from domain.errors import ConfigurationError, ProviderError
 from domain.knowledge.models import Vector
+from domain.knowledge.protocols import EmbeddingProvider
 from infrastructure.llm.errors import translate_status, translate_transport_error
 from infrastructure.observability.logging import get_logger
 
@@ -113,3 +116,38 @@ class OpenAICompatibleEmbeddings:
                     actual=self._seen,
                 )
         return vectors
+
+
+class RoutedEmbeddings:
+    """Implements `EmbeddingProvider` by asking which model is chosen now.
+
+    Everything that embeds - indexing a document, a query at retrieval - is
+    built once when the process starts, and used to be handed the client for
+    whichever model was chosen then. Choosing another in the window changed
+    the catalog and nothing that embedded: documents went on being indexed with
+    the old model until a restart, which is a setting that appears not to work.
+    Resolving on every use is one dictionary lookup, and makes the choice take
+    effect on the next call.
+
+    `model` is empty when nothing can embed, which callers read as "no model"
+    exactly as they read None.
+    """
+
+    def __init__(self, resolve: Callable[[], EmbeddingProvider | None]) -> None:
+        self._resolve = resolve
+
+    @property
+    def model(self) -> str:
+        current = self._resolve()
+        return current.model if current is not None else ""
+
+    @property
+    def dimension(self) -> int:
+        current = self._resolve()
+        return current.dimension if current is not None else 0
+
+    async def embed(self, texts: Sequence[str]) -> list[Vector]:
+        current = self._resolve()
+        if current is None:
+            raise ConfigurationError("No model in the catalog can turn text into vectors.")
+        return await current.embed(texts)

@@ -14,6 +14,8 @@ export interface Document {
   media_type: string;
   status: string;
   searchable: boolean;
+  /** Decided by the core: text without vectors, which only a re-index fixes. */
+  needs_indexing: boolean;
   chunks: number;
   size_bytes: number;
   error: string;

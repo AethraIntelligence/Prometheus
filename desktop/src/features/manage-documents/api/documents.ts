@@ -18,6 +18,14 @@ export async function addDocument(
   return client.post<Document>("/api/documents", { path, title });
 }
 
+export async function replaceDocumentFile(
+  client: RuntimeClient,
+  id: string,
+  path: string,
+): Promise<Document> {
+  return client.post<Document>(`/api/documents/${id}/file`, { path });
+}
+
 export async function reindexDocument(
   client: RuntimeClient,
   id: string,

@@ -25,6 +25,7 @@ from app.config.container import (
     build_task_runner,
     build_workflow_engine,
     build_workspaces,
+    load_catalog,
     load_grants,
     prepare,
     uses_local_models,
@@ -510,6 +511,10 @@ def serve(
         )
     if settings.local_llm_autostart:
         _start_local_models(settings)
+    if settings.browser_tools_enabled:
+        from infrastructure.browser.engine import fetch_in_background
+
+        fetch_in_background()
     uvicorn.run(
         "app.ui.server:create_app",
         factory=True,
@@ -1400,6 +1405,10 @@ def documents() -> None:
     async def _run() -> None:
         container = build_container()
         try:
+            # The stored catalog, not the shipped file: the embedding model is
+            # chosen in the window, and indexing here with the file's default
+            # wrote vectors no retrieval in the window could compare.
+            await load_catalog(container)
             service = build_knowledge(container)
             if service is None:
                 typer.echo("Knowledge is switched off (PROMETHEUS_FLAGS__KNOWLEDGE=false).")
@@ -1447,6 +1456,10 @@ def document_add(
     async def _run() -> None:
         container = build_container()
         try:
+            # The stored catalog, not the shipped file: the embedding model is
+            # chosen in the window, and indexing here with the file's default
+            # wrote vectors no retrieval in the window could compare.
+            await load_catalog(container)
             service = build_knowledge(container)
             if service is None:
                 typer.secho("Knowledge is switched off.", fg="red", err=True)
@@ -1476,6 +1489,10 @@ def document_reindex(
     async def _run() -> None:
         container = build_container()
         try:
+            # The stored catalog, not the shipped file: the embedding model is
+            # chosen in the window, and indexing here with the file's default
+            # wrote vectors no retrieval in the window could compare.
+            await load_catalog(container)
             service = build_knowledge(container)
             if service is None:
                 typer.secho("Knowledge is switched off.", fg="red", err=True)
@@ -1498,6 +1515,10 @@ def document_remove(
     async def _run() -> None:
         container = build_container()
         try:
+            # The stored catalog, not the shipped file: the embedding model is
+            # chosen in the window, and indexing here with the file's default
+            # wrote vectors no retrieval in the window could compare.
+            await load_catalog(container)
             service = build_knowledge(container)
             if service is None:
                 typer.secho("Knowledge is switched off.", fg="red", err=True)

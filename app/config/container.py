@@ -146,6 +146,11 @@ async def _load_catalog(container: Container) -> None:
         container.logger.warning("catalog.not_loaded", error=str(error))
 
 
+async def load_catalog(container: Container) -> None:
+    """The catalog this installation holds, for a command that needs no more of `prepare`."""
+    await _load_catalog(container)
+
+
 async def uses_local_models(container: Container) -> bool:
     """Whether any model this installation can route to runs on a local server.
 

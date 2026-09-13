@@ -68,8 +68,8 @@ class PlaywrightBrowser:
             from playwright.async_api import async_playwright
         except ImportError as error:
             raise ConfigurationError(
-                "The browser tools need Playwright. Install it with: "
-                "uv sync --extra browser && uv run playwright install chromium"
+                "The browser tools need Playwright, which `uv sync` installs. "
+                "Run it again: uv sync"
             ) from error
 
         self._playwright = await async_playwright().start()

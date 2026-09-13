@@ -3,17 +3,25 @@ import { useState } from "react";
 import type { Document } from "../../../entities/document";
 
 /**
- * Two buttons. Re-index is offered for every document rather than only for the
- * ones missing vectors: changing the embedding model is exactly when a document
- * that says INDEXED needs doing again, and the window does not know which model
- * wrote what.
+ * What a person does to one document.
+ *
+ * **Update** is choosing a newer version of the file: the document keeps its
+ * place and its title and takes the new text. It is the button people reached
+ * for when "Re-index" was the only one there, expecting to pick a file.
+ *
+ * **Re-index** is offered only where the core says the document needs it -
+ * text without vectors, because the embedding server was not there. It used to
+ * be on every document for the case of a changed embedding model, and that
+ * case now re-indexes itself.
  */
 export function DocumentActions({
   document,
+  onUpdate,
   onReindex,
   onRemove,
 }: {
   document: Document;
+  onUpdate: (id: string) => Promise<void>;
   onReindex: (id: string) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
 }) {
@@ -32,9 +40,14 @@ export function DocumentActions({
 
   return (
     <span className="actions">
-      <button type="button" disabled={busy} onClick={run(onReindex)}>
-        Re-index
+      <button type="button" disabled={busy} onClick={run(onUpdate)}>
+        Update
       </button>
+      {document.needs_indexing && (
+        <button type="button" disabled={busy} onClick={run(onReindex)}>
+          Re-index
+        </button>
+      )}
       {confirming ? (
         <button type="button" disabled={busy} onClick={run(onRemove)}>
           Remove for good

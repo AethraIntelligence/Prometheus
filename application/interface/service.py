@@ -24,6 +24,7 @@ went wrong.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -150,6 +151,9 @@ class PrometheusService:
 
     def __init__(self, dependencies: ServiceDependencies) -> None:
         self._d = dependencies
+        #: Work started by a setting and owned by nobody else - held so it is
+        #: not collected mid-way, and awaited when the interface closes.
+        self._background: set[asyncio.Task[None]] = set()
 
     # --- Conversations --------------------------------------------------------
 
@@ -362,6 +366,12 @@ class PrometheusService:
             Path(path), workspace_id=await self._here(), title=title, media_type=media_type
         )
         return views.document(document)
+
+    async def replace_document(self, document_id: UUID, path: str) -> dict[str, Any]:
+        """A newer version of a document's file, read in place of the old one."""
+        if self._d.knowledge is None:
+            raise KnowledgeDisabledError("Documents are switched off on this machine.")
+        return views.document(await self._d.knowledge.replace_file(document_id, Path(path)))
 
     async def reindex_document(self, document_id: UUID) -> dict[str, Any]:
         if self._d.knowledge is None:
@@ -684,10 +694,13 @@ class PrometheusService:
             quality=quality,
             dimensions=dimensions,
         )
-        return views.model_entry(await providers.add_model(entry, workspace))
+        added = views.model_entry(await providers.add_model(entry, workspace))
+        await self._follow_embedding_model()
+        return added
 
     async def remove_model(self, name: str) -> None:
         await self._providers().remove_model(name, await self._here())
+        await self._follow_embedding_model()
 
     async def list_task_defaults(self) -> dict[str, str]:
         """Which model each kind of work goes to."""
@@ -698,11 +711,37 @@ class PrometheusService:
         await self._providers().send_work_to(
             _task_kind(task_kind), entry_name, await self._here()
         )
+        await self._follow_embedding_model()
         return await self.list_task_defaults()
 
     async def clear_task_default(self, task_kind: str) -> dict[str, str]:
         await self._providers().clear_default(_task_kind(task_kind))
+        await self._follow_embedding_model()
         return await self.list_task_defaults()
+
+    async def _follow_embedding_model(self) -> None:
+        """Re-index, in the background, what the model now chosen did not embed.
+
+        Any change to models can change which one embeds - routing it, clearing
+        it, removing the entry it pointed at - so this follows every one of them
+        and lets the store say whether there is anything to do. In the
+        background because a setting should answer when it is saved, and a
+        workspace of documents takes longer than that; the documents screen
+        shows them re-indexed as each one finishes.
+        """
+        if self._d.knowledge is None:
+            return
+        knowledge, workspace = self._d.knowledge, await self._here()
+
+        async def reindex() -> None:
+            try:
+                await knowledge.reindex_stale(workspace_id=workspace)
+            except Exception as error:  # a setting was saved; this is extra
+                log.warning("knowledge.reindex_failed", error=str(error))
+
+        work = asyncio.create_task(reindex())
+        self._background.add(work)
+        work.add_done_callback(self._background.discard)
 
     async def _stored_credential_names(self) -> frozenset[str]:
         if self._d.credentials is None:
@@ -846,6 +885,8 @@ class PrometheusService:
         terminal state and `resume` can pick it up.
         """
         await self._d.runs.aclose()
+        if self._background:
+            await asyncio.gather(*self._background, return_exceptions=True)
 
     def health(self) -> dict[str, Any]:
         """Enough for a shell to know the runtime it started is up.

@@ -88,6 +88,10 @@ function scriptedRuntime({ withRunner = false, stopped = false } = {}) {
             output_cost_per_1k_usd: 0,
             quality: 0.5,
             dimensions: 0,
+            embeds: (body.capabilities ?? []).includes("EMBEDDING"),
+            generates_text: !(
+              (body.capabilities ?? []).length === 1 && body.capabilities[0] === "EMBEDDING"
+            ),
             used_for: [],
           },
         ];

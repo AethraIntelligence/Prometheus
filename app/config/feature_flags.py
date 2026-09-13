@@ -15,7 +15,11 @@ class FeatureFlags(BaseModel):
     browser_tools: bool = True  # Phase 4
     code_execution: bool = True  # Phase 4
     approvals: bool = True  # Phase 4
-    computer_use: bool = False  # Phase 5
+    #: On by default since 2026-09-13, at the user's request. What still stands
+    #: between an employee and the machine is not this flag: an empty
+    #: PROMETHEUS_COMPUTER_ALLOWED_APPLICATIONS refuses every desktop action,
+    #: and every one that is allowed waits for a person.
+    computer_use: bool = True  # Phase 5
     prometheus_manager: bool = False  # Phase 7
     memory: bool = True  # Phase 9
     workflows: bool = True  # Phase 10

@@ -109,6 +109,7 @@ class ModelCatalog:
             entry
             for entry in self.entries
             if requirement.is_satisfied_by(entry.capabilities)
+            and (entry.generates_text or Capability.EMBEDDING in requirement.required)
             and (
                 requirement.min_context_tokens is None
                 or entry.context_tokens >= requirement.min_context_tokens

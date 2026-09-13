@@ -197,6 +197,12 @@ class NewIntegration(BaseModel):
     secret_names: tuple[str, ...] = ()
 
 
+class DocumentFile(BaseModel):
+    """A newer version of a document's file, by path for the same reason as below."""
+
+    path: str = Field(min_length=1, max_length=4096)
+
+
 class NewDocument(BaseModel):
     """A file on this machine, by path.
 
@@ -470,6 +476,12 @@ def _routes(app: FastAPI) -> None:
                 body.path, title=body.title, media_type=body.media_type
             )
         )
+
+    @app.post("/api/documents/{document_id}/file")
+    async def replace_document(
+        request: Request, document_id: UUID, body: DocumentFile
+    ) -> dict[str, Any]:
+        return await _knowledge(_service(request).replace_document(document_id, body.path))
 
     @app.post("/api/documents/{document_id}/reindex")
     async def reindex_document(request: Request, document_id: UUID) -> dict[str, Any]:

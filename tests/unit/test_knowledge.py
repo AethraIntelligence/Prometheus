@@ -11,7 +11,7 @@ from application.knowledge.service import KnowledgeService
 from domain.errors import PrometheusError
 from domain.knowledge.chunking import chunk
 from domain.knowledge.models import DocumentStatus, KnowledgeQuery
-from domain.knowledge.ranking import blend, cosine, normalise
+from domain.knowledge.ranking import blend, cosine, coverage, normalise
 from domain.workspace.models import WorkspaceId
 from infrastructure.knowledge.extraction import Extractors, UnsupportedDocumentError
 from infrastructure.knowledge.retriever import HybridRetriever
@@ -21,6 +21,7 @@ from infrastructure.knowledge.store import (
     pack,
     unpack,
 )
+from infrastructure.llm.embeddings import RoutedEmbeddings
 
 
 class FakeEmbeddings:
@@ -131,6 +132,33 @@ def test_html_is_read_as_words_and_not_as_tags(tmp_path: Path) -> None:
 
     assert "Delivery takes three days." in text
     assert "color:red" not in text and "x=1" not in text
+
+
+def test_a_word_document_is_read_as_its_paragraphs(tmp_path: Path) -> None:
+    """Found in the window: a .docx was refused as a format nothing reads."""
+    from zipfile import ZipFile
+
+    ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    body = (
+        f'<w:document xmlns:w="{ns}"><w:body>'
+        "<w:p><w:r><w:t>Warranty</w:t></w:r>"
+        '<w:r><w:t xml:space="preserve"> policy.</w:t></w:r></w:p>'
+        "<w:p><w:r><w:t>Two years from delivery.</w:t></w:r></w:p>"
+        "</w:body></w:document>"
+    )
+    document = tmp_path / "warranty.docx"
+    with ZipFile(document, "w") as archive:
+        archive.writestr("word/document.xml", body)
+
+    assert Extractors().extract(document) == "Warranty policy.\n\nTwo years from delivery."
+
+
+def test_an_old_word_file_is_refused_with_what_to_do(tmp_path: Path) -> None:
+    legacy = tmp_path / "old.docx"
+    legacy.write_bytes(b"not a zip")
+
+    with pytest.raises(UnsupportedDocumentError, match=r"saved as \.docx"):
+        Extractors().extract(legacy)
 
 
 # --- Adding -------------------------------------------------------------------
@@ -355,3 +383,98 @@ async def test_the_text_index_finds_a_passage_by_a_word_in_it(
     )
 
     assert found and "Refunds" in found[0].title
+
+
+class FixedEmbeddings:
+    """Every text that mentions a word gets one direction, everything else another."""
+
+    def __init__(self, word: str) -> None:
+        self._word = word
+
+    @property
+    def model(self) -> str:
+        return "fixed"
+
+    @property
+    def dimension(self) -> int:
+        return 2
+
+    async def embed(self, texts):
+        return [
+            (1.0, 0.0) if self._word in text.casefold() else (0.3, 0.95) for text in texts
+        ]
+
+
+async def test_one_unrelated_document_is_not_returned_for_everything() -> None:
+    """Found on a workspace with one document: "Hello" came back with the
+    delivery policy, because normalising made its weak similarity the best."""
+    store = InMemoryKnowledgeStore()
+    embeddings = FixedEmbeddings("delivery")
+    knowledge = KnowledgeService(store=store, extractors=Extractors(), embeddings=embeddings)
+    await knowledge.add_text(
+        "Express delivery arrives the next working day and costs twelve euros.",
+        title="Delivery policy",
+        workspace_id=WorkspaceId("work"),
+    )
+    retriever = HybridRetriever(store, embeddings=embeddings, min_similarity=0.53)
+
+    unrelated = await retriever.retrieve(
+        KnowledgeQuery(text="what is the capital of France?", workspace_id=WorkspaceId("work"))
+    )
+    related = await retriever.retrieve(
+        KnowledgeQuery(text="when does delivery arrive?", workspace_id=WorkspaceId("work"))
+    )
+
+    assert unrelated == [], "a shared 'the' is not an answer"
+    assert related and related[0].title == "Delivery policy"
+
+
+def test_word_coverage_counts_the_question_not_the_passage() -> None:
+    assert coverage("INV-2291", "Invoice INV-2291 was paid") == 1.0
+    assert coverage("what is the capital of France?", "the delivery policy") == 0.25
+    assert coverage("?!", "anything") == 0.0
+
+
+async def test_changing_the_embedding_model_reindexes_what_the_old_one_embedded() -> None:
+    store = InMemoryKnowledgeStore()
+    await build_corpus(store, FakeEmbeddings("first-model"))
+    later = KnowledgeService(
+        store=store, extractors=Extractors(), embeddings=FakeEmbeddings("second-model")
+    )
+
+    assert await later.reindex_stale(workspace_id=WorkspaceId("work")) == 2
+    assert await later.reindex_stale(workspace_id=WorkspaceId("work")) == 0, "once is enough"
+    for document in await store.list(workspace_id=WorkspaceId("work")):
+        assert {c.embedding_model for c in await store.chunks_for(document.id)} == {"second-model"}
+
+
+async def test_the_embedding_model_is_whichever_is_chosen_at_the_moment_of_the_call() -> None:
+    """A choice made in the window reaches indexing without a restart."""
+    current: list = [FakeEmbeddings("first-model")]
+    routed = RoutedEmbeddings(lambda: current[0])
+
+    assert routed.model == "first-model"
+    current[0] = FakeEmbeddings("second-model")
+    assert routed.model == "second-model"
+    current[0] = None
+    assert routed.model == ""
+    with pytest.raises(PrometheusError):
+        await routed.embed(["text"])
+
+
+async def test_a_newer_version_of_the_file_replaces_the_document_in_place(tmp_path: Path) -> None:
+    """Not a second document: two that disagree would both be quoted as current."""
+    first = tmp_path / "policy.md"
+    first.write_text("Delivery takes three days.", encoding="utf-8")
+    store = InMemoryKnowledgeStore()
+    knowledge = service(store)
+    document = await knowledge.add_file(first)
+
+    second = tmp_path / "policy-v2.md"
+    second.write_text("Delivery takes two days.", encoding="utf-8")
+    updated = await knowledge.replace_file(document.id, second)
+
+    assert updated.id == document.id
+    assert updated.source == str(second)
+    assert [c.content for c in await store.chunks_for(document.id)] == ["Delivery takes two days."]
+    assert len(await store.list()) == 1

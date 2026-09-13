@@ -16,6 +16,7 @@ serde_json = "1"
 # stack: on macOS a page served from tauri://localhost cannot reach
 # http://127.0.0.1 at all, and fails before the request leaves the process.
 tauri-plugin-http = "2"
+tauri-plugin-dialog = "2"
 
 [features]
 default = ["custom-protocol"]

@@ -7,10 +7,10 @@ nonsense. So a format either has an extractor that understands it or is refused
 with a sentence saying which format it is - and refusing is the behaviour that
 lets somebody install the missing extra and try again.
 
-**PDF support is an optional extra.** `uv sync --extra documents` brings
-`pypdf`; without it a PDF is refused by name rather than read badly. That is the
-same rule the browser and desktop extras follow: installing the platform does
-not install everything it could ever need.
+**PDF and Word come with the platform.** `pypdf` is a dependency, and a `.docx`
+is read with the standard library: it is a zip of XML, and what a person means by
+"the document" is its paragraphs. An environment missing `pypdf` still refuses a
+PDF by name rather than reading it badly.
 
 **Nothing here summarises, truncates or reformats.** What comes out is what the
 document said, because everything downstream - the chunker, the index, the
@@ -32,6 +32,8 @@ TEXT_SUFFIXES = frozenset(
 )
 HTML_SUFFIXES = frozenset({".html", ".htm"})
 PDF_SUFFIXES = frozenset({".pdf"})
+WORD_SUFFIXES = frozenset({".docx"})
+READABLE_SUFFIXES = TEXT_SUFFIXES | HTML_SUFFIXES | PDF_SUFFIXES | WORD_SUFFIXES
 
 
 class UnsupportedDocumentError(PrometheusError):
@@ -112,7 +114,7 @@ class PdfExtractor:
             from pypdf import PdfReader
         except ImportError as error:
             raise UnsupportedDocumentError(
-                "Reading a PDF needs the documents extra: uv sync --extra documents"
+                "Reading a PDF needs pypdf, which `uv sync` installs. Run it again: uv sync"
             ) from error
         reader = PdfReader(str(path))
         pages = [(page.extract_text() or "").strip() for page in reader.pages]
@@ -124,6 +126,51 @@ class PdfExtractor:
                 f"{path.name} has no text in it - a scan needs OCR, which this "
                 "platform does not do."
             )
+        return text
+
+
+class WordExtractor:
+    """Implements `domain.knowledge.protocols.TextExtractor` for `.docx`.
+
+    A Word document is a zip whose `word/document.xml` holds the text in runs
+    (`w:t`) inside paragraphs (`w:p`). Read with the standard library: a
+    dependency that parses styles, tables and images to hand back the words is
+    a dependency for the part nothing here uses. A paragraph break is kept as a
+    blank line, which is what the chunker cuts on.
+    """
+
+    NAMESPACE = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def supports(self, path: Path, media_type: str = "") -> bool:
+        return path.suffix.lower() in WORD_SUFFIXES or media_type == (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+    def extract(self, path: Path, media_type: str = "") -> str:
+        from xml.etree import ElementTree
+        from zipfile import BadZipFile, ZipFile
+
+        try:
+            with ZipFile(path) as archive:
+                body = archive.read("word/document.xml")
+        except (BadZipFile, KeyError) as error:
+            raise UnsupportedDocumentError(
+                f"{path.name} is not a Word document this can read - an old .doc "
+                "has to be saved as .docx first."
+            ) from error
+        root = ElementTree.fromstring(body)
+        paragraphs = []
+        for paragraph in root.iter(f"{self.NAMESPACE}p"):
+            words = "".join(
+                "\t" if node.tag == f"{self.NAMESPACE}tab" else node.text or ""
+                for node in paragraph.iter()
+                if node.tag in (f"{self.NAMESPACE}t", f"{self.NAMESPACE}tab")
+            ).strip()
+            if words:
+                paragraphs.append(words)
+        text = "\n\n".join(paragraphs)
+        if not text.strip():
+            raise UnsupportedDocumentError(f"{path.name} has no text in it.")
         return text
 
 
@@ -139,6 +186,7 @@ class Extractors:
             PlainTextExtractor(),
             HtmlExtractor(),
             PdfExtractor(),
+            WordExtractor(),
         )
 
     def supports(self, path: Path, media_type: str = "") -> bool:
@@ -150,5 +198,5 @@ class Extractors:
                 return extractor.extract(path, media_type)
         raise UnsupportedDocumentError(
             f"Nothing here reads {path.suffix or 'that kind of file'}. "
-            f"Readable: {', '.join(sorted(TEXT_SUFFIXES | HTML_SUFFIXES | PDF_SUFFIXES))}"
+            f"Readable: {', '.join(sorted(READABLE_SUFFIXES))}"
         )

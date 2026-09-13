@@ -46,6 +46,10 @@ fn base_url() -> String {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        // The system's own file dialog. A document is read by the runtime from
+        // where it is, so what the window needs is a path - and a person should
+        // pick the file, not type where it lives.
+        .plugin(tauri_plugin_dialog::init())
         .manage(RuntimeHandle::default())
         .invoke_handler(tauri::generate_handler![runtime_status, window_problem])
         .setup(|app| {

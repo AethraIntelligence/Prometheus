@@ -371,6 +371,7 @@ def document(item: Document) -> dict[str, Any]:
         "media_type": item.media_type,
         "status": item.status.value,
         "searchable": item.is_searchable,
+        "needs_indexing": item.needs_indexing,
         "chunks": item.chunk_count,
         "size_bytes": item.size_bytes,
         "error": item.error,
@@ -486,5 +487,9 @@ def model_entry(entry: ModelEntry, *, used_for: tuple[str, ...] = ()) -> dict[st
         "output_cost_per_1k_usd": entry.output_cost_per_1k_usd,
         "quality": entry.quality,
         "dimensions": entry.dimensions,
+        # What it can be given, so a page offers an embedding model for
+        # embedding and a chat model for everything else, and never the reverse.
+        "embeds": entry.embeds,
+        "generates_text": entry.generates_text,
         "used_for": list(used_for),
     }
