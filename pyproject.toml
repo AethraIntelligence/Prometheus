@@ -38,6 +38,11 @@ dependencies = [
     "pyautogui>=0.9.54",  # the desktop surface, off by a flag
 ]
 
+[project.urls]
+Homepage = "https://github.com/ysz7/Prometheus"
+Repository = "https://github.com/ysz7/Prometheus.git"
+Issues = "https://github.com/ysz7/Prometheus/issues"
+
 [project.scripts]
 prometheus = "app.cli.main:app"
 

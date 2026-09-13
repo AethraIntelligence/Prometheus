@@ -3,6 +3,12 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ysz7/Prometheus.git",
+    "directory": "desktop"
+  },
+  "bugs": "https://github.com/ysz7/Prometheus/issues",
   "description": "The Prometheus desktop interface. A shell around the local runtime, never a second one.",
   "scripts": {
     "dev": "vite",

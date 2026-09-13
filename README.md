@@ -1,5 +1,10 @@
 # Prometheus
 
+[![CI](https://github.com/ysz7/Prometheus/actions/workflows/ci.yml/badge.svg)](https://github.com/ysz7/Prometheus/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB)
+![Local-first](https://img.shields.io/badge/runs-on%20your%20machine-2e7d32)
+![Desktop: Tauri + React](https://img.shields.io/badge/desktop-Tauri%20%2B%20React-24C8DB)
+
 **Tell it what you want done. An AI manager plans the work, hands it to a team of
 digital employees, checks the result, and does it all on your own machine.**
 
@@ -35,7 +40,7 @@ assistant when you ask a question, and works like a team when you ask for work.
 toolchain, and either [Ollama](https://ollama.com) (free, local) or a provider key.
 
 ```bash
-git clone <this repository> && cd prometheus
+git clone https://github.com/ysz7/Prometheus.git && cd Prometheus
 ./start.sh
 ```
 
@@ -84,6 +89,8 @@ check before you see the result. A second, narrow question guards the boundary, 
 "today's weather" is looked up rather than invented.
 
 ### A team of five, each declared in one file
+
+Each employee is a directory under [`employees/`](employees).
 
 | Employee | Does | Reaches the world through |
 |---|---|---|
@@ -136,7 +143,7 @@ and asks first; nobody can use a service until you grant it.
 
 ### Runs known processes, and starts work on its own
 
-A process you already know the shape of is a YAML file under `workflows/`. A
+A process you already know the shape of is a YAML file under [`workflows/`](workflows). A
 schedule ("every morning", "every 3 hours") or an event can start an objective with
 nobody at the keyboard - through the same checks and the same brake. Work nobody
 asked for is opt-in: `PROMETHEUS_FLAGS__SCHEDULER=true`.
@@ -246,6 +253,7 @@ desktop/         Tauri + React window - an adapter over the HTTP API, no busines
 employees/  workflows/  prompts/  validation/scenarios/    declarations and content
 ```
 
+- **The window** has its own guide: [`desktop/README.md`](desktop/README.md).
 - **One boundary for every interface.** The CLI, the web page and the desktop window
   all talk to `application/interface/`; a new surface is an adapter, not a fork.
 - **One runtime for every employee.** Employees differ only by declaration.
@@ -283,6 +291,12 @@ PROMETHEUS_TEST_POSTGRES_URL=postgresql://localhost/prometheus_test uv run pytes
 
 The codebase is English-only - identifiers, comments, logs, schema and docs. What
 the agents answer in is configuration: `PROMETHEUS_RESPONSE_LANGUAGE`.
+
+## Contributing and feedback
+
+Found something that does not work, or a request it handled badly? Open an issue at
+[github.com/ysz7/Prometheus/issues](https://github.com/ysz7/Prometheus/issues) with the request you typed and
+what came back - that is exactly what a validation scenario is made from.
 
 ## Status
 
