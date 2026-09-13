@@ -1,11 +1,11 @@
 /**
  * The conversation, and what is happening because of it.
  *
- * A widget composes; it fetches nothing and decides nothing. The live trail is
- * open under the turn that is running and only while it runs, because an
- * interface that keeps a log open at all times is a log viewer, which is the
- * thing the local surface was built to stop anybody needing. A finished turn
- * keeps the trail this window saw behind its "Worked for" line.
+ * A widget composes; it fetches nothing and decides nothing. The live trail
+ * belongs to the turn that is running, folded behind its status line, because
+ * an interface that keeps a log open is a log viewer, which is the thing the
+ * local surface was built to stop anybody needing. A finished turn keeps the
+ * trail this window saw behind its "Worked for" line.
  */
 
 import type { ReactNode } from "react";

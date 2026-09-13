@@ -146,6 +146,19 @@ async def _load_catalog(container: Container) -> None:
         container.logger.warning("catalog.not_loaded", error=str(error))
 
 
+async def uses_local_models(container: Container) -> bool:
+    """Whether any model this installation can route to runs on a local server.
+
+    Read from the catalog the process will actually use - the stored one, when
+    there is one - because that is where a person adds a local model in the
+    window, and the file it shipped with would say otherwise.
+    """
+    from infrastructure.llm.local import PROVIDER_NAME
+
+    await _load_catalog(container)
+    return any(entry.provider == PROVIDER_NAME for entry in container.model_catalog.entries)
+
+
 async def prepare(container: Container) -> None:
     """Everything that has to be true before this process does any work.
 
@@ -285,7 +298,9 @@ def build_manager(container: Container) -> PrometheusManager:
     language = getattr(container.settings, "response_language", DEFAULT_LANGUAGE)
     return PrometheusManager(
         intent=IntentReader(
-            container.llm_for(*IntentReader.routing()), language=language
+            container.llm_for(*IntentReader.routing()),
+            language=language,
+            triage=container.llm_for(*IntentReader.routing()),
         ),
         planner=ObjectivePlanner(container.llm_for(*ObjectivePlanner.routing())),
         supervisor=Supervisor(
@@ -439,12 +454,14 @@ def build_providers(container: Container) -> ProviderService:
         if not container.catalog_source.is_overridden:
             container.use_catalog(await container.catalog_source.load())
 
+    discovery = LocalModelDiscovery()
     return ProviderService(
         container.connections,
         container.catalog_repository,
         credentials=container.credential_store,
         kinds=KINDS,
-        discover=LocalModelDiscovery(),
+        discover=discovery,
+        inspect=discovery,
         on_change=reload,
     )
 

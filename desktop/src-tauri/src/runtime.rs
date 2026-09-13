@@ -98,11 +98,22 @@ impl RuntimeHandle {
         let Some(program) = parts.next() else {
             return false;
         };
-        let spawned = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(parts)
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn();
+            .stderr(Stdio::inherit());
+        // Its own process group, so that stopping it reaches the process that
+        // actually serves. The default command is `uv run`, which starts the
+        // runtime as a child of its own: killing `uv` left that child running,
+        // answering on the port with the code it was started with, and the
+        // next window attached to it - a stale engine nobody could see.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let spawned = command.spawn();
         match spawned {
             Ok(child) => {
                 *self.child.lock().unwrap() = Some(child);
@@ -121,10 +132,38 @@ impl RuntimeHandle {
     /// Stop the engine this process started. Leaves anybody else's alone.
     pub fn shutdown(&self) {
         if let Some(mut child) = self.child.lock().unwrap().take() {
+            #[cfg(unix)]
+            stop_group(&mut child);
             let _ = child.kill();
             let _ = child.wait();
         }
     }
+}
+
+/// Ask the whole group to stop, then insist.
+///
+/// SIGTERM first, because the runtime closes its running work on it and leaves
+/// nothing half-written; SIGKILL to the group after a grace period, because a
+/// window that will not close is worse than a run `resume` can pick up.
+#[cfg(unix)]
+fn stop_group(child: &mut Child) {
+    let group = format!("-{}", child.id());
+    let signal = |name: &str| {
+        let _ = Command::new("kill")
+            .args([name, "--", &group])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    };
+    signal("-TERM");
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < deadline {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    signal("-KILL");
 }
 
 /// Whether anything is listening. Deliberately a connection, not a request:

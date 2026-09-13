@@ -8,8 +8,11 @@
  *
  * What the work looked like arrives through `work` rather than being drawn
  * here, because the trail is another entity's and one slice does not reach into
- * another. This one only decides where it goes: open while the turn runs, folded
- * behind "Worked for" once it has an answer.
+ * another. This one only decides where it goes: folded behind the status line
+ * while the turn runs, and behind "Worked for" once it has an answer. It used to
+ * be open while the turn ran, which put the runtime's own step-by-step - error
+ * types included - in front of somebody who had said "Hello". Every step is
+ * still one click away; nothing is left out, only put behind the line.
  */
 
 import { useState, type ReactNode } from "react";
@@ -125,11 +128,25 @@ export function MessageTurn({ message, work }: Props) {
           </>
         ) : (
           <>
-            <p className="working" aria-live="polite">
-              <span className="spin" aria-hidden="true" />
-              {statusLine(message)}
-            </p>
-            {work}
+            {work ? (
+              <button
+                type="button"
+                className="working worked"
+                aria-expanded={open}
+                aria-live="polite"
+                onClick={() => setOpen((shown) => !shown)}
+              >
+                <span className="spin" aria-hidden="true" />
+                {statusLine(message)}
+                <ChevronRight className="cv" />
+              </button>
+            ) : (
+              <p className="working" aria-live="polite">
+                <span className="spin" aria-hidden="true" />
+                {statusLine(message)}
+              </p>
+            )}
+            {open && work}
           </>
         )}
       </div>

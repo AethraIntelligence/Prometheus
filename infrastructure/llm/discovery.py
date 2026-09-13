@@ -77,6 +77,12 @@ class Runner(Protocol):
         """What it would serve, read without it. Empty when that cannot be told."""
         ...
 
+    async def context_of(
+        self, client: httpx.AsyncClient, base_url: str, model: str
+    ) -> int | None:
+        """How many tokens of context the model takes. None when not told."""
+        ...
+
 
 class Ollama:
     label = "Ollama"
@@ -132,6 +138,30 @@ class Ollama:
             names.append("/".join([*prefix, f"{model}:{tag}"]))
         return _unique(names)
 
+    async def context_of(
+        self, client: httpx.AsyncClient, base_url: str, model: str
+    ) -> int | None:
+        # The model's own maximum, from its metadata. What the server loads it
+        # with is the person's setting in Ollama and may be lower; that is
+        # theirs to choose, and the catalog records what the model can take.
+        url = f"{_root_of(base_url)}/api/show"
+        try:
+            response = await client.post(url, json={"model": model})
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            log.info("models.context_not_read", runner=self.label, model=model, error=str(error))
+            return None
+        info = payload.get("model_info") if isinstance(payload, dict) else None
+        if not isinstance(info, dict):
+            return None
+        lengths = [
+            value
+            for key, value in info.items()
+            if key.endswith(".context_length") and isinstance(value, int) and value > 0
+        ]
+        return max(lengths) if lengths else None
+
     def store(self) -> Path:
         if self._store is not None:
             return self._store
@@ -166,6 +196,13 @@ class OpenAICompatible:
     def on_disk(self, base_url: str) -> tuple[str, ...]:
         return ()
 
+    async def context_of(
+        self, client: httpx.AsyncClient, base_url: str, model: str
+    ) -> int | None:
+        # `/v1/models` says nothing about context, and no other question is
+        # common to the servers this stands for.
+        return None
+
 
 #: Which runners a kind of connection may be, most specific first. A kind that
 #: is not here cannot be asked what it has, and says so.
@@ -175,7 +212,7 @@ RUNNERS: dict[str, tuple[Runner, ...]] = {
 
 
 class LocalModelDiscovery:
-    """Implements `domain.providers.protocols.ModelDiscovery`."""
+    """Implements `domain.providers.protocols.ModelDiscovery` and `ModelInspector`."""
 
     def __init__(
         self,
@@ -213,6 +250,19 @@ class LocalModelDiscovery:
         # Named by the most general runner: nothing answered, so which program
         # was meant to be at this address is exactly what is not known.
         return InstalledModels(supported=True, runner=runners[-1].label, address=address)
+
+
+    async def context_tokens(self, kind: str, base_url: str, model: str) -> int | None:
+        runners = self._runners.get(kind.strip().lower(), ())
+        address = base_url.strip() or _default_address(kind)
+        if not runners or not address:
+            return None
+        async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
+            for runner in runners:
+                tokens = await runner.context_of(client, address, model)
+                if tokens is not None:
+                    return tokens
+        return None
 
 
 def _default_address(kind: str) -> str:

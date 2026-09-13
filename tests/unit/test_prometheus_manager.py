@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from application.prometheus.delegation import CapabilityDelegator
 from application.prometheus.intent import IntentReader
 from application.prometheus.manager import PrometheusManager
@@ -18,6 +20,7 @@ from application.prometheus.planner import ObjectivePlanner
 from application.prometheus.supervisor import Supervisor
 from application.prometheus.synthesis import NOTHING_WAS_DONE, Synthesizer, actions
 from application.prometheus.verification import ObjectiveVerifier
+from domain.errors import ProviderUnavailableError
 from domain.workforce.protocols import ObjectiveStatus
 from infrastructure.persistence.objective_repository import InMemoryObjectiveRepository
 from infrastructure.persistence.plan_repository import InMemoryPlanRepository
@@ -184,6 +187,22 @@ async def test_a_question_is_answered_without_a_plan_or_an_employee() -> None:
     assert result.output["delegated"] is False
 
 
+async def test_talk_is_answered_without_being_checked_against_nothing() -> None:
+    """Found in the window: a local model judged "Hello" and "what is the
+    capital of France" against "nothing was done" and rejected both, so a
+    greeting became a plan. With no criteria there is nothing to check."""
+    manager, execution, _, plans = build(
+        script=[intent(needs_work=False, answer="Hello! What can I do?", acceptance_criteria=[])]
+    )
+
+    result = await manager.handle_objective(await manager.receive("Hello"))
+
+    assert result.status is ObjectiveStatus.DONE
+    assert result.summary == "Hello! What can I do?"
+    assert execution.started == []
+    assert await plans.for_objective(result.objective_id) == []
+
+
 async def test_an_answer_that_cannot_meet_the_criteria_becomes_work() -> None:
     """Phase 11 finding 1, as a test.
 
@@ -312,6 +331,30 @@ async def test_nobody_to_delegate_to_is_escalated_not_replanned() -> None:
     assert result.status is ObjectiveStatus.ESCALATED
     assert "employees/" in result.summary
     assert len(await plans.for_objective(result.objective_id)) == 1
+
+
+async def test_a_failure_nothing_anticipated_closes_the_objective_and_says_so() -> None:
+    """Found in the window: the model server was not running, the error left a
+    coroutine nobody awaited, and the request read "working out what you are
+    asking for" for good."""
+    progress = InMemoryProgressBroadcaster()
+    manager, _, objectives, _ = build(
+        script=[ProviderUnavailableError("the local model server is not answering")],
+        progress=progress,
+    )
+    objective = await manager.receive("hello")
+
+    with pytest.raises(ProviderUnavailableError):
+        await manager.handle_objective(objective)
+
+    stored = await objectives.get(objective.id)
+    assert stored is not None
+    assert stored.status is ObjectiveStatus.FAILED
+    assert stored.finished_at is not None
+    assert stored.result is not None and "not answering" in stored.result.summary
+    last = progress.recent(objective.id)[-1]
+    assert last.kind.value == "RESULT"
+    assert last.payload["status"] == "FAILED"
 
 
 # --- What the interface sees --------------------------------------------------

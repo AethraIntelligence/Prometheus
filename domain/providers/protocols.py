@@ -74,3 +74,16 @@ class ModelDiscovery(Protocol):
     """
 
     async def __call__(self, kind: str, base_url: str) -> InstalledModels: ...
+
+
+class ModelInspector(Protocol):
+    """How much context a model takes, asked of whatever serves it.
+
+    A person adding a local model does not know the number and should not have
+    to: a default typed in its place was 8192 for a model that takes 32768, and
+    the router then refused it every employee - all of whom ask for more - with
+    an error nobody adding a model would connect to what they had just done.
+    None means it could not be told, and the caller keeps its default.
+    """
+
+    async def context_tokens(self, kind: str, base_url: str, model: str) -> int | None: ...

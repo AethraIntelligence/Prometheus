@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { statusLine } from "../model/status";
@@ -25,6 +25,14 @@ describe("MessageTurn", () => {
 
     expect(screen.getByText("Sort these files")).toBeInTheDocument();
     expect(screen.getByText("Working on it…")).toBeInTheDocument();
+  });
+
+  it("keeps the steps of a running turn folded until they are asked for", () => {
+    render(<MessageTurn message={message()} work={<p>Planned — read the folder</p>} />);
+
+    expect(screen.queryByText("Planned — read the folder")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Working on it/ }));
+    expect(screen.getByText("Planned — read the folder")).toBeInTheDocument();
   });
 
   it("shows the answer once there is one", () => {

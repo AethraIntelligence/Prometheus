@@ -174,6 +174,8 @@ def test_a_question_needing_no_work_is_answered_without_a_plan(tmp_path: Path) -
     create_schema(settings)
     llm = script(
         intent(needs_work=False, answer="It keeps the whole database in one file."),
+        # The second opinion on "no work": a reply, not a lookup.
+        "A",
         verdict(True),
     )
 

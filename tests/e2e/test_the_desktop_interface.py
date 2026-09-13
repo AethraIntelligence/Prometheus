@@ -222,7 +222,7 @@ def test_where_a_request_came_from_is_recorded_and_changes_nothing(tmp_path: Pat
         settings = settings_for(tmp_path / source)
         create_schema(settings)
         with client_for(
-            settings, script(intent(needs_work=False, answer=answer), verdict(True))
+            settings, script(intent(needs_work=False, answer=answer), "A", verdict(True))
         ) as client:
             objective_id = client.post(
                 "/api/objectives", json={**request, "source": source}

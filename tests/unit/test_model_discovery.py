@@ -114,3 +114,18 @@ async def test_an_empty_address_means_the_kinds_own_default() -> None:
 
     assert found.address == ADDRESS
     assert found.reachable and found.names == ()
+
+
+async def test_the_context_a_model_takes_is_read_from_ollama() -> None:
+    """A number nobody typed: 8192 was defaulted for a model that takes 32768."""
+    shown = {"model_info": {"general.architecture": "lfm2moe", "lfm2moe.context_length": 32768}}
+    discover = LocalModelDiscovery(transport=answering({"/api/show": shown}))
+
+    assert await discover.context_tokens("local", ADDRESS, "lfm2:24b") == 32768
+
+
+async def test_a_context_that_cannot_be_asked_is_not_invented() -> None:
+    assert await LocalModelDiscovery(transport=refusing()).context_tokens(
+        "local", ADDRESS, "lfm2:24b"
+    ) is None
+    assert await LocalModelDiscovery().context_tokens("openrouter", "", "x") is None

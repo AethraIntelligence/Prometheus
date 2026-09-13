@@ -47,3 +47,14 @@ class Intent:
     @property
     def is_answerable_directly(self) -> bool:
         return not self.needs_work and bool(self.answer.strip())
+
+    @property
+    def is_conversation(self) -> bool:
+        """Answered on the spot and left unchecked: no work, and no standard.
+
+        A request that asks for anything to exist afterwards gets a criterion
+        saying so, and is then checked like any other direct answer. The one
+        left is talk - and a check with nothing to check against has only ever
+        disagreed with it.
+        """
+        return self.is_answerable_directly and not self.acceptance_criteria

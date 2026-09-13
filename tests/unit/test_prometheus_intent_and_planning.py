@@ -72,9 +72,61 @@ async def test_a_question_that_needs_no_work_is_answered_directly() -> None:
     assert "one file" in intent.answer
 
 
-async def test_claiming_no_work_without_an_answer_is_treated_as_work() -> None:
-    """A model that says "nothing to do" and supplies nothing has said nothing."""
-    llm = FakeLLM([reply(json.dumps({"needs_work": False, "answer": "   "}))])
+async def test_claiming_no_work_without_an_answer_asks_for_the_reply() -> None:
+    """Found in the window: a local model read "Hello" as talk and copied the
+    blank answer from the form. Treating that as work turned a greeting into a
+    plan; the reading was right, and only the reply was missing."""
+    llm = FakeLLM(
+        [
+            reply(json.dumps({"needs_work": False, "answer": "   "})),
+            reply("Hello! I run a small team on this machine. What can I do for you?"),
+        ]
+    )
+
+    intent = await IntentReader(llm).read("Hello", [definition()])
+
+    assert not intent.needs_work
+    assert intent.is_conversation
+    assert intent.answer.startswith("Hello!")
+    assert "Hello" in llm.requests[1].messages[-1].content
+
+
+async def test_a_reading_of_no_work_is_overruled_by_a_narrower_question() -> None:
+    """Found on a local model: the long form said "no work" for today's weather
+    and answered it from nothing. Asked only "look it up, or reply?", it said
+    look it up - and where the two disagree, it is work."""
+    llm = FakeLLM([reply(json.dumps({"needs_work": False, "answer": "Sunny, 18 degrees."}))])
+    triage = FakeLLM([reply("B")])
+
+    intent = await IntentReader(llm, triage=triage).read("What is the weather in Milan now?", [])
+
+    assert intent.needs_work
+    assert intent.answer == ""
+    assert "What is the weather in Milan now?" in triage.last_request.messages[-1].content
+
+
+async def test_talk_both_readings_agree_on_is_answered() -> None:
+    llm = FakeLLM([reply(json.dumps({"needs_work": False, "answer": "Hello!"}))])
+
+    intent = await IntentReader(llm, triage=FakeLLM([reply("A")])).read("Hello", [])
+
+    assert intent.is_conversation
+    assert intent.answer == "Hello!"
+
+
+async def test_work_is_never_second_guessed_into_talk() -> None:
+    llm = FakeLLM([reply(json.dumps({"needs_work": True, "acceptance_criteria": ["a file"]}))])
+    triage = FakeLLM([])
+
+    intent = await IntentReader(llm, triage=triage).read("Write me a file", [])
+
+    assert intent.needs_work
+    assert triage.requests == [], "only a reading of no work is checked"
+
+
+async def test_a_reply_that_still_does_not_come_is_treated_as_work() -> None:
+    """A model that says "nothing to do" twice and supplies nothing has said nothing."""
+    llm = FakeLLM([reply(json.dumps({"needs_work": False, "answer": ""})), reply("  ")])
 
     intent = await IntentReader(llm).read("Do the thing", [definition()])
 

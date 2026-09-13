@@ -39,6 +39,7 @@ from domain.providers.protocols import (
     CatalogAdmin,
     ConnectionRepository,
     ModelDiscovery,
+    ModelInspector,
 )
 from domain.secrets.protocols import CredentialStore
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
@@ -57,6 +58,7 @@ class ProviderService:
         credentials: CredentialStore | None = None,
         kinds: tuple[object, ...] = (),
         discover: ModelDiscovery | None = None,
+        inspect: ModelInspector | None = None,
         on_change: object = None,
     ) -> None:
         self._connections = connections
@@ -67,6 +69,7 @@ class ProviderService:
         # may not import them.
         self._kinds = kinds
         self._discover = discover
+        self._inspect = inspect
         # Called after anything changes, so the running process picks it up
         # without a restart. A settings page whose effect begins after a restart
         # is a settings page people stop trusting.
@@ -174,6 +177,15 @@ class ProviderService:
         if self._discover is None:
             return InstalledModels()
         return await self._discover(connection.kind, connection.base_url)
+
+    async def context_of(
+        self, connection_name: str, model: str, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    ) -> int | None:
+        """How much context a model on this connection takes, where that can be asked."""
+        if self._inspect is None or not connection_name:
+            return None
+        connection = await self._require(connection_name, workspace_id)
+        return await self._inspect.context_tokens(connection.kind, connection.base_url, model)
 
     async def add_model(
         self, entry: ModelEntry, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID

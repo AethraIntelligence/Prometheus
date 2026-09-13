@@ -26,7 +26,12 @@ command -v npm >/dev/null || fail "npm is not installed. Node 20+ is needed for 
 command -v cargo >/dev/null || fail "the Rust toolchain is not installed: https://rustup.rs"
 
 say "Python dependencies"
-uv sync --quiet
+# With the browser: the window is where people ask what the weather is, and
+# without it every employee that reads the web fails on its first page. A plain
+# `uv sync` also removes an extra installed by hand, so running this script
+# used to uninstall the browser a person had just set up.
+uv sync --quiet --extra browser
+uv run playwright install chromium >/dev/null
 
 say "Database schema"
 # Alembic is quiet when there is nothing to do, so this is cheap on every run

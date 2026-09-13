@@ -80,7 +80,7 @@ class Runs:
         self._cancellations = cancellations
         self._approvals = approvals
         self._running: dict[UUID, asyncio.Task[Task]] = {}
-        self._objectives: dict[UUID, asyncio.Task[ObjectiveResult]] = {}
+        self._objectives: dict[UUID, asyncio.Task[ObjectiveResult | None]] = {}
 
     # --- Starting -------------------------------------------------------------
 
@@ -119,12 +119,26 @@ class Runs:
         work.add_done_callback(lambda _: self._objectives.pop(objective.id, None))
         return objective
 
-    async def _carry(self, objective: Objective, directions: Directions) -> ObjectiveResult:
+    async def _carry(
+        self, objective: Objective, directions: Directions
+    ) -> ObjectiveResult | None:
         # Set inside the coroutine rather than around `create_task`, so the
         # directions belong to this objective's context and to every task it
         # starts - and never to the request handler that happened to submit it.
         with carried.given(directions):
-            return await self._manager.handle_objective(objective)
+            try:
+                return await self._manager.handle_objective(objective)
+            except Exception as error:
+                # Nobody awaits this coroutine, so an error raised out of it is
+                # only ever a warning at garbage collection. The manager has
+                # already closed the record and told the watchers; this is the
+                # line in the log.
+                log.warning(
+                    "objective.failed",
+                    objective_id=str(objective.id),
+                    error=f"{type(error).__name__}: {error}",
+                )
+                return None
 
     def is_thinking(self, objective_id: UUID) -> bool:
         return objective_id in self._objectives

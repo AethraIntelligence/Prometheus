@@ -54,7 +54,7 @@ from domain.errors import ConfigurationError, IntegrationNotFoundError, Promethe
 from domain.integrations.models import IntegrationKind
 from domain.knowledge.models import KnowledgeQuery
 from domain.knowledge.protocols import Retriever
-from domain.llm.catalog import ModelEntry
+from domain.llm.catalog import DEFAULT_CONTEXT_TOKENS, ModelEntry
 from domain.llm.models import TaskKind
 from domain.llm.telemetry import LLMCallLog
 from domain.memory.models import MemoryQuery, MemoryScope
@@ -650,7 +650,7 @@ class PrometheusService:
         *,
         connection: str = "",
         capabilities: tuple[str, ...] = (),
-        context_tokens: int = 8_192,
+        context_tokens: int | None = None,
         input_cost_per_1k_usd: float = 0.0,
         output_cost_per_1k_usd: float = 0.0,
         quality: float = 0.5,
@@ -663,6 +663,15 @@ class PrometheusService:
         half-ignored is a model the router will not choose, for a reason nobody
         can see in the window.
         """
+        providers = self._providers()
+        workspace = await self._here()
+        if context_tokens is None:
+            # Asked of the runner rather than defaulted: a number nobody typed
+            # is the one most likely to be wrong, and a wrong one here makes
+            # the router refuse the model for reasons the window never shows.
+            context_tokens = await providers.context_of(
+                connection.strip(), model.strip(), workspace
+            ) or DEFAULT_CONTEXT_TOKENS
         entry = ModelEntry(
             name=name.strip(),
             provider=provider.strip(),
@@ -675,7 +684,7 @@ class PrometheusService:
             quality=quality,
             dimensions=dimensions,
         )
-        return views.model_entry(await self._providers().add_model(entry, await self._here()))
+        return views.model_entry(await providers.add_model(entry, workspace))
 
     async def remove_model(self, name: str) -> None:
         await self._providers().remove_model(name, await self._here())

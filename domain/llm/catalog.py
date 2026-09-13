@@ -17,6 +17,9 @@ from dataclasses import dataclass, field
 from domain.capabilities.models import Capability
 from domain.llm.models import ModelChoice
 
+#: What an entry is assumed to take when nobody said and nothing could be asked.
+DEFAULT_CONTEXT_TOKENS = 8_192
+
 
 @dataclass(frozen=True, slots=True)
 class ModelEntry:
@@ -28,7 +31,7 @@ class ModelEntry:
     #: entry in the shipped file.
     connection: str = ""
     capabilities: frozenset[Capability] = field(default_factory=frozenset)
-    context_tokens: int = 8_192
+    context_tokens: int = DEFAULT_CONTEXT_TOKENS
     input_cost_per_1k_usd: float = 0.0
     output_cost_per_1k_usd: float = 0.0
     #: Rough, hand-maintained quality ranking used to break ties. It is a

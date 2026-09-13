@@ -43,15 +43,19 @@ class CapabilityAwareModelRouter:
         candidates = self._catalog.candidates(requirement)
 
         if not candidates:
+            # Capability values, not their reprs: this sentence reaches the
+            # window's trace, where `<Capability.CODE: 'CODE'>` read as a crash.
+            needed = ", ".join(sorted(item.value for item in requirement.required))
             raise ConfigurationError(
-                f"No model in the catalog satisfies {sorted(requirement.required)}"
+                "No model in the catalog can do this work: it needs "
+                + (needed or "any model")
                 + (
-                    f" with a {requirement.min_context_tokens} token context"
+                    f" with a context of at least {requirement.min_context_tokens} tokens"
                     if requirement.min_context_tokens
                     else ""
                 )
                 + (
-                    f" at quality {requirement.min_quality} or better"
+                    f", at quality {requirement.min_quality} or better"
                     if requirement.min_quality
                     else ""
                 )

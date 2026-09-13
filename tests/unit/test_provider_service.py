@@ -233,6 +233,19 @@ async def test_what_the_runner_already_has_is_offered_rather_than_typed() -> Non
     assert found.names == ("gemma4:31b-cloud", "lfm2:24b")
 
 
+async def test_the_context_of_a_model_is_asked_of_the_runner_that_serves_it() -> None:
+    class Inspector:
+        async def context_tokens(self, kind: str, base_url: str, model: str) -> int | None:
+            return 32768 if (kind, model) == ("local", "lfm2:24b") else None
+
+    providers, _, _, _ = service(inspect=Inspector())
+    await providers.add_connection("ollama", "local")
+
+    assert await providers.context_of("ollama", "lfm2:24b") == 32768
+    assert await providers.context_of("ollama", "unknown:1b") is None
+    assert await providers.context_of("", "lfm2:24b") is None
+
+
 async def test_a_machine_that_cannot_discover_says_the_kind_cannot_be_asked() -> None:
     providers, _, _, _ = service()
     await providers.add_connection("ollama", "local")

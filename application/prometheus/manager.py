@@ -156,7 +156,50 @@ class PrometheusManager:
         return objective
 
     async def handle_objective(self, objective: Objective) -> ObjectiveResult:
-        """Carry one objective to an answer."""
+        """Carry one objective to an answer.
+
+        A failure nothing below anticipated - a model server that is not
+        running, a store that went away - closes the record as FAILED and is
+        announced before it is raised again. Raising alone was the whole of it
+        until a request typed into the window with the local model server
+        stopped: the error left a background coroutine nobody awaited, the row
+        stayed RECEIVED, and every interface showed "reading your request" for
+        good. Re-raised rather than swallowed, because the callers that are
+        waiting - the CLI, a schedule, the validation harness - classify it by
+        its type.
+        """
+        try:
+            return await self._carry(objective)
+        except Exception as error:
+            await self._fail(objective, error)
+            raise
+
+    async def _fail(self, objective: Objective, error: Exception) -> None:
+        log.warning(
+            "prometheus.objective_failed",
+            objective_id=str(objective.id),
+            error=f"{type(error).__name__}: {error}",
+        )
+        try:
+            # Read back rather than taken from the argument: the stages above
+            # saved what the request was understood to mean, and writing the
+            # copy that was handed in would erase it.
+            current = await self._objectives.get(objective.id) or objective
+            if current.is_terminal:
+                return
+            await self._finish(
+                current,
+                ObjectiveStatus.FAILED,
+                summary=f"This could not be finished: {error}",
+            )
+        except Exception as closing:  # the original error is the one worth raising
+            log.warning(
+                "prometheus.objective_not_closed",
+                objective_id=str(objective.id),
+                error=f"{type(closing).__name__}: {closing}",
+            )
+
+    async def _carry(self, objective: Objective) -> ObjectiveResult:
         workforce = self._registry.list(objective.workspace_id)
         await self._announce(objective, "Working out what you are asking for.")
 
@@ -187,6 +230,15 @@ class PrometheusManager:
             )
 
         rejected: tuple[str, ...] = ()
+        if intent.is_conversation:
+            # Nothing to do and nothing written down to check: a greeting, a
+            # question about Prometheus, a fact that does not change. The
+            # verifier used to see these too, and a local model judging them
+            # against "nothing was done" rejected every one - "Hello" became a
+            # plan, and "what is the capital of France" became work that could
+            # not be started. A reading that names a standard is still checked
+            # against it below; this is only the case where there is none.
+            return await self._answer_directly(objective, intent)
         if intent.is_answerable_directly:
             # The evidence for a direct answer is that there is none. Saying so
             # is the whole of Phase 18's fix here: three runs in a row answered

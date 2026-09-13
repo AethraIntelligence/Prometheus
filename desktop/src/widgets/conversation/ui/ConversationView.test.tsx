@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { Message } from "../../../entities/conversation";
@@ -31,7 +31,7 @@ describe("ConversationView", () => {
     expect(greetingFor(21)).toBe("Good evening.");
   });
 
-  it("shows the trail only while something is running", () => {
+  it("has a trail only while something is running, folded until asked for", () => {
     const events = [
       {
         task_id: "t1",
@@ -49,6 +49,8 @@ describe("ConversationView", () => {
     idle.unmount();
 
     render(<ConversationView messages={[message]} activity={events} busy />);
+    expect(screen.queryByText("files.write")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Working on it/ }));
     expect(screen.getByText("files.write")).toBeInTheDocument();
   });
 });

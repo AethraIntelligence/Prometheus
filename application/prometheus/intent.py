@@ -36,9 +36,15 @@ log = structlog.get_logger(__name__)
 class IntentReader:
     """Free text in, `Intent` out."""
 
-    def __init__(self, llm: LLM, *, language: str = DEFAULT_LANGUAGE) -> None:
+    def __init__(
+        self, llm: LLM, *, language: str = DEFAULT_LANGUAGE, triage: LLM | None = None
+    ) -> None:
+        """`triage` is the model asked for a second opinion before a reading of
+        "no work" is believed. Without one the reading stands on its own, which
+        is what a scripted test wants and what a strong model can carry."""
         self._llm = llm
         self._language = language
+        self._triage = triage
 
     async def read(
         self,
@@ -84,11 +90,25 @@ class IntentReader:
 
         needs_work = bool(parsed.get("needs_work", True))
         answer = str(parsed.get("answer", "")).strip()
-        # A model that says "no work needed" and then supplies no answer has
-        # told us nothing. The safe reading of that is that there is work.
+        if not needs_work and not await self._is_talk(request):
+            # A second opinion, asked as one narrow question, before a reply is
+            # believed. The reading's own flag is one field of a long form, and
+            # a local model filled it "no work" for today's weather, an
+            # exchange rate and the number of files in a folder - then answered
+            # all three from nothing. Asked only "look it up, or reply?", the
+            # same model sorted every one of them correctly. Where the two
+            # disagree it is work: a slow answer beats an invented one.
+            log.info("prometheus.intent_overruled", restatement=parsed.get("restatement", ""))
+            needs_work, answer = True, ""
         if not needs_work and not answer:
+            # It said this is talk and left the reply empty - which is what a
+            # small model does with an empty form: fills the flag and copies the
+            # blank. Reading that as work turned "Hello" into a plan. The
+            # reading is kept and the reply asked for on its own; only a reply
+            # that still does not come makes it work.
             log.info("prometheus.intent_answerless", restatement=parsed.get("restatement", ""))
-            needs_work = True
+            answer = await self._reply(request, workforce)
+            needs_work = not answer
 
         intent = Intent(
             restatement=str(parsed.get("restatement", "")).strip() or request,
@@ -106,6 +126,33 @@ class IntentReader:
             preferences=len(intent.preferences),
         )
         return intent
+
+    async def _is_talk(self, request: str) -> bool:
+        """True only for a clear "reply from what you know"; anything else is work."""
+        if self._triage is None:
+            return True
+        response = await self._triage.generate(
+            LLMRequest(
+                messages=(Message.user(render("prometheus_triage", request=request)),),
+                temperature=0.0,
+                max_tokens=5,
+            )
+        )
+        return response.content.strip()[:1].upper() == "A"
+
+    async def _reply(self, request: str, workforce: list[EmployeeDefinition]) -> str:
+        response = await self._llm.generate(
+            LLMRequest(
+                messages=(
+                    *instruction(self._language, about="your reply"),
+                    Message.user(
+                        render("prometheus_reply", request=request, workforce=describe(workforce))
+                    ),
+                ),
+                temperature=0.3,
+            )
+        )
+        return response.content.strip()
 
     @staticmethod
     def routing() -> tuple[TaskKind, CapabilityRequirement, RoutingHints]:

@@ -166,7 +166,8 @@ class NewModel(BaseModel):
     model: str = Field(min_length=1, max_length=200)
     connection: str = ""
     capabilities: tuple[str, ...] = ()
-    context_tokens: int = 8192
+    #: Left out, it is asked of the runner that serves the model.
+    context_tokens: int | None = None
     input_cost_per_1k_usd: float = 0.0
     output_cost_per_1k_usd: float = 0.0
     quality: float = 0.5
