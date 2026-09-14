@@ -7,17 +7,21 @@
  * record of what is configured.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   ConnectionCard,
   ModelRow,
   type Connection,
   type ModelEntry,
+  type Setup,
 } from "../../../../entities/provider";
 import {
   AddConnectionForm,
   AddModelForm,
+  ProviderAdviceList,
+  RequirementsList,
+  SetupGuide,
   WorkRouting,
 } from "../../../../features/manage-providers";
 import { useRuntime } from "../../../../shared/api";
@@ -54,8 +58,20 @@ export function ModelsSection() {
   const client = useRuntime();
   const providers = useProviders(client);
   const [adding, setAdding] = useState<"connection" | "model" | null>(null);
+  // Which recommendation opened the connection dialog, so it arrives filled in.
+  const [forSetup, setForSetup] = useState<Setup | null>(null);
 
   const connections = providers.settings.connections;
+  const guide = providers.settings.guide;
+  // A machine with nothing connected yet is the person the advice is for, so it
+  // opens; afterwards it stays one click away instead of pushing the record down.
+  // Decided once, when the runtime first answers: following the count would
+  // fold the advice away the moment its second step succeeded, one step short
+  // of the button it was leading to.
+  const [guideOpen, setGuideOpen] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (providers.ready && guideOpen === null) setGuideOpen(connections.length === 0);
+  }, [providers.ready, guideOpen, connections.length]);
 
   return (
     <>
@@ -69,6 +85,38 @@ export function ModelsSection() {
         <p className="problem" role="alert">
           {providers.problem}
         </p>
+      )}
+
+      {guide && guide.setups.length > 0 && (
+        <section className="panel">
+          <details
+            className="guide-fold"
+            open={guideOpen ?? false}
+            onToggle={(event) => setGuideOpen(event.currentTarget.open)}
+          >
+            <summary>
+              <h2>Which models to use</h2>
+              <span className="note">Recommended setups, free options and what each needs</span>
+            </summary>
+            <SetupGuide
+              guide={guide}
+              disabled={!providers.ready}
+              onConnect={(setup) => {
+                setForSetup(setup);
+                setAdding("connection");
+              }}
+              onApply={(setup) => providers.useSetup(setup.id)}
+            />
+            <details className="guide-more">
+              <summary>Which provider should I choose?</summary>
+              <ProviderAdviceList guide={guide} />
+            </details>
+            <details className="guide-more">
+              <summary>What a model has to be able to do</summary>
+              <RequirementsList guide={guide} />
+            </details>
+          </details>
+        </section>
       )}
 
       <section className="panel">
@@ -162,13 +210,19 @@ export function ModelsSection() {
         <Modal
           title="Add provider"
           note="The kinds come from the runtime. A key is sent and never read back."
-          onClose={() => setAdding(null)}
+          onClose={() => {
+            setAdding(null);
+            setForSetup(null);
+          }}
         >
           <AddConnectionForm
             kinds={providers.settings.kinds}
+            initialKind={forSetup?.kind}
+            initialName={forSetup?.connection_name}
             onAdd={async (submission) => {
               await providers.addProvider(submission);
               setAdding(null);
+              setForSetup(null);
             }}
           />
         </Modal>

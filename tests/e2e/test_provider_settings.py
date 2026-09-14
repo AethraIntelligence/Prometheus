@@ -221,3 +221,64 @@ def test_a_kind_this_machine_cannot_talk_to_is_refused(client: TestClient) -> No
             json={"name": "x", "kind": "some-startup", "api_key": "k"},
         )
         assert answer.status_code >= 400
+
+
+def test_a_recommended_setup_is_applied_in_one_request_and_twice_is_harmless(
+    client: TestClient,
+) -> None:
+    with client:
+        page = client.get("/api/providers").json()
+        free = next(s for s in page["guide"]["setups"] if s["id"] == "openrouter-free")
+        assert (free["connection"], free["applied"]) == ("", False)
+        assert all(model["free"] for model in free["models"])
+
+        refused = client.post("/api/providers/setups/openrouter-free/apply", json={})
+        assert refused.status_code == 400
+        assert "openrouter connection first" in refused.json()["detail"]
+
+        client.post(
+            "/api/providers/connections",
+            json={"name": "openrouter", "kind": "openrouter", "api_key": KEY},
+        )
+        applied = client.post("/api/providers/setups/openrouter-free/apply", json={})
+        assert applied.status_code == 200, applied.text
+        assert applied.json()["added"] == ["free-main", "free-vision", "free-fast"]
+
+        again = client.post("/api/providers/setups/openrouter-free/apply", json={})
+        assert again.json()["added"] == ["free-main", "free-vision", "free-fast"]
+
+        page = client.get("/api/providers").json()
+        names = [m["name"] for m in page["models"]]
+        assert names.count("free-main") == 1, "applying twice does not duplicate"
+        assert page["defaults"]["PLANNING"] == "free-main"
+        assert page["defaults"]["EXTRACTION"] == "free-fast"
+        free = next(s for s in page["guide"]["setups"] if s["id"] == "openrouter-free")
+        assert (free["connection"], free["applied"]) == ("openrouter", True)
+        assert KEY not in str(page)
+
+
+def test_a_setup_never_overwrites_an_entry_of_the_same_name_for_another_model(
+    client: TestClient,
+) -> None:
+    with client:
+        client.post(
+            "/api/providers/connections",
+            json={"name": "openrouter", "kind": "openrouter", "api_key": KEY},
+        )
+        client.post(
+            "/api/providers/models",
+            json={
+                "name": "free-main",
+                "provider": "openrouter",
+                "model": "somebody/else",
+                "connection": "openrouter",
+                "capabilities": ["TEXT_REASONING"],
+                "context_tokens": 8000,
+            },
+        )
+
+        added = client.post("/api/providers/setups/openrouter-free/apply", json={}).json()
+
+        assert added["added"][0] == "free-main-2"
+        models = {m["name"]: m["model"] for m in client.get("/api/providers").json()["models"]}
+        assert models["free-main"] == "somebody/else"

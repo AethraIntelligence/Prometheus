@@ -24,16 +24,19 @@ export interface ConnectionSubmission {
 
 interface Props {
   kinds: ProviderKind[];
+  /** Filled in when the way here was a recommendation that already knows both. */
+  initialKind?: string;
+  initialName?: string;
   onAdd: (submission: ConnectionSubmission) => Promise<void>;
   disabled?: boolean;
 }
 
-export function AddConnectionForm({ kinds, onAdd, disabled }: Props) {
-  const [name, setName] = useState("");
+export function AddConnectionForm({ kinds, onAdd, disabled, initialKind, initialName }: Props) {
+  const [name, setName] = useState(initialName ?? "");
   // Empty until a person picks: the kinds arrive from the runtime after the
   // first render, and a value captured then would be "" for good - a form that
   // looks filled in and refuses to submit.
-  const [picked, setKind] = useState("");
+  const [picked, setKind] = useState(initialKind ?? "");
   const kind = picked || kinds[0]?.name || "";
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");

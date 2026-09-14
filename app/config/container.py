@@ -51,6 +51,7 @@ from domain.errors import PrometheusError
 from infrastructure.container import Container
 from infrastructure.knowledge.extraction import Extractors
 from infrastructure.llm.discovery import LocalModelDiscovery
+from infrastructure.llm.guide import load_guide
 from infrastructure.llm.providers import KINDS
 from infrastructure.mcp.connector import cached_connector, mcp_connector
 from infrastructure.validation.approver import DeclaredApprover
@@ -473,6 +474,7 @@ def build_providers(container: Container) -> ProviderService:
         discover=discovery,
         inspect=discovery,
         on_change=reload,
+        guide=load_guide(),
     )
 
 

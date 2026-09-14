@@ -18,6 +18,7 @@ import {
 import {
   addConnection,
   addModel,
+  applySetup,
   clearWorkRouting,
   removeConnection,
   removeModel,
@@ -29,7 +30,13 @@ import {
 import { report, type RuntimeClient } from "../../../shared/api";
 import { describe } from "../../../shared/lib";
 
-const EMPTY: ProviderSettings = { kinds: [], connections: [], models: [], defaults: {} };
+const EMPTY: ProviderSettings = {
+  kinds: [],
+  connections: [],
+  models: [],
+  defaults: {},
+  guide: null,
+};
 
 export interface ProvidersState {
   ready: boolean;
@@ -42,6 +49,7 @@ export interface ProvidersState {
   dropEntry: (name: string) => Promise<void>;
   route: (taskKind: string, entryName: string) => Promise<void>;
   installed: (connection: string) => Promise<InstalledModels>;
+  useSetup: (setupId: string) => Promise<void>;
 }
 
 export function useProviders(client: RuntimeClient): ProvidersState {
@@ -67,6 +75,7 @@ export function useProviders(client: RuntimeClient): ProvidersState {
         connections: body?.connections ?? [],
         models: body?.models ?? [],
         defaults: body?.defaults ?? {},
+        guide: body?.guide ?? null,
       });
     } catch (error) {
       fail(error);
@@ -133,5 +142,6 @@ export function useProviders(client: RuntimeClient): ProvidersState {
           : clearWorkRouting(client, taskKind),
       ),
     installed: (connection) => providerApi.installed(client, connection),
+    useSetup: (setupId) => run(() => applySetup(client, setupId)),
   };
 }

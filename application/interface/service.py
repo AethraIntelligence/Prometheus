@@ -706,6 +706,32 @@ class PrometheusService:
         """What this machine can talk to at all. The list a person picks from."""
         return [views.provider_kind(kind) for kind in self._providers().kinds()]
 
+    async def provider_guide(self) -> dict[str, Any] | None:
+        """Recommended setups, with whether each is connected and applied here."""
+        providers = self._providers()
+        guide = providers.guide
+        if guide is None:
+            return None
+        workspace = await self._here()
+        entries = await providers.list_models(workspace)
+        connections: dict[str, str] = {}
+        for connection in await providers.list_connections(workspace):
+            connections.setdefault(connection.kind, connection.name)
+        return views.provider_guide(
+            guide,
+            applied={
+                setup.id: setup.kind in connections and providers.setup_applied(setup, entries)
+                for setup in guide.setups
+            },
+            connections=connections,
+        )
+
+    async def apply_provider_setup(self, setup_id: str, connection: str = "") -> dict[str, Any]:
+        providers = self._providers()
+        added = await providers.apply_setup(setup_id, connection.strip(), await self._here())
+        await self._follow_embedding_model()
+        return {"added": [entry.name for entry in added]}
+
     async def list_connections(self) -> list[dict[str, Any]]:
         providers = self._providers()
         stored = await self._stored_credential_names()

@@ -88,3 +88,20 @@ export async function clearWorkRouting(
   );
   return body.defaults;
 }
+
+/**
+ * Add a recommended setup's models and send work to them, in one request.
+ *
+ * The core picks the connection (the first of the setup's kind), reuses what
+ * is already in the catalog and never overwrites an entry of the same name.
+ */
+export async function applySetup(
+  client: RuntimeClient,
+  setupId: string,
+  connection = "",
+): Promise<{ added: string[] }> {
+  return client.post<{ added: string[] }>(
+    `/api/providers/setups/${encodeURIComponent(setupId)}/apply`,
+    { connection },
+  );
+}

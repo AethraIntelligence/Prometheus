@@ -138,6 +138,12 @@ class SettingsChange(BaseModel):
     values: dict[str, bool | int | float | str | list[str] | None] = Field(min_length=1)
 
 
+class SetupChoice(BaseModel):
+    """Which connection a recommended setup goes through. Empty: the first of its kind."""
+
+    connection: str = Field(default="", max_length=120)
+
+
 class SettingsReset(BaseModel):
     """Which settings to reset. None means every one a window saved."""
 
@@ -610,7 +616,15 @@ def _routes(app: FastAPI) -> None:
             "connections": await _settings_change(service.list_connections()),
             "models": await _settings_change(service.list_models()),
             "defaults": await _settings_change(service.list_task_defaults()),
+            "guide": await _settings_change(service.provider_guide()),
         }
+
+    @app.post("/api/providers/setups/{setup_id}/apply")
+    async def apply_setup(request: Request, setup_id: str, body: SetupChoice) -> dict[str, Any]:
+        """One click from a recommendation to a working catalog and routing."""
+        return await _settings_change(
+            _service(request).apply_provider_setup(setup_id, body.connection)
+        )
 
     @app.post("/api/providers/connections", status_code=201)
     async def add_connection(request: Request, body: NewConnection) -> dict[str, Any]:

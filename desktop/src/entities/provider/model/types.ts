@@ -68,10 +68,72 @@ export interface InstalledModels {
   address: string;
 }
 
+/**
+ * What the runtime recommends connecting, and how far this machine has got.
+ *
+ * Every name in it - providers, models, links - arrives from the runtime; this
+ * window names none (`architecture.test.ts`). `connection` and `applied` are
+ * decided by the core per setup.
+ */
+export interface SetupStep {
+  text: string;
+  /** "link" opens `url`, "connect" adds a connection, "apply" adds the models. */
+  action: "" | "link" | "connect" | "apply";
+  url: string;
+  command: string;
+}
+
+export interface RecommendedModel {
+  name: string;
+  role: string;
+  model: string;
+  why: string;
+  capabilities: string[];
+  context_tokens: number;
+  free: boolean;
+  input_cost_per_1m_usd: number;
+  output_cost_per_1m_usd: number;
+  /** Kinds of work this model is given when the setup is applied. */
+  route: string[];
+}
+
+export interface Setup {
+  id: string;
+  title: string;
+  badge: string;
+  summary: string;
+  kind: string;
+  connection_name: string;
+  good_for: string;
+  /** The connection of this kind already on the machine, or "". */
+  connection: string;
+  /** Whether every model of the setup is already in the catalog. */
+  applied: boolean;
+  steps: SetupStep[];
+  models: RecommendedModel[];
+  cautions: string[];
+}
+
+export interface ProviderAdvice {
+  kind: string;
+  label: string;
+  verdict: "RECOMMENDED" | "SUPPORTED" | "NOT_YET";
+  text: string;
+}
+
+export interface ProviderGuide {
+  intro: string;
+  checked: string;
+  setups: Setup[];
+  providers: ProviderAdvice[];
+  requirements: { title: string; text: string }[];
+}
+
 export interface ProviderSettings {
   kinds: ProviderKind[];
   connections: Connection[];
   models: ModelEntry[];
   /** Kind of work -> catalog entry name. */
   defaults: Record<string, string>;
+  guide: ProviderGuide | null;
 }

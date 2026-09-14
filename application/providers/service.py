@@ -31,9 +31,11 @@ from __future__ import annotations
 
 import structlog
 
+from domain.capabilities.models import Capability
 from domain.errors import ConfigurationError, NotFoundError
 from domain.llm.catalog import ModelEntry
 from domain.llm.models import TaskKind
+from domain.providers.guide import ProviderGuide, Setup
 from domain.providers.models import Connection, InstalledModels
 from domain.providers.protocols import (
     CatalogAdmin,
@@ -60,6 +62,7 @@ class ProviderService:
         discover: ModelDiscovery | None = None,
         inspect: ModelInspector | None = None,
         on_change: object = None,
+        guide: ProviderGuide | None = None,
     ) -> None:
         self._connections = connections
         self._catalog = catalog
@@ -74,6 +77,9 @@ class ProviderService:
         # without a restart. A settings page whose effect begins after a restart
         # is a settings page people stop trusting.
         self._on_change = on_change
+        # Advice about what to connect, handed in for the same reason the kinds
+        # are: it names products, and this layer may not.
+        self._guide = guide
 
     # --- Connections ----------------------------------------------------------
 
@@ -240,6 +246,111 @@ class ProviderService:
         await self._changed()
         return cleared
 
+    # --- Recommended setups --------------------------------------------------
+
+    @property
+    def guide(self) -> ProviderGuide | None:
+        return self._guide
+
+    def setup_named(self, setup_id: str) -> Setup:
+        setup = self._guide.setup(setup_id) if self._guide is not None else None
+        if setup is None:
+            raise NotFoundError(f"No recommended setup called '{setup_id}'.")
+        return setup
+
+    async def apply_setup(
+        self,
+        setup_id: str,
+        connection_name: str = "",
+        workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
+    ) -> list[ModelEntry]:
+        """Add a setup's models through one connection and send work to them.
+
+        What a person would otherwise do by hand in two dialogs and seven
+        dropdowns, decided once here. Three rules keep it safe to press twice:
+
+        - a model already in the catalog for this provider is reused, not
+          duplicated - only its routing is applied;
+        - an entry name taken by a *different* model is never overwritten; the
+          new entry gets a free name beside it, because the taken one may be
+          what somebody's work is routed to;
+        - the connection has to be of the setup's kind, and when none is named
+          the first such connection is used. With none, the refusal says what
+          to add.
+        """
+        setup = self.setup_named(setup_id)
+        connection = await self._connection_for(setup, connection_name, workspace_id)
+        entries = {entry.name: entry for entry in await self._catalog.entries(workspace_id)}
+
+        added: list[ModelEntry] = []
+        names: dict[str, str] = {}
+        for recommended in setup.models:
+            existing = next(
+                (
+                    entry
+                    for entry in entries.values()
+                    if entry.provider == setup.kind
+                    and entry.model == recommended.model
+                    and entry.connection in ("", connection.name)
+                ),
+                None,
+            )
+            name = existing.name if existing is not None else _free_name(recommended.name, entries)
+            entry = ModelEntry(
+                name=name,
+                provider=setup.kind,
+                model=recommended.model,
+                connection=connection.name,
+                capabilities=frozenset(Capability(item) for item in recommended.capabilities),
+                context_tokens=recommended.context_tokens,
+                input_cost_per_1k_usd=recommended.input_cost_per_1k_usd,
+                output_cost_per_1k_usd=recommended.output_cost_per_1k_usd,
+                quality=recommended.quality,
+                dimensions=recommended.dimensions,
+            )
+            await self._catalog.save_entry(entry, workspace_id)
+            entries[name] = entry
+            names[recommended.name] = name
+            added.append(entry)
+
+        for recommended in setup.models:
+            for kind in recommended.route:
+                await self._catalog.set_default(
+                    TaskKind(kind), names[recommended.name], workspace_id
+                )
+        await self._changed()
+        log.info(
+            "setup.applied",
+            setup=setup.id,
+            connection=connection.name,
+            entries=[entry.name for entry in added],
+        )
+        return added
+
+    def setup_applied(self, setup: Setup, entries: list[ModelEntry]) -> bool:
+        """Whether every model of the setup is in the catalog for its provider."""
+        present = {(entry.provider, entry.model) for entry in entries if entry.connection}
+        return all((setup.kind, model.model) in present for model in setup.models)
+
+    async def _connection_for(
+        self, setup: Setup, name: str, workspace_id: WorkspaceId
+    ) -> Connection:
+        if name:
+            connection = await self._require(name, workspace_id)
+            if connection.kind != setup.kind:
+                raise ConfigurationError(
+                    f"'{connection.name}' is a {connection.kind} connection; "
+                    f"this setup needs a {setup.kind} one."
+                )
+            return connection
+        for connection in await self._connections.list(workspace_id):
+            if connection.kind == setup.kind:
+                return connection
+        raise ConfigurationError(
+            f"Add a {setup.kind} connection first - the models in this setup are "
+            "reached through it."
+        )
+
     # --- Inside ---------------------------------------------------------------
 
     def _kind_named(self, kind: str):
@@ -271,6 +382,15 @@ class ProviderService:
         result = self._on_change()  # type: ignore[operator]
         if hasattr(result, "__await__"):
             await result
+
+
+def _free_name(wanted: str, taken: dict[str, ModelEntry]) -> str:
+    if wanted not in taken:
+        return wanted
+    number = 2
+    while f"{wanted}-{number}" in taken:
+        number += 1
+    return f"{wanted}-{number}"
 
 
 def _secret_name_for(connection: str) -> str:

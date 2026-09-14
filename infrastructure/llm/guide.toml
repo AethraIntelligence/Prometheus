@@ -1,0 +1,325 @@
+# What Settings -> Providers and models recommends.
+#
+# Written for a person choosing, not for the router: `why` and `summary` are read
+# on the screen. Every model here was checked against the provider's own model
+# list on the date in `checked` - ids, context sizes, prices and whether it can
+# call tools and return structured output. Free models come and go; check again
+# when changing this file, and change the date.
+#
+# `quality` follows the shipped catalogs' scale. It matters: verification and
+# delegation refuse any model below 0.5, so an entry meant for that work has to
+# be at least that.
+
+checked = "2026-09-14"
+
+intro = """
+Prometheus needs models that can call tools and return structured answers. Pick one
+of the setups below - each one adds the right models and sends each kind of work to
+the right one in a single click. You can change anything afterwards.
+"""
+
+# --- Setups -------------------------------------------------------------------
+
+[[setups]]
+id = "openrouter-free"
+title = "Start free with OpenRouter"
+badge = "Free"
+kind = "openrouter"
+connection_name = "openrouter"
+summary = """
+OpenRouter gives free access to a rotating set of open models. You need an account
+and a key, but no credit card.
+"""
+good_for = "Trying Prometheus, light everyday use, anything that is not private."
+cautions = [
+  "Free models have a daily and per-minute request limit. One request to Prometheus makes many model calls (reading, planning, working, checking), so the limit is reached faster than it looks. Buying a small amount of OpenRouter credit raises the daily limit.",
+  "Free models change. If one stops answering, open openrouter.ai/models and filter by price 0 - any model with tool support can replace it.",
+  "The providers serving free models may keep and use what you send. Do not use them for private documents or confidential work.",
+  "OpenRouter has no model for searching your documents. Add the local embedding model from the private setup for that - without it, documents are searched by words only.",
+]
+
+  [[setups.steps]]
+  text = "Create a free account and an API key."
+  action = "link"
+  url = "https://openrouter.ai/settings/keys"
+
+  [[setups.steps]]
+  text = "Add the key as an OpenRouter connection."
+  action = "connect"
+
+  [[setups.steps]]
+  text = "Add the recommended free models and send work to them."
+  action = "apply"
+
+  [[setups.models]]
+  name = "free-main"
+  role = "Planning, acting and answering"
+  model = "nvidia/nemotron-3-super-120b-a12b:free"
+  why = "The strongest free model with reliable tool calls and structured output. Takes the work that decides things."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "CODE"]
+  context_tokens = 262144
+  quality = 0.7
+  route = ["PLANNING", "EXECUTION", "VERIFICATION", "SYNTHESIS", "CONVERSATION"]
+
+  [[setups.models]]
+  name = "free-vision"
+  role = "Seeing the screen"
+  model = "google/gemma-4-31b-it:free"
+  why = "Reads images, so browser and desktop control can see what they click. Also a fallback for text work."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION"]
+  context_tokens = 262144
+  quality = 0.6
+
+  [[setups.models]]
+  name = "free-fast"
+  role = "Short jobs: sorting, choosing, extracting"
+  model = "google/gemma-4-26b-a4b-it:free"
+  why = "Small and quick. Good enough for short structured answers, which is most of what this work is."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION"]
+  context_tokens = 262144
+  quality = 0.5
+  route = ["EXTRACTION"]
+
+[[setups]]
+id = "openrouter-best"
+title = "Best results with OpenRouter"
+badge = "Recommended"
+kind = "openrouter"
+connection_name = "openrouter"
+summary = """
+The models Prometheus is built and tested with. Paid per use: a typical request costs
+cents. One OpenRouter key also reaches every other model on OpenRouter.
+"""
+good_for = "Real work: long tasks, documents, the browser and the desktop."
+cautions = [
+  "Add credit on openrouter.ai before the first request - a key with no credit is refused.",
+  "Set a spending limit on the key in OpenRouter if you want a hard cap. `prometheus spend` shows what Prometheus has used.",
+]
+
+  [[setups.steps]]
+  text = "Create an account, add a few dollars of credit and create an API key."
+  action = "link"
+  url = "https://openrouter.ai/settings/keys"
+
+  [[setups.steps]]
+  text = "Add the key as an OpenRouter connection."
+  action = "connect"
+
+  [[setups.steps]]
+  text = "Add the recommended models and send work to them."
+  action = "apply"
+
+  [[setups.models]]
+  name = "balanced"
+  role = "Planning, acting and answering"
+  model = "anthropic/claude-sonnet-5"
+  why = "The best balance of quality, speed and price for agent work. Reliable with tools, reads images."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION", "CODE"]
+  context_tokens = 1000000
+  quality = 0.9
+  input_cost_per_1k_usd = 0.002
+  output_cost_per_1k_usd = 0.010
+  route = ["PLANNING", "EXECUTION", "SYNTHESIS", "CONVERSATION"]
+
+  [[setups.models]]
+  name = "fast"
+  role = "Checking results and short jobs"
+  model = "anthropic/claude-haiku-4.5"
+  why = "Fast and cheap, and still good enough to judge whether work was done."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION", "CODE"]
+  context_tokens = 200000
+  quality = 0.6
+  input_cost_per_1k_usd = 0.001
+  output_cost_per_1k_usd = 0.005
+  route = ["VERIFICATION", "EXTRACTION"]
+
+  [[setups.models]]
+  name = "deep"
+  role = "The hardest problems (optional)"
+  model = "anthropic/claude-opus-5"
+  why = "The most capable model. Not routed by default because it costs more - send planning to it under Where work goes when tasks are complex."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION", "CODE"]
+  context_tokens = 1000000
+  quality = 1.0
+  input_cost_per_1k_usd = 0.005
+  output_cost_per_1k_usd = 0.025
+
+[[setups]]
+id = "local-private"
+title = "Private, on this machine"
+badge = "Private"
+kind = "local"
+connection_name = "local"
+summary = """
+Models run on your own computer with Ollama. Nothing leaves the machine and nothing
+is paid. Needs a strong computer: 32 GB of memory is comfortable, 16 GB runs the
+smaller models only.
+"""
+good_for = "Private documents, offline work, no bills. Slower and less capable than hosted models."
+cautions = [
+  "Local models are noticeably weaker at long, many-step tasks. If results disappoint, keep the embedding model local and use a hosted setup for the rest.",
+  "Each model has to be downloaded once (several GB). Prometheus starts Ollama on its own when a local model is used.",
+]
+
+  [[setups.steps]]
+  text = "Install Ollama."
+  action = "link"
+  url = "https://ollama.com/download"
+
+  [[setups.steps]]
+  text = "Download the models in a terminal."
+  command = "ollama pull lfm2:24b && ollama pull lfm2.5:8b && ollama pull qwen2.5vl:7b && ollama pull nomic-embed-text"
+
+  [[setups.steps]]
+  text = "Add a local connection - no key needed."
+  action = "connect"
+
+  [[setups.steps]]
+  text = "Add the models and send work to them."
+  action = "apply"
+
+  [[setups.models]]
+  name = "local-balanced"
+  role = "Planning, acting and answering"
+  model = "lfm2:24b"
+  why = "The strongest model here that fits in 32 GB and calls tools reliably."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "CODE"]
+  context_tokens = 131072
+  quality = 0.6
+  route = ["PLANNING", "EXECUTION", "VERIFICATION", "SYNTHESIS", "CONVERSATION"]
+
+  [[setups.models]]
+  name = "local-fast"
+  role = "Short jobs: sorting, choosing, extracting"
+  model = "lfm2.5:8b"
+  why = "Small and quick, for the short structured answers."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT"]
+  context_tokens = 32768
+  quality = 0.4
+  route = ["EXTRACTION"]
+
+  [[setups.models]]
+  name = "local-vision"
+  role = "Seeing the screen"
+  model = "qwen2.5vl:7b"
+  why = "Reads screenshots for browser and desktop control."
+  capabilities = ["TEXT_REASONING", "VISION", "STRUCTURED_OUTPUT"]
+  context_tokens = 32768
+  quality = 0.6
+
+  [[setups.models]]
+  name = "embedding"
+  role = "Searching your documents by meaning"
+  model = "nomic-embed-text"
+  why = "Turns documents into searchable meaning, on this machine. Worth adding with any setup."
+  capabilities = ["EMBEDDING"]
+  context_tokens = 8192
+  quality = 0.5
+  dimensions = 768
+  route = ["EMBEDDING"]
+
+[[setups]]
+id = "anthropic-direct"
+title = "Directly with an Anthropic key"
+badge = "Direct"
+kind = "anthropic"
+connection_name = "anthropic"
+summary = """
+If you already have an Anthropic API key (it starts with sk-ant-), use it directly
+instead of through OpenRouter. The same models as the recommended setup.
+"""
+good_for = "People who already pay Anthropic, or whose organisation requires a direct contract."
+cautions = [
+  "An Anthropic key does not work as an OpenRouter key, and the other way round - add it as an Anthropic connection.",
+]
+
+  [[setups.steps]]
+  text = "Create an API key in the Anthropic console."
+  action = "link"
+  url = "https://console.anthropic.com/settings/keys"
+
+  [[setups.steps]]
+  text = "Add the key as an Anthropic connection."
+  action = "connect"
+
+  [[setups.steps]]
+  text = "Add the recommended models and send work to them."
+  action = "apply"
+
+  [[setups.models]]
+  name = "claude-balanced"
+  role = "Planning, acting and answering"
+  model = "claude-sonnet-5"
+  why = "The best balance of quality, speed and price for agent work."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION", "CODE"]
+  context_tokens = 1000000
+  quality = 0.9
+  input_cost_per_1k_usd = 0.002
+  output_cost_per_1k_usd = 0.010
+  route = ["PLANNING", "EXECUTION", "SYNTHESIS", "CONVERSATION"]
+
+  [[setups.models]]
+  name = "claude-fast"
+  role = "Checking results and short jobs"
+  model = "claude-haiku-4-5"
+  why = "Fast and cheap, and still good enough to judge whether work was done."
+  capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "VISION", "CODE"]
+  context_tokens = 200000
+  quality = 0.6
+  input_cost_per_1k_usd = 0.001
+  output_cost_per_1k_usd = 0.005
+  route = ["VERIFICATION", "EXTRACTION"]
+
+# --- Providers ------------------------------------------------------------------
+
+[[providers]]
+kind = "openrouter"
+label = "OpenRouter"
+verdict = "RECOMMENDED"
+text = "One key for hundreds of models from every major lab, including free ones. The easiest start and the most choice."
+
+[[providers]]
+kind = "anthropic"
+label = "Anthropic"
+verdict = "SUPPORTED"
+text = "Claude models directly. Best if you already have an Anthropic key; reaches Claude models only."
+
+[[providers]]
+kind = "local"
+label = "Local model runner (Ollama)"
+verdict = "SUPPORTED"
+text = "Free and private. Quality depends on your computer; weaker at long tasks than hosted models."
+
+[[providers]]
+kind = "openai"
+label = "OpenAI"
+verdict = "NOT_YET"
+text = "Not connected directly yet. Use OpenAI models through OpenRouter with the same results."
+
+[[providers]]
+kind = "gemini"
+label = "Google Gemini"
+verdict = "NOT_YET"
+text = "Not connected directly yet. Use Gemini models through OpenRouter with the same results."
+
+# --- What a model has to be able to do -------------------------------------------
+
+[[requirements]]
+title = "Tool calling - required"
+text = "Employees act by calling tools: reading files, opening pages, running code. A model without tool support can talk but cannot do anything."
+
+[[requirements]]
+title = "Structured output - required"
+text = "Plans, checks and decisions come back as structured data. Models that cannot keep to a format make plans fail."
+
+[[requirements]]
+title = "Quality 0.5 or higher for checking and delegating"
+text = "Judging whether work was done, and choosing who does it, are refused to weaker models. Keep at least one model at 0.5 or above."
+
+[[requirements]]
+title = "Vision - only for the browser screen and the desktop"
+text = "Needed to see screenshots. Everything else works without it."
+
+[[requirements]]
+title = "Embeddings - for searching documents by meaning"
+text = "A separate, small model. Best kept local, since it reads your documents. Without one, documents are searched by words."

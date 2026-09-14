@@ -33,6 +33,7 @@ from domain.llm.catalog import ModelEntry
 from domain.memory.models import MemoryItem
 from domain.policies.risk import at_least
 from domain.policies.rules import APPROVAL_THRESHOLD
+from domain.providers.guide import ProviderGuide
 from domain.providers.models import Connection, InstalledModels
 from domain.tasks.task import Task, TaskEvent
 from domain.tools.models import ToolSpec
@@ -609,3 +610,66 @@ def setting(item: Setting) -> dict[str, Any]:
 
 def _jsonable(value: object) -> object:
     return list(value) if isinstance(value, tuple) else value
+
+
+def provider_guide(
+    guide: ProviderGuide,
+    *,
+    applied: dict[str, bool],
+    connections: dict[str, str],
+) -> dict[str, Any]:
+    """Which provider and models to start with, and how far this machine has got.
+
+    `applied` and `connection` arrive decided per setup, like `used_for` on a
+    model: working out in the window whether a setup's models are all present
+    would be the catalog's question answered a second time.
+    """
+    return {
+        "intro": guide.intro,
+        "checked": guide.checked,
+        "setups": [
+            {
+                "id": setup.id,
+                "title": setup.title,
+                "badge": setup.badge,
+                "summary": setup.summary,
+                "kind": setup.kind,
+                "connection_name": setup.connection_name,
+                "good_for": setup.good_for,
+                "connection": connections.get(setup.kind, ""),
+                "applied": applied.get(setup.id, False),
+                "steps": [
+                    {
+                        "text": step.text,
+                        "action": step.action,
+                        "url": step.url,
+                        "command": step.command,
+                    }
+                    for step in setup.steps
+                ],
+                "models": [
+                    {
+                        "name": model.name,
+                        "role": model.role,
+                        "model": model.model,
+                        "why": model.why,
+                        "capabilities": list(model.capabilities),
+                        "context_tokens": model.context_tokens,
+                        "free": model.input_cost_per_1k_usd == 0
+                        and model.output_cost_per_1k_usd == 0,
+                        "input_cost_per_1m_usd": round(model.input_cost_per_1k_usd * 1000, 4),
+                        "output_cost_per_1m_usd": round(model.output_cost_per_1k_usd * 1000, 4),
+                        "route": list(model.route),
+                    }
+                    for model in setup.models
+                ],
+                "cautions": list(setup.cautions),
+            }
+            for setup in guide.setups
+        ],
+        "providers": [
+            {"kind": item.kind, "label": item.label, "verdict": item.verdict, "text": item.text}
+            for item in guide.providers
+        ],
+        "requirements": [{"title": item.title, "text": item.text} for item in guide.requirements],
+    }
