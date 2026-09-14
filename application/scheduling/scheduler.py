@@ -31,14 +31,16 @@ nothing to do with it. It is logged, recorded, and the pass continues.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
 
+from domain.conversations.repository import ConversationRepository
 from domain.scheduling.models import Event, Schedule, Trigger
 from domain.scheduling.protocols import EventLog, ScheduleRepository
+from domain.workforce import directions as carried
 from domain.workforce.protocols import ObjectiveResult, WorkforceManager
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
@@ -68,6 +70,14 @@ class Scheduler:
         tick_seconds: float = DEFAULT_TICK_SECONDS,
         # Injected so a test can decide what time it is instead of waiting.
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        # Every workspace on the machine, asked each pass. Without it only
+        # `workspace_id` is looked at - which is what a machine with one
+        # workspace has, and what left a schedule made in any other one never
+        # firing at all.
+        workspaces: Callable[[], Awaitable[Iterable[WorkspaceId]]] | None = None,
+        # Where a firing's thread is marked as spoken in, so it rises to the top
+        # of the list the way a thread somebody typed into does.
+        conversations: ConversationRepository | None = None,
     ) -> None:
         self._manager = manager
         self._schedules = schedules
@@ -75,6 +85,8 @@ class Scheduler:
         self._workspace_id = workspace_id
         self._tick = tick_seconds
         self._clock = clock
+        self._workspaces = workspaces
+        self._conversations = conversations
         #: Schedules with an objective in flight. In memory on purpose: it is a
         #: fact about this process, and a process that died is not still running
         #: anything.
@@ -86,16 +98,33 @@ class Scheduler:
         """Fire everything that is due or triggered, once. Never raises."""
         now = self._clock()
         results: list[ObjectiveResult] = []
+        for workspace_id in await self._workspaces_to_look_in():
+            results.extend(await self._tick_in(workspace_id, now))
+        return tuple(results)
 
-        for schedule in await self._schedules.due(now, self._workspace_id):
+    async def _workspaces_to_look_in(self) -> list[WorkspaceId]:
+        if self._workspaces is None:
+            return [self._workspace_id]
+        try:
+            found = list(await self._workspaces())
+        except Exception as error:
+            log.warning("scheduler.workspaces_unreadable", error=str(error))
+            return [self._workspace_id]
+        # The first workspace is always looked in: everything made before there
+        # were others belongs to it, and a listing that missed it would stop them.
+        return list(dict.fromkeys([self._workspace_id, *found]))
+
+    async def _tick_in(self, workspace_id: WorkspaceId, now: datetime) -> list[ObjectiveResult]:
+        results: list[ObjectiveResult] = []
+        for schedule in await self._schedules.due(now, workspace_id):
             fired = await self._fire(schedule, now, Trigger.SCHEDULED)
             if fired is not None:
                 results.append(fired)
 
-        for schedule in await self._schedules.list(self._workspace_id):
+        for schedule in await self._schedules.list(workspace_id):
             if not schedule.enabled or not schedule.on_event:
                 continue
-            for event in await self._events.pending(schedule.on_event, self._workspace_id):
+            for event in await self._events.pending(schedule.on_event, workspace_id):
                 # Claimed before the work, so two passes - or two schedules
                 # racing on one kind - cannot both act on one event.
                 if not await self._events.consume(event.id, now):
@@ -103,8 +132,7 @@ class Scheduler:
                 fired = await self._fire(schedule, now, Trigger.EVENT, event=event)
                 if fired is not None:
                     results.append(fired)
-
-        return tuple(results)
+        return results
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
         """Tick until asked to stop. The entry point `prometheus serve` starts."""
@@ -140,22 +168,10 @@ class Scheduler:
 
         self._running.add(schedule.id)
         try:
-            objective = await self._manager.receive(
-                _request_for(schedule, event), workspace_id=schedule.workspace_id
-            )
-            # Marked before the work, not after: a crash mid-objective costs
-            # this run and not a loop that keeps re-attempting whatever was
-            # heavy enough to crash.
-            await self._schedules.save(schedule.fired(now, objective.id))
-            log.info(
-                "scheduler.fired",
-                schedule=schedule.name or str(schedule.id),
-                trigger=trigger.value,
-                objective_id=str(objective.id),
-            )
-            result = await self._manager.handle_objective(objective)
-            await self._record(schedule, objective.id, result.status.value)
-            return result
+            # Carried around the whole objective, as a window request's are, so
+            # every task it starts prefers the schedule's model.
+            with carried.given(schedule.directions):
+                return await self._run(schedule, now, trigger, event)
         except Exception as error:
             # One schedule's failure is not the loop's. The others on this
             # machine have nothing to do with it.
@@ -168,6 +184,42 @@ class Scheduler:
             return None
         finally:
             self._running.discard(schedule.id)
+
+    async def _run(
+        self, schedule: Schedule, now: datetime, trigger: Trigger, event: Event | None
+    ) -> ObjectiveResult:
+        objective = await self._manager.receive(
+            _request_for(schedule, event),
+            workspace_id=schedule.workspace_id,
+            conversation_id=schedule.conversation_id,
+        )
+        await self._touch_thread(schedule, now)
+        # Marked before the work, not after: a crash mid-objective costs
+        # this run and not a loop that keeps re-attempting whatever was
+        # heavy enough to crash.
+        await self._schedules.save(schedule.fired(now, objective.id))
+        log.info(
+            "scheduler.fired",
+            schedule=schedule.name or str(schedule.id),
+            trigger=trigger.value,
+            objective_id=str(objective.id),
+            model=schedule.model or None,
+            approvals=schedule.approvals.value,
+        )
+        result = await self._manager.handle_objective(objective)
+        await self._record(schedule, objective.id, result.status.value)
+        return result
+
+    async def _touch_thread(self, schedule: Schedule, now: datetime) -> None:
+        """Guarded like `_record`: a thread that cannot be marked is not a failed run."""
+        if self._conversations is None or schedule.conversation_id is None:
+            return
+        try:
+            thread = await self._conversations.get(schedule.conversation_id)
+            if thread is not None:
+                await self._conversations.save(thread.touched(now))
+        except Exception as error:
+            log.warning("scheduler.thread_not_touched", error=str(error))
 
     async def _record(self, schedule: Schedule, objective_id: UUID | None, status: str) -> None:
         """Say what became of a firing, in the log a person reads afterwards.

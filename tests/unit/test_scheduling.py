@@ -37,10 +37,20 @@ class RecordingManager:
 
     def __init__(self, fail: bool = False) -> None:
         self.requests: list[str] = []
+        self.conversations: list = []
+        self.models: list[str] = []
+        self.approvals: list = []
+        self.workspaces: list = []
         self._fail = fail
 
-    async def receive(self, request: str, workspace_id=None) -> Objective:
+    async def receive(self, request: str, workspace_id=None, conversation_id=None) -> Objective:
+        from domain.workforce import directions
+
+        self.models.append(directions.current().model)
+        self.approvals.append(directions.current().approvals)
         self.requests.append(request)
+        self.conversations.append(conversation_id)
+        self.workspaces.append(workspace_id)
         return Objective.create(request)
 
     async def handle_objective(self, objective: Objective) -> ObjectiveResult:
@@ -52,9 +62,7 @@ class RecordingManager:
 
 
 def scheduler(manager, schedules, events, now=NOON) -> Scheduler:
-    return Scheduler(
-        manager=manager, schedules=schedules, events=events, clock=lambda: now
-    )
+    return Scheduler(manager=manager, schedules=schedules, events=events, clock=lambda: now)
 
 
 # --- The recurrence itself ----------------------------------------------------
@@ -226,3 +234,139 @@ async def test_what_a_firing_produced_is_itself_an_event() -> None:
     recorded = await events.recent()
     assert [e.kind for e in recorded] == [OBJECTIVE_FINISHED]
     assert recorded[0].payload["status"] == "DONE"
+
+
+# --- A schedule made in the window --------------------------------------------
+
+
+async def test_every_workspace_is_looked_in_not_only_the_first() -> None:
+    """A schedule made in a second workspace used to wait forever."""
+    schedules, events = InMemoryScheduleRepository(), InMemoryEventLog()
+    await schedules.save(
+        Schedule.create(
+            "Check the sales folder",
+            recurrence=Recurrence(every_seconds=3600),
+            workspace_id="sales",
+            created_at=NOON,
+        )
+    )
+    manager = RecordingManager()
+
+    async def every_workspace():
+        return ["default", "sales"]
+
+    found = Scheduler(
+        manager=manager,
+        schedules=schedules,
+        events=events,
+        clock=lambda: NOON,
+        workspaces=every_workspace,
+    )
+    await found.tick()
+
+    assert manager.requests == ["Check the sales folder"]
+    assert manager.workspaces == ["sales"]
+
+
+async def test_a_firing_is_written_into_the_schedules_thread() -> None:
+    from uuid import uuid4
+
+    thread = uuid4()
+    schedules, events = InMemoryScheduleRepository(), InMemoryEventLog()
+    await schedules.save(
+        Schedule.create(
+            "Morning digest",
+            recurrence=Recurrence(every_seconds=3600),
+            conversation_id=thread,
+            created_at=NOON,
+        )
+    )
+    manager = RecordingManager()
+
+    await scheduler(manager, schedules, events).tick()
+
+    assert manager.conversations == [thread]
+
+
+def test_resuming_a_paused_schedule_does_not_owe_what_the_pause_skipped() -> None:
+    hourly = Schedule.create(
+        "check", recurrence=Recurrence(every_seconds=3600), next_due_at=NOON - timedelta(days=3)
+    ).set_enabled(False)
+
+    resumed = hourly.set_enabled(True, now=NOON)
+
+    assert resumed.enabled
+    assert resumed.next_due_at == NOON + timedelta(hours=1)
+
+
+async def test_a_firing_prefers_the_schedules_model_and_nothing_leaks_past_it() -> None:
+    from domain.workforce import directions
+
+    schedules, events = InMemoryScheduleRepository(), InMemoryEventLog()
+    await schedules.save(
+        Schedule.create(
+            "Morning digest",
+            recurrence=Recurrence(every_seconds=3600),
+            model="balanced",
+            created_at=NOON,
+        )
+    )
+    manager = RecordingManager()
+
+    await scheduler(manager, schedules, events).tick()
+
+    assert manager.models == ["balanced"]
+    assert directions.current().model == "", "the choice belongs to that run only"
+
+
+def test_editing_the_timing_counts_the_next_run_from_now_and_keeps_the_history() -> None:
+    hourly = Schedule.create(
+        "check", recurrence=Recurrence(every_seconds=3600), created_at=NOON
+    ).fired(NOON)
+
+    edited = hourly.edited(
+        request="check twice as rarely",
+        name="rare",
+        recurrence=Recurrence(every_seconds=7200),
+        on_event="",
+        model="fast",
+        now=NOON + timedelta(minutes=10),
+    )
+
+    assert edited.id == hourly.id and edited.runs == 1
+    assert edited.next_due_at == NOON + timedelta(minutes=10, hours=2)
+    assert (edited.request, edited.name, edited.model) == ("check twice as rarely", "rare", "fast")
+
+
+def test_editing_only_the_words_keeps_the_next_run() -> None:
+    hourly = Schedule.create("check", recurrence=Recurrence(every_seconds=3600), created_at=NOON)
+
+    edited = hourly.edited(
+        request="check again",
+        name="",
+        recurrence=Recurrence(every_seconds=3600),
+        on_event="",
+        model="",
+        now=NOON + timedelta(minutes=10),
+    )
+
+    assert edited.next_due_at == hourly.next_due_at
+
+
+async def test_a_firing_is_carried_under_the_schedules_approvals() -> None:
+    from domain.workforce.directions import ApprovalChoice
+
+    schedules, events = InMemoryScheduleRepository(), InMemoryEventLog()
+    await schedules.save(
+        Schedule.create(
+            "Tidy the downloads",
+            recurrence=Recurrence(every_seconds=3600),
+            approvals=ApprovalChoice.DENY,
+            created_at=NOON,
+        )
+    )
+    manager = RecordingManager()
+
+    await scheduler(manager, schedules, events).tick()
+
+    assert manager.approvals == [ApprovalChoice.DENY]

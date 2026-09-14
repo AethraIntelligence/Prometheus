@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.errors import StorageError, StorageNotInitializedError
+from domain.workforce.directions import ApprovalChoice, Directions
 from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.persistence.dialect import upsert
@@ -30,6 +31,10 @@ def _to_row(objective: Objective) -> dict[str, object]:
         "text": objective.text,
         "constraints": objective.constraints,
         "acceptance_criteria": list(objective.acceptance_criteria),
+        "directions": {
+            "approvals": objective.directions.approvals.value,
+            "model": objective.directions.model,
+        },
         "status": objective.status.value,
         "result": (
             {
@@ -56,6 +61,7 @@ def _to_objective(row: ObjectiveRow) -> Objective:
         conversation_id=UUID(row.conversation_id) if row.conversation_id else None,
         constraints=row.constraints or {},
         acceptance_criteria=tuple(row.acceptance_criteria or ()),
+        directions=_directions(row.directions or {}),
         status=status,
         result=(
             ObjectiveResult(
@@ -72,6 +78,14 @@ def _to_objective(row: ObjectiveRow) -> Objective:
         created_at=_aware(row.created_at),
         finished_at=_aware(row.finished_at) if row.finished_at else None,
     )
+
+
+def _directions(stored: dict) -> Directions:
+    try:
+        approvals = ApprovalChoice(str(stored.get("approvals") or "ASK"))
+    except ValueError:
+        approvals = ApprovalChoice.ASK
+    return Directions(approvals=approvals, model=str(stored.get("model") or ""))
 
 
 def _aware(value):

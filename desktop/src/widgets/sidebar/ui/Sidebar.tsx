@@ -27,18 +27,30 @@ import {
 } from "../../../features/manage-thread";
 import { report, useRuntime } from "../../../shared/api";
 import { describe } from "../../../shared/lib";
-import { ComposeIcon, GearIcon, PanelIcon, PlugIcon, SearchIcon } from "../../../shared/ui";
+import {
+  ClockIcon,
+  ComposeIcon,
+  GearIcon,
+  PanelIcon,
+  PlugIcon,
+  SearchIcon,
+} from "../../../shared/ui";
 import { groupByDay, markFor } from "../model/presentation";
 import { useThreads } from "../model/useThreads";
 
 interface Props {
   selected: string | null;
   settingsOpen: boolean;
+  /** Whether the schedules page is the one shown. */
+  schedulesOpen?: boolean;
   /** Changes when the page did something the list should show at once. */
   refresh: number;
   onSelect: (conversationId: string) => void;
   onNew: () => void;
   onSettings: (section?: "plugins") => void;
+  onSchedules?: () => void;
+  /** Make a schedule out of this thread's request. */
+  onRepeat?: (conversationId: string) => void;
   onClose: () => void;
   /** A thread was renamed or deleted from the list. */
   onThreadChanged?: (conversationId: string, change: "renamed" | "deleted") => void;
@@ -47,10 +59,13 @@ interface Props {
 export function Sidebar({
   selected,
   settingsOpen,
+  schedulesOpen = false,
   refresh,
   onSelect,
   onNew,
   onSettings,
+  onSchedules,
+  onRepeat,
   onClose,
   onThreadChanged,
 }: Props) {
@@ -128,6 +143,17 @@ export function Sidebar({
           <ComposeIcon />
           New task
         </button>
+        {onSchedules && (
+          <button
+            type="button"
+            className={schedulesOpen ? "navrow on" : "navrow"}
+            aria-current={schedulesOpen ? "page" : undefined}
+            onClick={onSchedules}
+          >
+            <ClockIcon />
+            Scheduled
+          </button>
+        )}
         <button type="button" className="navrow" onClick={() => onSettings("plugins")}>
           <PlugIcon />
           Plugins
@@ -203,6 +229,7 @@ export function Sidebar({
                     onOpen={(open) => setMenuFor(open ? thread.id : null)}
                     onRename={() => setRenaming(thread.id)}
                     onDelete={() => remove(thread.id)}
+                    onRepeat={onRepeat ? () => onRepeat(thread.id) : undefined}
                   />
                 </div>
               );

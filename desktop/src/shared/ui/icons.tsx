@@ -210,6 +210,20 @@ export const PeopleIcon = (props: Props) => (
   </svg>
 );
 
+/** A clock face: work that happens at a time rather than when asked. */
+export const ClockIcon = (props: Props) => (
+  <svg viewBox="0 0 20 20" {...base} {...props}>
+    <circle cx="10" cy="10" r="7.1" stroke="currentColor" strokeWidth="1.5" />
+    <path
+      d="M10 5.9V10l2.7 1.7"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 export const ComposeIcon = (props: Props) => (
   <svg viewBox="0 0 20 20" {...base} {...props}>
     <path

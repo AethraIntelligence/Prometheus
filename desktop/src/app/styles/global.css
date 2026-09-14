@@ -3085,3 +3085,164 @@ article > .actions {
   width: 12px;
   height: 12px;
 }
+
+/* ── scheduled work ─────────────────────── */
+
+.navrow.on {
+  background: var(--selected);
+}
+
+.schedule {
+  padding: 13px 15px;
+  margin: 0;
+}
+
+.schedule-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  min-width: 0;
+}
+
+.schedule-head strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.schedule-request {
+  margin: 3px 0 0;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.settings .schedule .note {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+}
+
+.schedule.paused .schedule-head strong,
+.schedule.paused .schedule-request {
+  color: var(--grey);
+}
+
+.schedule > .actions {
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+
+.schedules-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 30px 15px;
+}
+
+.schedules-empty svg {
+  width: 26px;
+  height: 26px;
+  color: var(--grey-2);
+}
+
+.schedules-empty p {
+  margin: 0;
+}
+
+.scheduler-off p {
+  margin: 0;
+}
+
+.scheduler-off .actions {
+  margin: 10px 0 0;
+  justify-content: flex-start;
+}
+
+.scheduler-off code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.new-schedule textarea {
+  width: 100%;
+}
+
+.new-schedule .when {
+  display: grid;
+  gap: 8px;
+}
+
+.new-schedule .when legend {
+  padding: 0 4px;
+  color: var(--grey);
+  font-size: 12.5px;
+}
+
+.new-schedule .when label.checkbox {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.new-schedule .when input[type="number"] {
+  width: 70px;
+}
+
+.new-schedule .when input:not([type="radio"]):not([type="number"]):not([type="time"]) {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.new-schedule input[type="radio"] {
+  accent-color: var(--ink);
+}
+
+.settings .new-schedule .when .note {
+  margin: 0;
+}
+
+/* ── restarting the runtime ─────────────── */
+
+.restart-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.restart-banner p {
+  margin: 0;
+  flex: 1 1 260px;
+}
+
+.restart-actions {
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.restart-banner .restart-actions,
+.scheduler-off .restart-actions {
+  margin: 0;
+}
+
+.scheduler-off .restart-actions {
+  margin-top: 10px;
+  justify-content: flex-start;
+}
+
+.settings .restart-actions .note,
+.settings .restart-progress,
+.settings .restart-manual {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.problem-inline {
+  flex-basis: 100%;
+  color: var(--del);
+  font-size: 12.5px;
+  text-align: right;
+}

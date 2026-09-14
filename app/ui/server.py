@@ -58,6 +58,7 @@ from app.config.container import (
     prepare,
 )
 from app.config.settings import Settings, get_settings
+from app.ui.restart import RESTART, RestartSignal
 from application.interface.activity import ActivityEvent
 from application.interface.contracts import (
     ApprovalChoice,
@@ -136,6 +137,32 @@ class SettingsChange(BaseModel):
     """Some of Settings -> General, by key. What each value may be is the editor's to say."""
 
     values: dict[str, bool | int | float | str | list[str] | None] = Field(min_length=1)
+
+
+class ScheduleForm(BaseModel):
+    """A schedule as the window's form holds it. Exactly one "when" is checked by the core."""
+
+    request: str = Field(min_length=1)
+    name: str = Field(default="", max_length=120)
+    every_minutes: int | None = None
+    #: HH:MM in the person's own clock, with the offset their clock had when
+    #: they typed it. Converted to UTC by the core, which is where the rule lives.
+    daily_at: str = ""
+    utc_offset_minutes: int = 0
+    on_event: str = Field(default="", max_length=64)
+    #: A catalog entry its runs prefer. Empty: the router decides.
+    model: str = Field(default="", max_length=120)
+    #: ASK, AUTO or DENY, checked by the core.
+    approvals: str = Field(default="ASK", max_length=8)
+
+
+class NewSchedule(ScheduleForm):
+    #: The thread this schedule repeats, when it was made from one.
+    conversation_id: UUID | None = None
+
+
+class ScheduleEdit(BaseModel):
+    enabled: bool
 
 
 class SetupChoice(BaseModel):
@@ -302,6 +329,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     build: Callable[[Settings], Container] = build_container,
+    restart: RestartSignal = RESTART,
 ) -> FastAPI:
     """Build the interface around its own container.
 
@@ -325,10 +353,14 @@ def create_app(
         await prepare(container)
 
         app.state.settings = resolved
+        app.state.restart = restart
         app.state.container = container
         app.state.confirmer = confirmer
         app.state.service = build_service(
-            container, confirmer, history_limit=resolved.ui_history_limit
+            container,
+            confirmer,
+            history_limit=resolved.ui_history_limit,
+            scheduler_running=resolved.scheduler_enabled,
         )
         # Started on the same loop that serves the requests, for the same
         # reason a task is: one process, one database, and a proactive
@@ -338,11 +370,16 @@ def create_app(
         stop_scheduler = asyncio.Event()
         scheduler_task: asyncio.Task[None] | None = None
         if resolved.scheduler_enabled:
+            async def every_workspace() -> list[WorkspaceId]:
+                return [item.id for item in await container.workspace_repository.list()]
+
             scheduler = Scheduler(
                 manager=build_manager(container),
                 schedules=container.schedule_repository,
                 events=container.event_log,
                 tick_seconds=resolved.scheduler_tick_seconds,
+                workspaces=every_workspace,
+                conversations=container.conversation_repository,
             )
             scheduler_task = asyncio.create_task(scheduler.run_forever(stop_scheduler))
 
@@ -386,8 +423,39 @@ def _routes(app: FastAPI) -> None:
 
     @app.get("/api/health")
     async def health(request: Request) -> dict[str, Any]:
-        """Is the engine answering. What a shell polls while it starts one up."""
-        return _service(request).health()
+        """Is the engine answering. What a shell polls while it starts one up.
+
+        `started_at` is this process's, so a window waiting out a restart can
+        tell the new process from the old one still answering its last requests.
+        """
+        signal: RestartSignal = request.app.state.restart
+        return {
+            **_service(request).health(),
+            "started_at": signal.started_at,
+            "can_restart": signal.available,
+            "carrying": _service(request).carrying(),
+        }
+
+    @app.post("/api/runtime/restart", status_code=202)
+    async def restart_runtime(request: Request) -> dict[str, Any]:
+        """Stop gracefully and start again, so code, `.env` and settings are reread.
+
+        Answered first and acted on a moment later: the stop closes the server,
+        and a request that closed it before replying would look to the window
+        like a failure of the very thing that is working.
+        """
+        signal: RestartSignal = request.app.state.restart
+        if not signal.available:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This runtime cannot restart itself - it was not started with "
+                    "`prometheus serve`, or runs with --reload. Restart it where it runs."
+                ),
+            )
+        stopping = _service(request).carrying()
+        asyncio.get_running_loop().call_later(0.3, signal.request)
+        return {"restarting": True, "stopping": stopping, "started_at": signal.started_at}
 
     @app.get("/api/employees")
     async def employees(request: Request) -> dict[str, Any]:
@@ -692,6 +760,63 @@ def _routes(app: FastAPI) -> None:
     @app.delete("/api/providers/defaults/{task_kind}")
     async def clear_task_default(request: Request, task_kind: str) -> dict[str, Any]:
         return {"defaults": await _settings_change(_service(request).clear_task_default(task_kind))}
+
+    # --- Work that starts on its own --------------------------------------------
+
+    @app.get("/api/schedules")
+    async def schedules(request: Request) -> dict[str, Any]:
+        return await _settings_change(_service(request).list_schedules())
+
+    @app.post("/api/schedules", status_code=201)
+    async def add_schedule(request: Request, body: NewSchedule) -> dict[str, Any]:
+        return await _settings_change(
+            _service(request).create_schedule(
+                body.request,
+                name=body.name,
+                every_minutes=body.every_minutes,
+                daily_at=body.daily_at,
+                utc_offset_minutes=body.utc_offset_minutes,
+                on_event=body.on_event,
+                conversation_id=body.conversation_id,
+                model=body.model,
+                approvals=body.approvals,
+            )
+        )
+
+    @app.put("/api/schedules/{schedule_id}")
+    async def change_schedule(
+        request: Request, schedule_id: UUID, body: ScheduleForm
+    ) -> dict[str, Any]:
+        return await _settings_change(
+            _service(request).update_schedule(
+                schedule_id,
+                body.request,
+                name=body.name,
+                every_minutes=body.every_minutes,
+                daily_at=body.daily_at,
+                utc_offset_minutes=body.utc_offset_minutes,
+                on_event=body.on_event,
+                model=body.model,
+                approvals=body.approvals,
+            )
+        )
+
+    @app.patch("/api/schedules/{schedule_id}")
+    async def edit_schedule(
+        request: Request, schedule_id: UUID, body: ScheduleEdit
+    ) -> dict[str, Any]:
+        return await _settings_change(
+            _service(request).set_schedule_enabled(schedule_id, body.enabled)
+        )
+
+    @app.delete("/api/schedules/{schedule_id}")
+    async def remove_schedule(request: Request, schedule_id: UUID) -> dict[str, Any]:
+        return {"removed": await _settings_change(_service(request).delete_schedule(schedule_id))}
+
+    @app.post("/api/schedules/{schedule_id}/run", status_code=201)
+    async def run_schedule(request: Request, schedule_id: UUID) -> dict[str, Any]:
+        """Ask for it now, into its own thread - how a person checks it does what they meant."""
+        return await _settings_change(_service(request).run_schedule_now(schedule_id))
 
     # --- General settings -----------------------------------------------------
 

@@ -35,6 +35,7 @@ from domain.policies.risk import at_least
 from domain.policies.rules import APPROVAL_THRESHOLD
 from domain.providers.guide import ProviderGuide
 from domain.providers.models import Connection, InstalledModels
+from domain.scheduling.models import Schedule
 from domain.tasks.task import Task, TaskEvent
 from domain.tools.models import ToolSpec
 from domain.tools.telemetry import ToolCallRecord
@@ -415,6 +416,7 @@ def message(item: Objective, *, thinking: bool = False) -> dict[str, Any]:
         "answer": answer.summary if answer else "",
         "missing": list(answer.missing) if answer else [],
         "answered": answer is not None,
+        "directions": directions(item.directions),
     }
 
 
@@ -673,3 +675,40 @@ def provider_guide(
         ],
         "requirements": [{"title": item.title, "text": item.text} for item in guide.requirements],
     }
+
+
+def schedule(item: Schedule, *, last_status: str | None = None) -> dict[str, Any]:
+    """A standing request: what, when, and what became of it last time.
+
+    Times go out as UTC ISO strings and the recurrence as its parts. How "09:00
+    UTC" reads on the person's own clock is the window's to render - it knows
+    the clock - while which moment is meant is the core's.
+    """
+    recurrence = item.recurrence
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "request": item.request,
+        "enabled": item.enabled,
+        "every_seconds": recurrence.every_seconds if recurrence else None,
+        "daily_at_utc": (
+            recurrence.daily_at.isoformat(timespec="minutes")
+            if recurrence and recurrence.daily_at
+            else None
+        ),
+        "on_event": item.on_event,
+        "describe": item.describe(),
+        "next_due_at": item.next_due_at.isoformat() if item.next_due_at else None,
+        "last_run_at": item.last_run_at.isoformat() if item.last_run_at else None,
+        "last_status": last_status,
+        "runs": item.runs,
+        "conversation_id": str(item.conversation_id) if item.conversation_id else None,
+        "model": item.model,
+        "approvals": item.approvals.value,
+        "created_at": item.created_at.isoformat(),
+    }
+
+
+def directions(item: Any) -> dict[str, str]:
+    """Approvals and a preferred model, as the composer shows them."""
+    return {"approvals": item.approvals.value, "model": item.model}

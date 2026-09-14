@@ -30,6 +30,7 @@ from domain.llm.models import (
 from domain.tools.models import ToolSpec
 from infrastructure.llm.errors import translate_status, translate_transport_error
 from infrastructure.llm.retry import RetryPolicy, with_retry
+from infrastructure.llm.tool_names import real_names, wire_name, wire_names
 from infrastructure.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -89,25 +90,31 @@ class ChatCompletionsProvider:
 
         body = await with_retry(_call, self._retry_policy)
         latency_ms = int((time.perf_counter() - started) * 1000)
-        return self._from_payload(body, latency_ms=latency_ms)
+        # The reverse of the translation on the way out, built from the same
+        # tools, so a call comes back under the name the executor knows.
+        names = real_names(wire_names(spec.name for spec in request.tools))
+        return self._from_payload(body, latency_ms=latency_ms, names=names)
 
     # --- Wire format ----------------------------------------------------------
 
     def _to_payload(self, request: LLMRequest) -> dict[str, Any]:
+        names = wire_names(spec.name for spec in request.tools)
         payload: dict[str, Any] = {
             "model": request.model or self._default_model,
-            "messages": [_message_to_wire(message) for message in request.messages],
+            "messages": [_message_to_wire(message, names) for message in request.messages],
             "temperature": request.temperature,
         }
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
         if request.tools:
-            payload["tools"] = [_tool_to_wire(tool) for tool in request.tools]
+            payload["tools"] = [_tool_to_wire(tool, names) for tool in request.tools]
         if request.response_format is not None:
             payload["response_format"] = request.response_format
         return payload
 
-    def _from_payload(self, body: dict[str, Any], *, latency_ms: int) -> LLMResponse:
+    def _from_payload(
+        self, body: dict[str, Any], *, latency_ms: int, names: dict[str, str] | None = None
+    ) -> LLMResponse:
         try:
             choice = body["choices"][0]
             message = choice["message"]
@@ -120,7 +127,9 @@ class ChatCompletionsProvider:
         return LLMResponse(
             content=message.get("content") or "",
             model=body.get("model", self._default_model),
-            tool_calls=tuple(_tool_call_from_wire(c) for c in message.get("tool_calls") or ()),
+            tool_calls=tuple(
+                _tool_call_from_wire(c, names or {}) for c in message.get("tool_calls") or ()
+            ),
             usage=Usage(
                 prompt_tokens=int(raw_usage.get("prompt_tokens", 0)),
                 output_tokens=int(raw_usage.get("completion_tokens", 0)),
@@ -153,14 +162,43 @@ class ChatCompletionsProvider:
             )
 
         try:
-            return response.json()
+            body = response.json()
         except ValueError as error:
             raise ProviderError(
                 f"{self.provider_name} returned a body that is not JSON: {response.text[:200]}"
             ) from error
+        failure = _error_in_body(body)
+        if failure is not None:
+            # Raised here, inside the retried call, rather than found later
+            # while reading the choice: a router that relays an upstream
+            # failure answers 200 with the failure in the body, and read as
+            # "unusable" it was permanent - one overloaded free model ended a
+            # scheduled run in three seconds with a retry budget untouched.
+            code, message = failure
+            raise translate_status(code, message, provider=self.provider_name)
+        return body
 
 
-def _message_to_wire(message: Message) -> dict[str, Any]:
+def _error_in_body(body: Any) -> tuple[int, str] | None:
+    """A failure reported inside a successful response, as a status and a message.
+
+    Only when there is no answer beside it. The status is the one the body
+    names; one that names none is treated as the upstream being unavailable,
+    because that is what a gateway relaying a failure without a code means.
+    """
+    if not isinstance(body, dict) or body.get("choices") or not body.get("error"):
+        return None
+    error = body["error"]
+    if not isinstance(error, dict):
+        return 502, str(error)
+    try:
+        code = int(error.get("code") or 502)
+    except (TypeError, ValueError):
+        code = 502
+    return code, str(error.get("message") or error)
+
+
+def _message_to_wire(message: Message, names: dict[str, str] | None = None) -> dict[str, Any]:
     # A message with pictures is sent as a list of content parts; one without
     # stays a plain string. Sending the list shape unconditionally would be
     # tidier here and is rejected by enough servers - local runners especially -
@@ -181,7 +219,10 @@ def _message_to_wire(message: Message) -> dict[str, Any]:
             {
                 "id": call.id,
                 "type": "function",
-                "function": {"name": call.name, "arguments": json.dumps(call.arguments)},
+                "function": {
+                    "name": wire_name(call.name, names or {}),
+                    "arguments": json.dumps(call.arguments),
+                },
             }
             for call in message.tool_calls
         ]
@@ -192,18 +233,18 @@ def _message_to_wire(message: Message) -> dict[str, Any]:
     return wire
 
 
-def _tool_to_wire(tool: ToolSpec) -> dict[str, Any]:
+def _tool_to_wire(tool: ToolSpec, names: dict[str, str]) -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": tool.name,
+            "name": names.get(tool.name, tool.name),
             "description": tool.description,
             "parameters": tool.json_schema or {"type": "object", "properties": {}},
         },
     }
 
 
-def _tool_call_from_wire(raw: dict[str, Any]) -> ToolCallRequest:
+def _tool_call_from_wire(raw: dict[str, Any], names: dict[str, str]) -> ToolCallRequest:
     function = raw.get("function") or {}
     raw_arguments = function.get("arguments") or "{}"
     try:
@@ -213,6 +254,5 @@ def _tool_call_from_wire(raw: dict[str, Any]) -> ToolCallRequest:
         # failing the whole response: the executor can ask the model to retry.
         log.warning("llm.tool_call.invalid_arguments", tool=function.get("name"))
         arguments = {"__raw": raw_arguments}
-    return ToolCallRequest(
-        id=raw.get("id", ""), name=function.get("name", ""), arguments=arguments
-    )
+    wire = function.get("name", "")
+    return ToolCallRequest(id=raw.get("id", ""), name=names.get(wire, wire), arguments=arguments)

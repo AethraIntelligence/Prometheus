@@ -6,6 +6,7 @@ export {
   CheckIcon,
   ChevronDown,
   ChevronRight,
+  ClockIcon,
   CloseIcon,
   ComposeIcon,
   CopyIcon,

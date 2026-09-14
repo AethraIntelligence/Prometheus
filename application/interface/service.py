@@ -28,6 +28,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from datetime import time
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -76,10 +77,13 @@ from domain.memory.models import MemoryItem, MemoryKind, MemoryQuery, MemoryScop
 from domain.memory.protocols import Memory, MemoryMaintenance
 from domain.policies.models import ActorKind, SimpleActor
 from domain.policies.risk import Effect
+from domain.scheduling.models import MIN_INTERVAL_SECONDS, Recurrence, Schedule
+from domain.scheduling.protocols import ScheduleRepository
 from domain.secrets.protocols import CredentialStore
 from domain.tasks.repository import TaskRepository
 from domain.tools.protocols import ToolRegistry
 from domain.tools.telemetry import ToolCallLog
+from domain.workforce.directions import ApprovalChoice
 from domain.workforce.repository import ObjectiveRepository, PlanRepository
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
@@ -188,6 +192,12 @@ class ServiceDependencies:
     #: shows them. None where a surface was built without one; the listing is
     #: then empty and a change is refused, rather than saved nowhere.
     settings: SettingsEditor | None = None
+    #: The standing requests. None where a surface was built without them.
+    schedules: ScheduleRepository | None = None
+    #: Whether this process is firing schedules. Said rather than inferred: a
+    #: schedule shown as "next at 09:00" on a machine that will not fire it is
+    #: the one lie this screen must not tell.
+    scheduler_running: bool = False
     history_limit: int = DEFAULT_LIMIT
 
 
@@ -253,17 +263,39 @@ class PrometheusService:
         if conversation is None:
             return None
         thread = await self._d.objectives.for_conversation(conversation_id)
+        schedule = await self._schedule_writing_into(conversation)
+        # What the composer opens on. A schedule's thread shows the schedule's
+        # own settings, because those are what its next run will use and what
+        # the person set; any other thread shows how its last request was asked.
+        if schedule is not None:
+            chosen = schedule.directions
+        elif thread:
+            chosen = thread[-1].directions
+        else:
+            chosen = None
         return {
             **views.conversation(
                 conversation,
                 messages=len(thread),
                 status=thread[-1].status.value if thread else None,
             ),
+            "directions": views.directions(chosen) if chosen is not None else None,
+            "schedule_id": str(schedule.id) if schedule is not None else None,
             "messages": [
                 views.message(item, thinking=self._d.runs.is_thinking(item.id))
                 for item in thread
             ],
         }
+
+    async def _schedule_writing_into(self, conversation: Conversation) -> Schedule | None:
+        if self._d.schedules is None:
+            return None
+        try:
+            found = await self._d.schedules.list(conversation.workspace_id)
+        except Exception as error:  # a thread must open even if schedules cannot be read
+            log.warning("interface.schedules_unreadable", error=str(error))
+            return None
+        return next((item for item in found if item.conversation_id == conversation.id), None)
 
     async def rename_conversation(self, conversation_id: UUID, title: str) -> dict[str, Any] | None:
         conversation = await self._d.conversations.get(conversation_id)
@@ -1101,6 +1133,179 @@ class PrometheusService:
         await store.store(name, value)
         return {"name": name, "stored": True}
 
+    # --- Work that starts on its own -------------------------------------------
+
+    def _schedules(self) -> ScheduleRepository:
+        if self._d.schedules is None:
+            raise ConfigurationError("This interface was built without schedules.")
+        return self._d.schedules
+
+    async def list_schedules(self) -> dict[str, Any]:
+        """The standing requests here, and whether anything is firing them."""
+        if self._d.schedules is None:
+            return {"available": False, "running": False, "schedules": []}
+        found = await self._d.schedules.list(await self._here())
+        listed = []
+        for item in found:
+            status = None
+            if item.last_objective_id is not None:
+                last = await self._d.objectives.get(item.last_objective_id)
+                status = last.status.value if last else None
+            listed.append(views.schedule(item, last_status=status))
+        return {"available": True, "running": self._d.scheduler_running, "schedules": listed}
+
+    async def create_schedule(
+        self,
+        request: str,
+        *,
+        name: str = "",
+        every_minutes: int | None = None,
+        daily_at: str = "",
+        utc_offset_minutes: int = 0,
+        on_event: str = "",
+        conversation_id: UUID | None = None,
+        model: str = "",
+        approvals: str = "ASK",
+    ) -> dict[str, Any]:
+        """A standing request, with a thread its runs are written into.
+
+        Exactly one "when". A time of day arrives on the person's clock with
+        that clock's offset and is stored in UTC, as every schedule is: a
+        machine that travels or changes its clocks keeps firing at the moment
+        that was meant when it was set. The thread is the one it was made from,
+        or a new one named after it - created now, so the first run has
+        somewhere to go and the window has something to open.
+        """
+        store = self._schedules()
+        text = request.strip()
+        if not text:
+            raise PrometheusError("A schedule with no request would ask for nothing.")
+        recurrence = _recurrence(every_minutes, daily_at, utc_offset_minutes, on_event)
+        workspace = await self._here()
+        model = await self._model_for_schedule(model, workspace)
+
+        thread = None
+        if conversation_id is not None:
+            thread = await self._d.conversations.get(conversation_id)
+        if thread is None:
+            thread = Conversation.create(name.strip() or text, workspace_id=workspace)
+            await self._d.conversations.save(thread)
+
+        try:
+            created = Schedule.create(
+                text,
+                name=name.strip(),
+                recurrence=recurrence,
+                on_event=on_event.strip(),
+                workspace_id=workspace,
+                conversation_id=thread.id,
+                model=model,
+                approvals=_approval_choice(approvals),
+            )
+        except ValueError as error:
+            raise PrometheusError(str(error)) from error
+        await store.save(created)
+        log.info("schedule.created", schedule_id=str(created.id), when=created.describe())
+        return views.schedule(created)
+
+    async def update_schedule(
+        self,
+        schedule_id: UUID,
+        request: str,
+        *,
+        name: str = "",
+        every_minutes: int | None = None,
+        daily_at: str = "",
+        utc_offset_minutes: int = 0,
+        on_event: str = "",
+        model: str = "",
+        approvals: str = "ASK",
+    ) -> dict[str, Any]:
+        """Say a schedule differently: what, when, with which model and approvals.
+
+        The whole schedule is sent, as the form holds it, and checked by the same
+        rules as a new one. Its thread, its count and its last run stay - it is
+        the same standing instruction, and its history is still its own.
+        """
+        store = self._schedules()
+        found = await store.get(schedule_id)
+        if found is None:
+            raise NotFoundError("No schedule with that id.")
+        recurrence = _recurrence(every_minutes, daily_at, utc_offset_minutes, on_event)
+        chosen = await self._model_for_schedule(model, found.workspace_id)
+        try:
+            updated = found.edited(
+                request=request,
+                name=name,
+                recurrence=recurrence,
+                on_event=on_event,
+                model=chosen,
+                approvals=_approval_choice(approvals),
+            )
+        except ValueError as error:
+            raise PrometheusError(str(error)) from error
+        await store.save(updated)
+        log.info("schedule.edited", schedule_id=str(updated.id), when=updated.describe())
+        return views.schedule(updated)
+
+    async def _model_for_schedule(self, model: str, workspace: WorkspaceId) -> str:
+        """A catalog entry that can write text, or "" for the router's choice.
+
+        Checked when it is chosen rather than when it runs: a schedule that
+        names a model nobody has is found out at four in the morning otherwise.
+        An entry removed later is not an error either way - the router passes a
+        preference it cannot find and decides as it would have.
+        """
+        name = model.strip()
+        if not name or self._d.providers is None:
+            return name
+        entries = {entry.name: entry for entry in await self._d.providers.list_models(workspace)}
+        entry = entries.get(name)
+        if entry is None:
+            raise PrometheusError(f"There is no model called '{name}' in the catalog.")
+        if not entry.generates_text:
+            raise PrometheusError(f"'{name}' cannot write text, so it cannot run a request.")
+        return name
+
+    async def set_schedule_enabled(self, schedule_id: UUID, enabled: bool) -> dict[str, Any]:
+        store = self._schedules()
+        found = await store.get(schedule_id)
+        if found is None:
+            raise NotFoundError("No schedule with that id.")
+        updated = found.set_enabled(enabled)
+        await store.save(updated)
+        return views.schedule(updated)
+
+    async def delete_schedule(self, schedule_id: UUID) -> bool:
+        """The instruction goes; the thread and what its runs did stay, as history does."""
+        store = self._schedules()
+        if await store.get(schedule_id) is None:
+            raise NotFoundError("No schedule with that id.")
+        return await store.delete(schedule_id)
+
+    async def run_schedule_now(self, schedule_id: UUID) -> dict[str, Any]:
+        """The request, asked now, in the schedule's thread - through the one way in.
+
+        Not a firing: the schedule's clock and its count stay as they were, and
+        the run is a person asking, with a person there to answer approvals.
+        """
+        found = await self._schedules().get(schedule_id)
+        if found is None:
+            raise NotFoundError("No schedule with that id.")
+        answer = await self.submit(
+            UserRequest(
+                content=found.request,
+                source=RequestSource.API,
+                conversation_id=found.conversation_id,
+                workspace_id=found.workspace_id,
+                directions=found.directions,
+            )
+        )
+        return {
+            **answer,
+            "conversation_id": str(found.conversation_id) if found.conversation_id else None,
+        }
+
     # --- General settings -----------------------------------------------------
 
     async def list_settings(self) -> dict[str, Any]:
@@ -1186,6 +1391,10 @@ class PrometheusService:
         if self._background:
             await asyncio.gather(*self._background, return_exceptions=True)
 
+    def carrying(self) -> int:
+        """Runs in flight here: what a restart would stop, said before it does."""
+        return self._d.runs.carrying
+
     def health(self) -> dict[str, Any]:
         """Enough for a shell to know the runtime it started is up.
 
@@ -1198,6 +1407,37 @@ class PrometheusService:
             "workspace": str(DEFAULT_WORKSPACE_ID),
             "sources": [source.value for source in RequestSource],
         }
+
+
+def _approval_choice(value: str) -> ApprovalChoice:
+    try:
+        return ApprovalChoice((value or "ASK").strip().upper())
+    except ValueError as error:
+        raise PrometheusError(
+            f"'{value}' is not an approvals choice: ASK, AUTO or DENY."
+        ) from error
+
+
+def _recurrence(
+    every_minutes: int | None, daily_at: str, utc_offset_minutes: int, on_event: str
+) -> Recurrence | None:
+    chosen = [every_minutes is not None, bool(daily_at.strip()), bool(on_event.strip())]
+    if sum(chosen) != 1:
+        raise PrometheusError(
+            "Choose exactly one: every so many minutes, a time of day, or an event."
+        )
+    if on_event.strip():
+        return None
+    try:
+        if every_minutes is not None:
+            if every_minutes * 60 < MIN_INTERVAL_SECONDS:
+                raise PrometheusError("The shortest interval is one minute.")
+            return Recurrence(every_seconds=every_minutes * 60)
+        local = time.fromisoformat(daily_at.strip())
+    except ValueError as error:
+        raise PrometheusError(f"'{daily_at}' is not a time of day (HH:MM).") from error
+    minutes = (local.hour * 60 + local.minute - utc_offset_minutes) % (24 * 60)
+    return Recurrence(daily_at=time(minutes // 60, minutes % 60))
 
 
 def _settings_view(settings) -> dict[str, Any]:

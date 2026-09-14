@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import httpx
 import pytest
@@ -82,7 +83,8 @@ async def test_domain_tool_specs_become_the_provider_shape() -> None:
         {
             "type": "function",
             "function": {
-                "name": "browser.search",
+                # Translated: a validating provider refuses a dot outright.
+                "name": "browser_search",
                 "description": "Search the web",
                 "parameters": tool.json_schema,
             },
@@ -207,3 +209,103 @@ async def test_an_unusable_body_is_a_provider_error() -> None:
 async def test_a_non_json_body_is_a_provider_error() -> None:
     with pytest.raises(ProviderError, match="not JSON"):
         await provider(lambda _r: httpx.Response(200, text="<html>gateway</html>")).generate(ask())
+
+
+async def test_an_upstream_failure_relayed_in_a_200_is_transient_and_retried() -> None:
+    """An overloaded free model used to end a scheduled run in three seconds."""
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "gen-1",
+                    "error": {
+                        "message": "Upstream error: Service temporarily overloaded",
+                        "code": 502,
+                        "metadata": {"error_type": "provider_unavailable"},
+                    },
+                },
+            )
+        return httpx.Response(200, json=COMPLETION)
+
+    retried = OpenRouterProvider(
+        "test-key",
+        default_model="vendor/medium",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        retry_policy=RetryPolicy(attempts=2, base_delay_seconds=0),
+    )
+
+    response = await retried.generate(ask())
+
+    assert response.content == "Berlin."
+    assert calls["count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ({"message": "overloaded", "code": 502}, ProviderUnavailableError),
+        ({"message": "slow down", "code": 429}, RateLimitError),
+        ({"message": "bad model id", "code": 400}, InvalidRequestError),
+        ({"message": "no code at all"}, ProviderUnavailableError),
+    ],
+)
+async def test_a_failure_in_the_body_keeps_its_kind(error, expected) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"error": error})
+
+    with pytest.raises(expected):
+        await provider(handler).generate(ask())
+
+
+async def test_dotted_tool_names_go_out_translated_and_come_back_as_declared() -> None:
+    """A provider that validates names refused every call carrying `browser.extract`."""
+    captured: dict = {}
+    extract = ToolSpec(name="browser.extract", description="Extract", json_schema={})
+    read = ToolSpec(name="fs.read", description="Read", json_schema={})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": "vendor/medium",
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call_2",
+                                    "type": "function",
+                                    "function": {"name": "browser_extract", "arguments": "{}"},
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+            },
+        )
+
+    earlier = ToolCallRequest(id="call_1", name="fs.read", arguments={"path": "a.txt"})
+    response = await provider(handler).generate(
+        LLMRequest(
+            messages=(
+                Message.user("read, then extract"),
+                Message.assistant("", tool_calls=(earlier,)),
+                Message.tool("contents", tool_call_id="call_1"),
+            ),
+            tools=(extract, read),
+        )
+    )
+
+    sent = [tool["function"]["name"] for tool in captured["body"]["tools"]]
+    assert sent == ["browser_extract", "fs_read"]
+    assert all(re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name) for name in sent)
+    replayed = captured["body"]["messages"][1]["tool_calls"][0]["function"]["name"]
+    assert replayed == "fs_read", "the history uses the names the request does"
+    assert response.tool_calls[0].name == "browser.extract"

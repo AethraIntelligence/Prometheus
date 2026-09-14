@@ -51,6 +51,8 @@ from domain.llm.models import (
 from domain.tools.models import ToolSpec
 from infrastructure.llm.errors import translate_status, translate_transport_error
 from infrastructure.llm.retry import RetryPolicy, with_retry
+from infrastructure.llm.tool_names import wire_name
+from infrastructure.llm.tool_names import wire_names as shared_wire_names
 from infrastructure.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -96,9 +98,6 @@ _STOP_REASONS = {
 
 _DATA_URL = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<data>.+)$", re.DOTALL)
 
-#: What the API accepts as a tool name. Anything else is a 400, and every tool
-#: this platform declares is dotted.
-_NAME_ALLOWED = re.compile(r"[^a-zA-Z0-9_-]")
 
 
 class AnthropicProvider:
@@ -273,25 +272,8 @@ class AnthropicProvider:
 
 
 def wire_names(names: Any) -> dict[str, str]:
-    """Map each tool name to one the API will accept, reversibly.
-
-    `fs.read` becomes `fs_read`. Two different tools can sanitise to the same
-    thing - `fs.read` and `fs_read` would - and silently merging them would
-    route a call to the wrong tool, so a clash gets a suffix instead. The order
-    the registry lists tools in is stable, so the mapping is too.
-    """
-    mapping: dict[str, str] = {}
-    taken: set[str] = set()
-    for name in names:
-        wire = _NAME_ALLOWED.sub("_", name)[:128] or "tool"
-        if wire in taken:
-            base, index = wire, 2
-            while wire in taken:
-                wire = f"{base[:125]}_{index}"
-                index += 1
-        taken.add(wire)
-        mapping[name] = wire
-    return mapping
+    """This API's longer limit on the shared translation (`tool_names.py`)."""
+    return shared_wire_names(names, max_length=128)
 
 
 def _split_system(
@@ -355,7 +337,7 @@ def _content(message: Message, names: dict[str, str]) -> list[dict[str, Any]]:
                 "id": call.id,
                 # A replayed transcript names tools the same way the request
                 # does, or the model is shown a history it could not have made.
-                "name": names.get(call.name, _NAME_ALLOWED.sub("_", call.name)),
+                "name": wire_name(call.name, names, max_length=128),
                 "input": call.arguments,
             }
         )

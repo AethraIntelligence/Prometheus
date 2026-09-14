@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { ChatPage } from "../pages/chat";
+import { SchedulesPage } from "../pages/schedules";
 import { SettingsPage } from "../pages/settings";
 import { RuntimeProvider, type RuntimeClient } from "../shared/api";
 import { Sidebar } from "../widgets/sidebar";
@@ -22,24 +23,31 @@ const narrow = () => typeof window !== "undefined" && window.innerWidth < NARROW
  * and a screen left over from the previous one would be showing another
  * context's work under the new context's name.
  *
+ * Scheduled work is a page beside the conversation, not inside settings: it
+ * is read the way the thread list is - what is coming, what happened - and
+ * its results open as the threads they were written into.
+ *
  * Settings take the whole window and bring their own menu. A list of threads
  * beside a screen that has nothing to do with any of them is a column of dead
  * weight, and the way back is one button that says so.
  */
 export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: string }) {
-  const [showing, setShowing] = useState<"work" | "settings">("work");
+  const [showing, setShowing] = useState<"work" | "settings" | "schedules">("work");
   const [workspace, setWorkspace] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const [railOpen, setRailOpen] = useState(() => !narrow());
   const [heard, setHeard] = useState(0);
   const [renamed, setRenamed] = useState(0);
-  const [section, setSection] = useState<"plugins" | undefined>(undefined);
+  const [section, setSection] = useState<"plugins" | "general" | undefined>(undefined);
+  // A thread somebody asked to repeat, held until the schedules page has read it.
+  const [repeat, setRepeat] = useState<string | null>(null);
+  const repeatTaken = useCallback(() => setRepeat(null), []);
 
   const switched = () => {
     setWorkspace((count) => count + 1);
     setOpen(null);
   };
-  const go = (page: "work" | "settings", thread: string | null = open) => {
+  const go = (page: "work" | "settings" | "schedules", thread: string | null = open) => {
     setShowing(page);
     setOpen(thread);
     if (narrow()) setRailOpen(false);
@@ -63,8 +71,14 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
       <div className={railOpen ? "app" : "app rail-closed"}>
         <Sidebar
           key={`rail-${workspace}`}
-          selected={open}
+          selected={showing === "work" ? open : null}
           settingsOpen={false}
+          schedulesOpen={showing === "schedules"}
+          onSchedules={() => go("schedules")}
+          onRepeat={(thread) => {
+            setRepeat(thread);
+            go("schedules");
+          }}
           refresh={heard}
           onSelect={(thread) => go("work", thread)}
           onNew={() => go("work", null)}
@@ -84,16 +98,31 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           aria-hidden="true"
           onClick={() => setRailOpen(false)}
         />
-        <ChatPage
-          key={workspace}
-          conversationId={open}
-          onOpened={setOpen}
-          onChanged={() => setHeard((count) => count + 1)}
-          refresh={renamed}
-          onSwitched={switched}
-          railOpen={railOpen}
-          onOpenRail={() => setRailOpen(true)}
-        />
+        {showing === "schedules" ? (
+          <SchedulesPage
+            key={`schedules-${workspace}`}
+            railOpen={railOpen}
+            onOpenRail={() => setRailOpen(true)}
+            onOpenThread={(thread) => go("work", thread)}
+            repeat={repeat}
+            onRepeatTaken={repeatTaken}
+            onOpenSettings={() => {
+              setSection("general");
+              go("settings");
+            }}
+          />
+        ) : (
+          <ChatPage
+            key={workspace}
+            conversationId={open}
+            onOpened={setOpen}
+            onChanged={() => setHeard((count) => count + 1)}
+            refresh={renamed}
+            onSwitched={switched}
+            railOpen={railOpen}
+            onOpenRail={() => setRailOpen(true)}
+          />
+        )}
       </div>
     </RuntimeProvider>
   );

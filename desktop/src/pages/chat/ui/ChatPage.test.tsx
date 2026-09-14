@@ -13,7 +13,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../../app";
-import { RuntimeClient } from "../../../shared/api";
+import { RuntimeClient, RuntimeProvider } from "../../../shared/api";
+import { ChatPage } from "./ChatPage";
 
 const BASE = "http://127.0.0.1:9999";
 
@@ -102,6 +103,18 @@ function scriptedRuntime() {
     if (path.endsWith("/api/conversations/c1") && init?.method === "DELETE") {
       state.deleted = true;
       return { deleted: true };
+    }
+    if (path.endsWith("/api/conversations/c9")) {
+      // A schedule's thread, set to a model the list does not offer and to refuse.
+      return {
+        id: "c9",
+        title: "Morning research",
+        created_at: "2026-09-08T09:00:00+00:00",
+        updated_at: "2026-09-08T09:00:00+00:00",
+        schedule_id: "s1",
+        directions: { approvals: "DENY", model: "scheduled-model" },
+        messages: [],
+      };
     }
     if (path.includes("/api/conversations/c1")) {
       return {
@@ -279,6 +292,18 @@ describe("the desktop window", () => {
     await waitFor(() =>
       expect(runtime.state.directions).toEqual([{ approvals: "AUTO", model: "balanced" }]),
     );
+  });
+
+  it("opens a thread on what it is set to, not on the defaults", async () => {
+    render(
+      <RuntimeProvider client={new RuntimeClient(BASE)}>
+        <ChatPage conversationId="c9" />
+      </RuntimeProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Approvals")).toHaveValue("DENY"));
+    expect(await screen.findByLabelText("Model")).toHaveValue("scheduled-model");
+    expect(screen.getByText("scheduled-model", { selector: "b" })).toBeInTheDocument();
   });
 
   it("renames a task and deletes it from the list", async () => {

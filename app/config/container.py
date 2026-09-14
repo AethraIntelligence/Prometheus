@@ -370,7 +370,11 @@ def build_knowledge(container: Container) -> KnowledgeService | None:
 
 
 def build_service(
-    container: Container, waiter: ApprovalWaiter, *, history_limit: int = DEFAULT_LIMIT
+    container: Container,
+    waiter: ApprovalWaiter,
+    *,
+    history_limit: int = DEFAULT_LIMIT,
+    scheduler_running: bool = False,
 ) -> PrometheusService:
     """Assemble the boundary every interface talks to.
 
@@ -419,6 +423,8 @@ def build_service(
             credentials=container.credential_store,
             providers=build_providers(container),
             settings=_settings_editor(container),
+            schedules=container.schedule_repository,
+            scheduler_running=scheduler_running,
             history_limit=history_limit,
         )
     )

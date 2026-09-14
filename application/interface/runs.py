@@ -109,9 +109,11 @@ class Runs:
         was invisible while there was one workspace and would have made
         switching between two look like it worked (§15.2).
         """
-        objective = await self._manager.receive(
-            request, workspace_id=workspace_id, conversation_id=conversation_id
-        )
+        # Received under the directions too, so the record says what they were.
+        with carried.given(directions):
+            objective = await self._manager.receive(
+                request, workspace_id=workspace_id, conversation_id=conversation_id
+            )
         work = asyncio.create_task(
             self._carry(objective, directions), name=f"prometheus-objective-{objective.id}"
         )
@@ -155,6 +157,11 @@ class Runs:
     @property
     def running(self) -> frozenset[UUID]:
         return frozenset(self._running)
+
+    @property
+    def carrying(self) -> int:
+        """How many runs this process would stop if it stopped now."""
+        return len(self._running) + len(self._objectives)
 
     # --- Stopping -------------------------------------------------------------
 

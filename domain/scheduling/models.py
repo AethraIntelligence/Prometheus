@@ -37,6 +37,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
+from domain.workforce.directions import ApprovalChoice, Directions
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 
@@ -123,6 +124,22 @@ class Schedule:
     last_objective_id: UUID | None = None
     runs: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    #: The thread every firing is written into, when the schedule was made
+    #: somewhere that shows threads. A label like `objectives.conversation_id`:
+    #: no foreign key, and None - a schedule made in a terminal - is not a
+    #: degraded case. Without it a scheduled run from the window happened
+    #: somewhere nobody who uses the window could see.
+    conversation_id: UUID | None = None
+    #: A catalog entry by name that its runs prefer, as the model chosen under
+    #: the field does for one request. Empty means the router decides. It is a
+    #: preference and not a requirement, for the reason `Directions.model` is:
+    #: a model that cannot do a piece of the work is passed over for that piece.
+    model: str = ""
+    #: What its runs do about an action that needs approval. ASK puts the
+    #: question in the window, where it waits for somebody and is refused when
+    #: nobody answers in time; AUTO goes ahead where this machine would have
+    #: asked; DENY refuses without asking. The same three the composer offers.
+    approvals: ApprovalChoice = ApprovalChoice.ASK
 
     @classmethod
     def create(cls, request: str, **extra: Any) -> Schedule:
@@ -172,8 +189,65 @@ class Schedule:
             next_due_at=self.recurrence.next_after(now) if self.recurrence else None,
         )
 
-    def set_enabled(self, enabled: bool) -> Schedule:
-        return replace(self, enabled=enabled)
+    def set_enabled(self, enabled: bool, now: datetime | None = None) -> Schedule:
+        """Pause or resume. Resuming never owes the runs a pause skipped.
+
+        A schedule paused for a week comes back due at its next moment from
+        now - the same rule as a machine that was switched off.
+        """
+        if not enabled or self.enabled or self.recurrence is None:
+            return replace(self, enabled=enabled)
+        moment = now or datetime.now(UTC)
+        stale = self.next_due_at is None or self.next_due_at < moment
+        return replace(
+            self,
+            enabled=True,
+            next_due_at=self.recurrence.next_after(moment) if stale else self.next_due_at,
+        )
+
+    def edited(
+        self,
+        *,
+        request: str,
+        name: str,
+        recurrence: Recurrence | None,
+        on_event: str,
+        model: str,
+        approvals: ApprovalChoice = ApprovalChoice.ASK,
+        now: datetime | None = None,
+    ) -> Schedule:
+        """The same standing instruction, said differently. Its history stays.
+
+        When the timing changed, the next run is counted from now - for an
+        interval too, unlike `create`: somebody changing "every hour" to "every
+        two hours" is correcting a schedule, not asking for a run the moment
+        they press save. Unchanged timing keeps the next run it had.
+        """
+        text = request.strip()
+        if not text:
+            raise ValueError("A schedule with no request would ask for nothing")
+        if (recurrence is None) == (not on_event.strip()):
+            raise ValueError("A schedule fires either on a recurrence or on an event, not both")
+        moment = now or datetime.now(UTC)
+        timing_changed = recurrence != self.recurrence or on_event.strip() != self.on_event
+        next_due = self.next_due_at
+        if timing_changed:
+            next_due = recurrence.next_after(moment) if recurrence is not None else None
+        return replace(
+            self,
+            request=text,
+            name=name.strip(),
+            recurrence=recurrence,
+            on_event=on_event.strip(),
+            model=model.strip(),
+            approvals=approvals,
+            next_due_at=next_due,
+        )
+
+    @property
+    def directions(self) -> Directions:
+        """How each run of it is carried out."""
+        return Directions(approvals=self.approvals, model=self.model)
 
     def describe(self) -> str:
         return self.recurrence.describe() if self.recurrence else f"on event '{self.on_event}'"

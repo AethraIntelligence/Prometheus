@@ -295,6 +295,9 @@ class ObjectiveRow(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     constraints: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     acceptance_criteria: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    #: `{"approvals": ..., "model": ...}` as the request was asked. Empty for a
+    #: request from before there were any, which reads as the defaults.
+    directions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
@@ -552,6 +555,14 @@ class ScheduleRow(Base):
     next_due_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
     last_objective_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    #: The thread its firings are written into. No foreign key, like the column
+    #: it mirrors on `objectives`: deleting a thread must not delete the
+    #: standing instruction, and the reverse is true too.
+    conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    #: The catalog entry its runs prefer, by name. Empty: the router decides.
+    model: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    #: ASK, AUTO or DENY - what its runs do about an action that needs approval.
+    approvals: Mapped[str] = mapped_column(String(8), nullable=False, default="ASK")
     runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 

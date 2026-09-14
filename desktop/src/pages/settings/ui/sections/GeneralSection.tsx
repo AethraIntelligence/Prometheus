@@ -14,6 +14,7 @@ import {
   SettingControl,
   shownDefault,
 } from "../../../../features/change-setting";
+import { RestartButton } from "../../../../features/restart-runtime";
 import { useRuntime } from "../../../../shared/api";
 import { useGeneral } from "../../model/useGeneral";
 
@@ -37,9 +38,12 @@ export function GeneralSection() {
       </p>
 
       {general.restartNeeded && (
-        <p className="restart-note" role="status">
-          Saved. Restart Prometheus to apply the changes marked <em>after restart</em>.
-        </p>
+        <div className="restart-note restart-banner" role="status">
+          <p>
+            Saved. Restart Prometheus to apply the changes marked <em>after restart</em>.
+          </p>
+          <RestartButton label="Restart now" primary />
+        </div>
       )}
       {general.problem && (
         <p className="problem" role="alert">
@@ -95,6 +99,21 @@ export function GeneralSection() {
           </div>
         </section>
       ))}
+
+      {general.settings.length > 0 && (
+        <section className="panel settings-reset" aria-label="Restart">
+          <div className="setting-row">
+            <div className="setting-text">
+              <p className="setting-title">Restart Prometheus</p>
+              <p className="note">
+                Stops and starts the runtime so it rereads its settings, its .env file and its
+                code. Takes a few seconds; the window reloads when it is back.
+              </p>
+            </div>
+            <RestartButton label="Restart" />
+          </div>
+        </section>
+      )}
 
       {general.settings.length > 0 && (
         <section className="panel settings-reset" aria-label="Reset">

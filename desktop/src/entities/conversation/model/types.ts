@@ -42,6 +42,8 @@ export const NO_DIRECTIONS: Directions = { approvals: "ASK", model: "" };
 export interface Message {
   id: string;
   text: string;
+  /** How this request was asked to be carried out. Absent from an older runtime. */
+  directions?: Directions;
   status: ObjectiveStatus;
   thinking: boolean;
   answer: string;
@@ -68,4 +70,12 @@ export interface ConversationList {
 
 export interface Thread extends Omit<Conversation, "messages"> {
   messages: Message[];
+  /**
+   * What the composer opens on, as the runtime decided: the schedule's own
+   * settings in a schedule's thread, otherwise how the last request was asked.
+   * Null for a thread nothing has been asked in.
+   */
+  directions?: Directions | null;
+  /** The schedule that writes into this thread, if one does. */
+  schedule_id?: string | null;
 }

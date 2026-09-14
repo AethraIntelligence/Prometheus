@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { DotsIcon, Modal, PencilIcon, TrashIcon } from "../../../shared/ui";
+import { ClockIcon, DotsIcon, Modal, PencilIcon, TrashIcon } from "../../../shared/ui";
 
 interface MenuProps {
   title: string;
@@ -17,9 +17,11 @@ interface MenuProps {
   onOpen: (open: boolean) => void;
   onRename: () => void;
   onDelete: () => Promise<void>;
+  /** Offered when the frame can take a person to the schedules page. */
+  onRepeat?: () => void;
 }
 
-export function ThreadActions({ title, open, onOpen, onRename, onDelete }: MenuProps) {
+export function ThreadActions({ title, open, onOpen, onRename, onDelete, onRepeat }: MenuProps) {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
@@ -68,6 +70,19 @@ export function ThreadActions({ title, open, onOpen, onRename, onDelete }: MenuP
             <PencilIcon />
             Rename
           </button>
+          {onRepeat && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onOpen(false);
+                onRepeat();
+              }}
+            >
+              <ClockIcon />
+              Repeat on a schedule…
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

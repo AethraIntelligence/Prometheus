@@ -178,7 +178,12 @@ export function useChat(
     void (async () => {
       try {
         const read = await conversationApi.thread(client, conversationId);
-        if (!cancelled) adopt(read);
+        if (cancelled) return;
+        adopt(read);
+        // Opened on what the thread is set to. Only when it is opened: a
+        // re-read while it is on screen must not undo a chip somebody just
+        // changed.
+        setDirections(read.directions ?? NO_DIRECTIONS);
       } catch (error) {
         if (!cancelled) fail(error);
       }

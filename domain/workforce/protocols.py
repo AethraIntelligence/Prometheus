@@ -20,6 +20,8 @@ from uuid import UUID, uuid4
 
 from domain.tasks.task import Task
 from domain.workforce.assignment import TaskAssignment
+from domain.workforce.directions import NONE as NO_DIRECTIONS
+from domain.workforce.directions import Directions
 from domain.workforce.routing import Requirement
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
@@ -75,6 +77,11 @@ class Objective:
     conversation_id: UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
+    #: How it was asked to be carried out - approvals and a preferred model.
+    #: Recorded, not obeyed from here: the run reads them from its context.
+    #: Kept so a thread reopened tomorrow shows what its last request was set
+    #: to, instead of a composer that forgot and says "Auto".
+    directions: Directions = NO_DIRECTIONS
 
     @classmethod
     def create(cls, text: str, **extra: Any) -> Objective:
@@ -211,7 +218,10 @@ class WorkforceManager(Protocol):
     """Prometheus's contract: the user's single entry point into the workforce."""
 
     async def receive(
-        self, request: str, workspace_id: WorkspaceId | None = None
+        self,
+        request: str,
+        workspace_id: WorkspaceId | None = None,
+        conversation_id: UUID | None = None,
     ) -> Objective:
         """Write down what was asked, before anything is done about it.
 

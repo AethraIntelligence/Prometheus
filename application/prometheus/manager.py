@@ -69,6 +69,7 @@ from application.prometheus.verification import ObjectiveVerifier
 from domain.employees.protocols import EmployeeRegistry
 from domain.errors import DelegationError
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
+from domain.workforce import directions as carried_directions
 from domain.workforce.assignment import SharedContext
 from domain.workforce.intent import Intent
 from domain.workforce.protocols import (
@@ -148,6 +149,10 @@ class PrometheusManager:
         """
         objective = Objective.create(
             request.strip(),
+            # Whatever this request is being carried under, stamped on the
+            # record. Read from the context rather than passed, like everywhere
+            # else directions are read; a caller with none records none.
+            directions=carried_directions.current(),
             **({"workspace_id": workspace_id} if workspace_id is not None else {}),
             **({"conversation_id": conversation_id} if conversation_id is not None else {}),
         )

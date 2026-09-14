@@ -515,14 +515,38 @@ def serve(
         from infrastructure.browser.engine import fetch_in_background
 
         fetch_in_background()
-    uvicorn.run(
-        "app.ui.server:create_app",
-        factory=True,
-        host=bind,
-        port=on,
-        reload=reload,
-        log_level=settings.log_level.lower(),
+    if reload:
+        # The reloader restarts on its own and runs the app in a child process,
+        # so there is no server here to stop and nothing a window could restart.
+        uvicorn.run(
+            "app.ui.server:create_app",
+            factory=True,
+            host=bind,
+            port=on,
+            reload=True,
+            log_level=settings.log_level.lower(),
+        )
+        return
+
+    from app.ui.restart import RESTART
+
+    server = uvicorn.Server(
+        uvicorn.Config(
+            "app.ui.server:create_app",
+            factory=True,
+            host=bind,
+            port=on,
+            log_level=settings.log_level.lower(),
+            # An open event stream is a connection that never finishes on its
+            # own; without a bound, a restart would wait on a window forever.
+            timeout_graceful_shutdown=5,
+        )
     )
+    RESTART.attach(server)
+    server.run()
+    if RESTART.requested:
+        typer.secho("Restarting Prometheus…", fg="cyan")
+        RESTART.replace_process()
 
 
 @app.command()

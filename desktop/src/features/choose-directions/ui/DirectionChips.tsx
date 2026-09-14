@@ -63,15 +63,20 @@ export function DirectionChips({ directions, models, onChange, disabled }: Props
       </label>
       {models.length > 0 && (
         <label className="dockchip switcher" title="Which model the work should prefer">
-          Model <b>{model?.name ?? "Auto"}</b>
+          Model <b>{model?.name ?? (directions.model || "Auto")}</b>
           <ChevronDown />
           <select
             aria-label="Model"
-            value={model?.name ?? ""}
+            value={directions.model}
             disabled={disabled}
             onChange={(event) => onChange({ ...directions, model: event.target.value })}
           >
             <option value="">Auto - let Prometheus choose</option>
+            {/* A thread set to a model this list does not offer still says so,
+                rather than reading as Auto while the runtime prefers it. */}
+            {directions.model && !model && (
+              <option value={directions.model}>{directions.model}</option>
+            )}
             {models.map((item) => (
               <option key={item.name} value={item.name}>
                 {item.name}

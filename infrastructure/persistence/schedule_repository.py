@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.scheduling.models import Event, Recurrence, Schedule
+from domain.workforce.directions import ApprovalChoice
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.persistence.dialect import upsert
 from infrastructure.persistence.models import EventRow, ScheduleRow
@@ -57,7 +58,17 @@ def _to_schedule(row: ScheduleRow) -> Schedule:
         last_objective_id=UUID(row.last_objective_id) if row.last_objective_id else None,
         runs=row.runs,
         created_at=_aware(row.created_at) or datetime.now(UTC),
+        conversation_id=UUID(row.conversation_id) if row.conversation_id else None,
+        model=row.model or "",
+        approvals=_approvals(row.approvals),
     )
+
+
+def _approvals(value: str | None) -> ApprovalChoice:
+    try:
+        return ApprovalChoice(value or "ASK")
+    except ValueError:
+        return ApprovalChoice.ASK
 
 
 def _to_event(row: EventRow) -> Event:
@@ -116,6 +127,11 @@ class SqlScheduleRepository(_SqliteBase):
             ),
             "runs": schedule.runs,
             "created_at": _naive(schedule.created_at),
+            "conversation_id": (
+                str(schedule.conversation_id) if schedule.conversation_id else None
+            ),
+            "model": schedule.model,
+            "approvals": schedule.approvals.value,
         }
         async with self._session() as session:
             statement = upsert(session, ScheduleRow).values(**values)
