@@ -409,6 +409,7 @@ def build_service(
             knowledge=build_knowledge(container),
             retriever=container.retriever,
             memory=container.memory,
+            memory_maintenance=container.memory_maintenance,
             credentials=container.credential_store,
             providers=build_providers(container),
             history_limit=history_limit,

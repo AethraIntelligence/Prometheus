@@ -98,6 +98,21 @@ async def test_another_workspaces_memory_is_invisible() -> None:
 # --- Ranking and growth (§9.7) ------------------------------------------------
 
 
+async def test_forgetting_within_a_query_leaves_what_it_could_not_read() -> None:
+    store = InMemoryMemory()
+    here = item("here")
+    private = item(
+        "private", scope=MemoryScope.EMPLOYEE_PRIVATE, employee_id=uuid4()
+    )
+    elsewhere = item("elsewhere", workspace_id=WorkspaceId("other"))
+    for one in (here, private, elsewhere):
+        await store.remember(one)
+    shown = MemoryQuery(scopes=frozenset({MemoryScope.WORKSPACE, MemoryScope.USER}))
+
+    assert await store.forget([here.id, private.id, elsewhere.id], within=shown) == 1
+    assert await store.forget([private.id, elsewhere.id]) == 2
+
+
 def test_what_matters_and_what_is_recent_outrank_what_is_neither() -> None:
     old_and_important = item("A", kind=MemoryKind.SEMANTIC, importance=0.9,
                              created_at=NOW - timedelta(days=60))

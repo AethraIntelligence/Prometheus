@@ -58,8 +58,8 @@ from domain.knowledge.protocols import Retriever
 from domain.llm.catalog import DEFAULT_CONTEXT_TOKENS, ModelEntry
 from domain.llm.models import TaskKind
 from domain.llm.telemetry import LLMCallLog
-from domain.memory.models import MemoryQuery, MemoryScope
-from domain.memory.protocols import Memory
+from domain.memory.models import MemoryItem, MemoryKind, MemoryQuery, MemoryScope
+from domain.memory.protocols import Memory, MemoryMaintenance
 from domain.policies.models import ActorKind, SimpleActor
 from domain.policies.risk import Effect
 from domain.secrets.protocols import CredentialStore
@@ -76,6 +76,17 @@ log = structlog.get_logger(__name__)
 #: it; anything wanting all of it is a report, and reports read the store.
 DEFAULT_LIMIT = 50
 
+#: The memory a person is shown, and therefore the only memory they can forget.
+MEMORY_SHOWN = frozenset({MemoryScope.WORKSPACE, MemoryScope.USER})
+
+#: A note is a sentence or a paragraph. Anything longer is a document, which is
+#: quoted with its source rather than recalled (ADR 0016).
+MAX_NOTE_LENGTH = 2000
+
+#: What a person said outright outranks what the platform inferred from a run,
+#: and matches a preference read out of a request.
+STATED_IMPORTANCE = 0.8
+
 
 class ApprovalsDisabledError(PrometheusError):
     """Asked to decide something on a configuration with no approvals at all."""
@@ -91,6 +102,10 @@ class WorkspacesDisabledError(PrometheusError):
 
 class KnowledgeDisabledError(PrometheusError):
     """Asked about documents on a machine where knowledge is switched off."""
+
+
+class MemoryDisabledError(PrometheusError):
+    """Asked to change memory on a machine where memory, or forgetting, is off."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,10 +150,14 @@ class ServiceDependencies:
     #: was built without settings - every method below then says so rather than
     #: showing an empty list somebody would try to add to.
     providers: ProviderService | None = None
-    #: Read-only. The facade shows what is remembered and cannot forget it:
-    #: `MemoryMaintenance` is a separate contract for exactly that reason, and
-    #: an interface that held both would make "show me" one click from "delete".
+    #: What is remembered, and a person's own notes added to it.
     memory: Memory | None = None
+    #: Forgetting, handed in separately. Holding `recall` still does not imply
+    #: being able to delete (ADR 0009): a surface built with `memory` alone can
+    #: show and add, and says so, rather than finding the power in the same
+    #: object. Where both are given, what may be forgotten is exactly what
+    #: `list_memory` shows - see `forget_memory`.
+    memory_maintenance: MemoryMaintenance | None = None
     #: What this machine can do at all. Read-only here: the registry is the
     #: authority on which tools exist, and who may call one is the employee's
     #: own declaration - neither is an interface's to change.
@@ -319,24 +338,84 @@ class PrometheusService:
 
     # --- Memory ---------------------------------------------------------------
 
-    async def list_memory(self, *, search: str = "", limit: int = 20) -> list[dict[str, Any]]:
-        """What this workspace remembers, through the one contract memory has.
+    @property
+    def memory_available(self) -> bool:
+        return self._d.memory is not None
+
+    @property
+    def memory_can_forget(self) -> bool:
+        return self._d.memory is not None and self._d.memory_maintenance is not None
+
+    async def _readable(self, text: str = "", limit: int = 20) -> MemoryQuery:
+        """What a person may see of memory here, stated once for reading and forgetting.
 
         The same scopes a run reads - this workspace's, and the person's own -
         and deliberately not an employee's private notes: the facade has no more
         access to the store than a running task does (ADR 0009).
         """
+        return MemoryQuery(
+            text=text,
+            workspace_id=await self._here(),
+            scopes=MEMORY_SHOWN,
+            limit=limit,
+        )
+
+    async def list_memory(self, *, search: str = "", limit: int = 20) -> list[dict[str, Any]]:
+        """What this workspace remembers, through the one contract memory has.
+
+        A search is `recall` with words in it, ranked by the domain like every
+        other recall - not a second query written for a screen.
+        """
         if self._d.memory is None:
             return []
-        items = await self._d.memory.recall(
-            MemoryQuery(
-                text=search,
-                workspace_id=await self._here(),
-                scopes=frozenset({MemoryScope.WORKSPACE, MemoryScope.USER}),
-                limit=limit,
-            )
-        )
+        items = await self._d.memory.recall(await self._readable(search, limit))
         return [views.memory_item(item) for item in items]
+
+    async def remember(self, content: str, *, about_the_person: bool) -> dict[str, Any]:
+        """Keep something a person told the platform directly.
+
+        SEMANTIC and without an expiry, like a preference read out of a request:
+        it is a statement of how things are, and what supersedes it is the
+        person removing it, not time passing. `about_the_person` is the one
+        question worth asking - is this true of you everywhere, or of this
+        workspace - because it is the difference between USER and WORKSPACE,
+        and every other field has one right answer.
+        """
+        if self._d.memory is None:
+            raise MemoryDisabledError("Memory is switched off on this machine.")
+        stated = " ".join(content.split())
+        if not stated:
+            raise ValueError("There is nothing to remember.")
+        if len(stated) > MAX_NOTE_LENGTH:
+            raise ValueError(
+                f"A note is at most {MAX_NOTE_LENGTH} characters; "
+                "a longer text is a document."
+            )
+        here = await self._here()
+        item = MemoryItem.create(
+            stated,
+            scope=MemoryScope.USER if about_the_person else MemoryScope.WORKSPACE,
+            kind=MemoryKind.SEMANTIC,
+            workspace_id=here,
+            importance=STATED_IMPORTANCE,
+            metadata={"source": views.STATED_BY_PERSON, "stated_in": str(here)},
+        )
+        await self._d.memory.remember(item)
+        return views.memory_item(item)
+
+    async def forget_memory(self, item_id: UUID) -> bool:
+        """Forget one thing a person can see. False where there is no such thing *here*.
+
+        Bounded by the same query `list_memory` reads with, so an id copied from
+        another workspace, or belonging to an employee's private notes, is not
+        found rather than deleted.
+        """
+        if self._d.memory is None or self._d.memory_maintenance is None:
+            raise MemoryDisabledError("Forgetting is not available on this machine.")
+        forgotten = await self._d.memory_maintenance.forget(
+            [item_id], within=await self._readable()
+        )
+        return forgotten > 0
 
     # --- Knowledge ------------------------------------------------------------
 

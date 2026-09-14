@@ -186,12 +186,28 @@ class SqlMemory:
         cutoff = CUTOFF_RATIO if ranked is not None else 0.0
         return best_of(scored, query.limit, cutoff=cutoff)
 
-    async def forget(self, ids: Sequence[UUID]) -> int:
+    async def forget(
+        self, ids: Sequence[UUID], *, within: MemoryQuery | None = None
+    ) -> int:
         if not ids:
             return 0
+        wanted = [str(i) for i in ids]
         async with self._session() as session:
+            if within is not None:
+                # Read before deleting, and decided by the domain's rule rather
+                # than restated as a WHERE clause: the same double check
+                # `recall` makes, for the same reason - SQL that drifted from
+                # `visible()` must delete less, never somebody else's row.
+                rows = await session.scalars(
+                    select(MemoryItemRow).where(MemoryItemRow.id.in_(wanted))
+                )
+                wanted = [
+                    str(item.id) for item in map(_to_item, rows) if visible(item, within)
+                ]
+                if not wanted:
+                    return 0
             result = await session.execute(
-                delete(MemoryItemRow).where(MemoryItemRow.id.in_([str(i) for i in ids]))
+                delete(MemoryItemRow).where(MemoryItemRow.id.in_(wanted))
             )
             return int(result.rowcount or 0)
 

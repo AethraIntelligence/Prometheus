@@ -87,6 +87,31 @@ async def test_forgetting_removes_it_from_the_index_too(memory: SqlMemory) -> No
     assert await memory.recall(MemoryQuery(text="forgotten")) == []
 
 
+async def test_forgetting_within_a_query_reaches_only_what_it_could_read(
+    memory: SqlMemory,
+) -> None:
+    """A person forgets a line on their screen, not an id from somewhere else."""
+    here = item("Here: the invoices are in finance/2026")
+    elsewhere = item("Elsewhere: the invoices are in old/", workspace_id="other")
+    private = item(
+        "Private: the key is in the vault",
+        scope=MemoryScope.EMPLOYEE_PRIVATE,
+        kind=MemoryKind.SEMANTIC,
+        employee_id=uuid4(),
+    )
+    for one in (here, elsewhere, private):
+        await memory.remember(one)
+    shown = MemoryQuery(scopes=frozenset({MemoryScope.WORKSPACE, MemoryScope.USER}))
+
+    assert await memory.forget([elsewhere.id, private.id], within=shown) == 0
+    assert await memory.forget([here.id, elsewhere.id], within=shown) == 1
+
+    assert await memory.recall(MemoryQuery(text="invoices")) == []
+    assert await memory.recall(
+        MemoryQuery(text="invoices", workspace_id="other")
+    ) == [elsewhere]
+
+
 async def test_an_employee_never_reads_another_employees_private_memory(
     memory: SqlMemory,
 ) -> None:

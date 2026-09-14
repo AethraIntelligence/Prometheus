@@ -34,8 +34,18 @@ class Memory(Protocol):
 class MemoryMaintenance(Protocol):
     """Keeping memory from growing without bound."""
 
-    async def forget(self, ids: Sequence[UUID]) -> int:
-        """Drop these items. Used when several have been folded into one."""
+    async def forget(
+        self, ids: Sequence[UUID], *, within: MemoryQuery | None = None
+    ) -> int:
+        """Drop these items. Returns how many went.
+
+        `within` limits it to the items that query could read. Consolidation
+        folds rows it has just recalled and passes nothing; a person pointing
+        at one line on a screen passes what that screen reads, so an id from
+        anywhere else - another workspace, an employee's private notes - is
+        not there to be deleted rather than refused after the fact. The rule
+        is `domain/memory/access.py`, applied by the backend to the rows.
+        """
         ...
 
     async def prune(

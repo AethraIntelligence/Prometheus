@@ -401,6 +401,11 @@ def passage(item: Passage) -> dict[str, Any]:
 # --- Memory -------------------------------------------------------------------
 
 
+#: `metadata["source"]` of a note a person added themselves, rather than one the
+#: platform wrote about its own work.
+STATED_BY_PERSON = "person"
+
+
 def memory_item(item: MemoryItem) -> dict[str, Any]:
     """One thing the platform remembers, as an interface shows it.
 
@@ -417,6 +422,7 @@ def memory_item(item: MemoryItem) -> dict[str, Any]:
         "importance": round(item.importance, 3),
         "created_at": item.created_at.isoformat(),
         "expires_at": item.expires_at.isoformat() if item.expires_at else "",
+        "stated": item.metadata.get("source") == STATED_BY_PERSON,
     }
 
 

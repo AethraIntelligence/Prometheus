@@ -58,8 +58,16 @@ class InMemoryMemory:
         cutoff = CUTOFF_RATIO if query.text.strip() else 0.0
         return [deepcopy(item) for item in best_of(scored, query.limit, cutoff=cutoff)]
 
-    async def forget(self, ids: Sequence[UUID]) -> int:
-        return sum(1 for item_id in ids if self._items.pop(item_id, None) is not None)
+    async def forget(
+        self, ids: Sequence[UUID], *, within: MemoryQuery | None = None
+    ) -> int:
+        chosen = [
+            item_id
+            for item_id in ids
+            if item_id in self._items
+            and (within is None or visible(self._items[item_id], within))
+        ]
+        return sum(1 for item_id in chosen if self._items.pop(item_id, None) is not None)
 
     async def prune(
         self,

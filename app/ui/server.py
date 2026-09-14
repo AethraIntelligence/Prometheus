@@ -216,6 +216,14 @@ class NewDocument(BaseModel):
     media_type: str = ""
 
 
+class NewMemory(BaseModel):
+    """Something a person tells the platform to keep, in their own words."""
+
+    content: str = Field(min_length=1, max_length=2000)
+    #: True of the person in every workspace, rather than of this one.
+    about_the_person: bool = False
+
+
 class NewWorkspace(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
@@ -456,8 +464,27 @@ def _routes(app: FastAPI) -> None:
 
     @app.get("/api/memory")
     async def memory(request: Request, q: str = "", limit: int = 20) -> dict[str, Any]:
-        """What this workspace remembers. Read-only, deliberately (ADR 0009)."""
-        return {"items": await _guarded(_service(request).list_memory(search=q, limit=limit))}
+        """What this workspace remembers, or what of it matches `q`."""
+        service = _service(request)
+        return {
+            "available": service.memory_available,
+            "can_forget": service.memory_can_forget,
+            "items": await _guarded(service.list_memory(search=q, limit=limit)),
+        }
+
+    @app.post("/api/memory", status_code=201)
+    async def remember(request: Request, body: NewMemory) -> dict[str, Any]:
+        return await _memory(
+            _service(request).remember(body.content, about_the_person=body.about_the_person)
+        )
+
+    @app.delete("/api/memory/{item_id}")
+    async def forget(request: Request, item_id: UUID) -> dict[str, Any]:
+        """Forget one line a person can see. 404 for anything they cannot."""
+        forgotten = await _memory(_service(request).forget_memory(item_id))
+        if not forgotten:
+            raise HTTPException(status_code=404, detail=f"Nothing remembered here as {item_id}.")
+        return {"forgotten": True}
 
     # --- Documents ------------------------------------------------------------
 
@@ -858,6 +885,22 @@ async def _settings_change(awaitable):
     except NotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except PrometheusError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+async def _memory(awaitable):
+    """One memory change, with its refusals turned into answers.
+
+    Memory or forgetting switched off is a 409, like every other capability a
+    machine is configured without; a note with nothing in it is a 400.
+    """
+    from application.interface.service import MemoryDisabledError
+
+    try:
+        return await _guarded(awaitable)
+    except MemoryDisabledError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 

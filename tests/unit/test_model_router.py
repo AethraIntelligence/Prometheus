@@ -213,3 +213,31 @@ def test_an_embedding_model_is_never_given_text_to_write() -> None:
     assert router.select(TaskKind.EXTRACTION, CapabilityRequirement()).model == "chat"
     embedding = CapabilityRequirement(required=frozenset({Capability.EMBEDDING}))
     assert router.select(TaskKind.EMBEDDING, embedding).model == "embed"
+
+
+def test_every_choice_carries_the_connection_it_is_reached_through() -> None:
+    """Whichever branch chose - a default, a fallback, or the best of the field.
+
+    Two of the three once dropped it, and the factory then looked for the one
+    configured key: a machine whose only OpenRouter key lived on a connection
+    could not start, and one with a key in `.env` billed another account.
+    """
+    raw = {
+        "models": {
+            name: {**spec, "connection": f"{name}-account"}
+            for name, spec in CATALOG["models"].items()
+        },
+        "defaults": {"execution": "balanced"},
+    }
+    router = CapabilityAwareModelRouter(ModelCatalog.from_dict(raw))
+
+    by_default = router.select(TaskKind.EXECUTION, CapabilityRequirement())
+    by_field = router.select(TaskKind.EXTRACTION, CapabilityRequirement())
+    by_fallback = router.select(
+        TaskKind.EXECUTION, CapabilityRequirement(required=frozenset({Capability.VISION}))
+    )
+
+    assert by_default.connection == "balanced-account"
+    names = {spec["model"]: name for name, spec in CATALOG["models"].items()}
+    assert by_field.connection == f"{names[by_field.model]}-account"
+    assert by_fallback.connection == "seeing-account"

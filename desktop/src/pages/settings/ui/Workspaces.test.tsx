@@ -46,11 +46,30 @@ function document(status: string) {
   };
 }
 
-function scriptedRuntime({ documents = [] as unknown[], memory = [] as unknown[] } = {}) {
+function note(id: string, content: string, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    kind: "SEMANTIC",
+    scope: "WORKSPACE",
+    content,
+    importance: 0.5,
+    created_at: "2026-09-08T09:00:00+00:00",
+    expires_at: "",
+    stated: false,
+    ...extra,
+  };
+}
+
+function scriptedRuntime({
+  documents = [] as unknown[],
+  memory = [] as ReturnType<typeof note>[],
+  canForget = true,
+} = {}) {
   const state = {
     workspaces: [workspace("default", "Default", true), workspace("work", "Work")],
     documents,
     memory,
+    searched: [] as string[],
     posted: [] as { path: string; body: unknown }[],
     deleted: [] as string[],
   };
@@ -61,6 +80,11 @@ function scriptedRuntime({ documents = [] as unknown[], memory = [] as unknown[]
 
     if (init?.method === "DELETE") {
       state.deleted.push(path);
+      if (path.startsWith("/api/memory/")) {
+        const id = path.split("/")[3];
+        state.memory = state.memory.filter((one) => one.id !== id);
+        return json({ forgotten: true });
+      }
       if (path.startsWith("/api/workspaces/")) {
         state.workspaces = [workspace("default", "Default", true)];
       }
@@ -85,6 +109,14 @@ function scriptedRuntime({ documents = [] as unknown[], memory = [] as unknown[]
         state.documents = [document("INDEXED")];
         return json(state.documents[0]);
       }
+      if (path === "/api/memory") {
+        const added = note("m-new", body.content, {
+          scope: body.about_the_person ? "USER" : "WORKSPACE",
+          stated: true,
+        });
+        state.memory = [added, ...state.memory];
+        return json(added);
+      }
       if (path.endsWith("/reindex")) {
         state.documents = [document("INDEXED")];
         return json(state.documents[0]);
@@ -94,7 +126,15 @@ function scriptedRuntime({ documents = [] as unknown[], memory = [] as unknown[]
     if (path === "/api/documents") {
       return json({ available: true, documents: state.documents });
     }
-    if (path.startsWith("/api/memory")) return json({ items: state.memory });
+    if (path.startsWith("/api/memory")) {
+      // The runtime ranks a search; the script only has to show that one was asked.
+      const words = new URL(`${BASE}${path}`).searchParams.get("q") ?? "";
+      if (words) state.searched.push(words);
+      const items = words
+        ? state.memory.filter((one) => one.content.toLowerCase().includes(words.toLowerCase()))
+        : state.memory;
+      return json({ available: true, can_forget: canForget, items });
+    }
     if (path === "/api/integrations") return json({ available: false, integrations: [] });
     if (path === "/api/tools") return json({ tools: [] });
     return json({});
@@ -215,24 +255,81 @@ describe("Settings → Documents", () => {
 });
 
 describe("Settings → Memory", () => {
-  it("shows what the platform noted, and offers no way to forget it", async () => {
+  it("shows what the platform noted, and who a line is true of", async () => {
     const { client } = scriptedRuntime({
-      memory: [
-        {
-          id: "m1",
-          kind: "SEMANTIC",
-          scope: "USER",
-          content: "The user prefers: always answer in Markdown",
-          importance: 0.8,
-          created_at: "2026-09-08T09:00:00+00:00",
-          expires_at: "",
-        },
-      ],
+      memory: [note("m1", "The user prefers: always answer in Markdown", { scope: "USER" })],
     });
     show(client);
     await goTo("Memory");
 
     expect(await screen.findByText(/always answer in Markdown/)).toBeInTheDocument();
+    expect(screen.getByText("you", { selector: ".badge" })).toBeInTheDocument();
+  });
+
+  it("searches by asking the runtime, not by filtering here", async () => {
+    const { client, state } = scriptedRuntime({
+      memory: [note("m1", "Invoices live in finance/2026"), note("m2", "Shipping stops at 14:00")],
+    });
+    show(client);
+    await goTo("Memory");
+    await screen.findByText(/Shipping stops/);
+
+    await userEvent.type(screen.getByRole("searchbox", { name: "Search memory" }), "invoices");
+
+    await waitFor(() => expect(screen.queryByText(/Shipping stops/)).toBeNull());
+    expect(screen.getByText(/Invoices live/)).toBeInTheDocument();
+    expect(state.searched).toContain("invoices");
+  });
+
+  it("adds a note of the person's own, in a dialog asked for on purpose", async () => {
+    const { client, state } = scriptedRuntime();
+    show(client);
+    await goTo("Memory");
+    expect(await screen.findByText("Nothing remembered yet.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "New note" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "What to remember" }),
+      "Always answer in Russian",
+    );
+    await userEvent.click(screen.getByRole("checkbox", { name: "About me, in every workspace" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remember" }));
+
+    expect(state.posted).toContainEqual({
+      path: "/api/memory",
+      body: { content: "Always answer in Russian", about_the_person: true },
+    });
+    expect(await screen.findByText("Always answer in Russian")).toBeInTheDocument();
+    expect(screen.getByText(/noted by you/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("forgets one line only on a second, deliberate click", async () => {
+    const { client, state } = scriptedRuntime({
+      memory: [note("m1", "A wrong conclusion"), note("m2", "A right one")],
+    });
+    show(client);
+    await goTo("Memory");
+    await screen.findByText("A wrong conclusion");
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Forget" })[0]);
+    expect(state.deleted).toEqual([]);
+    await userEvent.click(screen.getByRole("button", { name: "Forget for good" }));
+
+    await waitFor(() => expect(screen.queryByText("A wrong conclusion")).toBeNull());
+    expect(state.deleted).toEqual(["/api/memory/m1"]);
+    expect(screen.getByText("A right one")).toBeInTheDocument();
+  });
+
+  it("offers no way to forget where the runtime says this machine cannot", async () => {
+    const { client } = scriptedRuntime({
+      memory: [note("m1", "Kept either way")],
+      canForget: false,
+    });
+    show(client);
+    await goTo("Memory");
+
+    expect(await screen.findByText("Kept either way")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /forget/i })).toBeNull();
   });
 });

@@ -82,6 +82,7 @@ class CapabilityAwareModelRouter:
                     provider=entry.provider,
                     model=entry.model,
                     reason=f"configured default for {task_kind.value.lower()}",
+                    connection=entry.connection,
                 )
 
         best = max(candidates, key=lambda entry: self._score(entry, requirement, hints))
@@ -90,7 +91,13 @@ class CapabilityAwareModelRouter:
             if preferred is None
             else f"default '{preferred}' cannot do this work"
         )
-        return ModelChoice(provider=best.provider, model=best.model, reason=reason)
+        # The connection travels with every choice, whichever branch made it:
+        # without it the factory falls back to the one configured key, and a
+        # model added through a connection in the window is billed to - or
+        # refused for want of - an account nobody pointed it at.
+        return ModelChoice(
+            provider=best.provider, model=best.model, reason=reason, connection=best.connection
+        )
 
     def _tighten(
         self, required: CapabilityRequirement, hints: RoutingHints
