@@ -2,8 +2,8 @@ id: google-drive
 name: Google Drive
 description: Find, read and create files in Drive
 about: Employees can search your Drive and read documents, spreadsheets and PDFs. Creating, updating,
-  copying or sharing files asks you first. Uses your own Google Cloud client, so nothing passes through
-  anyone else's account.
+  copying or sharing files asks you first. Signs in with Google in your browser; access stays on this
+  machine and passes through no third-party service.
 category: Productivity
 publisher: taylorwilsdon (workspace-mcp)
 homepage: https://github.com/taylorwilsdon/google_workspace_mcp
@@ -20,25 +20,27 @@ args:
 env:
   WORKSPACE_MCP_CREDENTIALS_DIR: ~/.google_workspace_mcp/prometheus-drive
 setup:
-- text: Open Google Cloud Console and create a project (any name).
+- text: Open Google Cloud Console and create
+    a project (any name).
   url: https://console.cloud.google.com/projectcreate
-- text: Enable the Google Drive API for that project.
+- text: Enable the Google Drive API for that project. Gmail and Google Drive can use the same project.
   url: https://console.cloud.google.com/apis/library/drive.googleapis.com
-- text: 'Set up the OAuth consent screen: choose External, fill in the app name and your email, and add
-    yourself under Test users.'
+- text: 'In Google Auth Platform: under Branding enter an app name and your email; under Audience choose
+    External and press Publish app so the status is In production. In Testing, Google signs you out every
+    7 days.'
   url: https://console.cloud.google.com/auth/overview
-- text: Create an OAuth client ID of type Desktop app, then copy its Client ID and Client secret into
+- text: Under Clients create a client of type Desktop app and copy its Client ID and Client secret into
     the fields below.
   url: https://console.cloud.google.com/auth/clients
-- 'After installing, press Sign in with Google: a Google page opens in your browser once, and the account
-  stays signed in on this machine.'
+- 'When signing in, Google shows ''Google hasn''t verified this app'' for a client nobody verified. Choose
+  Advanced, then continue: it is your own client.'
 settings:
 - key: GOOGLE_OAUTH_CLIENT_ID
   label: OAuth client ID
   kind: SECRET
   required: true
   placeholder: 1234-abcd.apps.googleusercontent.com
-  help: From the Desktop app client you created. Gmail and Google Drive can share one client.
+  help: From a Desktop app client. Gmail and Google Drive can share one.
   help_url: https://console.cloud.google.com/auth/clients
 - key: GOOGLE_OAUTH_CLIENT_SECRET
   label: OAuth client secret
@@ -65,7 +67,8 @@ sign_in:
   arguments:
     query: trashed = false
     page_size: 1
-  help: A Google page opens in your browser. Allow access there, come back and press Check.
+  help: A Google page opens in your browser. If it says the app is not verified, choose Advanced and continue.
+    Allow access, come back and press Check.
 icon:
   color: '#4285F4'
   background: '#FFFFFF'
