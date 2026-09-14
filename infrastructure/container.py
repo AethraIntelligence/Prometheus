@@ -247,6 +247,7 @@ class Container:
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
             local_base_url=self.settings.local_llm_base_url,
+            local_autostart=self.settings.local_llm_autostart,
             call_log=self.llm_call_log,
             retry_policy=RetryPolicy(attempts=self.settings.llm_retry_attempts),
             timeout_seconds=self.settings.llm_timeout_seconds,

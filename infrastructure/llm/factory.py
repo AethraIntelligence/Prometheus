@@ -30,6 +30,7 @@ from infrastructure.llm.embeddings import OpenAICompatibleEmbeddings
 from infrastructure.llm.gemini import GeminiProvider
 from infrastructure.llm.local import BASE_URL as LOCAL_BASE_URL
 from infrastructure.llm.local import LocalProvider
+from infrastructure.llm.local_server import OnDemandServer
 from infrastructure.llm.openai import OpenAIProvider
 from infrastructure.llm.openrouter import OpenRouterProvider
 from infrastructure.llm.retry import RetryPolicy
@@ -51,8 +52,13 @@ class ProviderFactory:
         timeout_seconds: float | None = None,
         connections: ConnectionDirectory | None = None,
         secrets: SecretResolver | None = None,
+        local_autostart: bool = False,
     ) -> None:
         self._catalog = catalog
+        # Off unless the composition root says otherwise: a factory built by a
+        # test must not start a model server on the machine running the suite.
+        self._local_autostart = local_autostart
+        self._local_servers: dict[str, OnDemandServer] = {}
         self._api_key = api_key
         self._base_url = base_url
         self._local_base_url = local_base_url
@@ -103,10 +109,12 @@ class ProviderFactory:
         if choice.provider == "gemini":
             return GeminiProvider(self._require_key(choice))
         if choice.provider == "local":
+            address = self._address(choice, self._local_base_url)
             return LocalProvider(
-                base_url=self._address(choice, self._local_base_url),
+                base_url=address,
                 default_model=choice.model,
                 retry_policy=self._retry_policy,
+                server=self._local_server(address),
                 **self._timeout_kwargs(),
             )
         raise ConfigurationError(
@@ -130,14 +138,22 @@ class ProviderFactory:
                 "`embedding` default in the model catalog at a provider that "
                 "does - a local model runner needs no key and no network."
             )
+        address = self._address(choice, self._local_base_url if local else self._base_url)
         return OpenAICompatibleEmbeddings(
-            base_url=self._address(
-                choice, self._local_base_url if local else self._base_url
-            ),
+            base_url=address,
             model=choice.model,
             api_key=None if local else self._require_key(choice),
             dimensions=entry.dimensions if entry else 0,
+            server=self._local_server(address) if local else None,
         )
+
+    def _local_server(self, address: str) -> OnDemandServer | None:
+        """One starter per address, so chat and embeddings start it once between them."""
+        if not self._local_autostart:
+            return None
+        if address not in self._local_servers:
+            self._local_servers[address] = OnDemandServer(address)
+        return self._local_servers[address]
 
     def _timeout_kwargs(self) -> dict[str, float]:
         """Passed only when configured, so each provider keeps its own default."""

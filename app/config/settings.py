@@ -76,9 +76,10 @@ class Settings(BaseSettings):
     llm_retry_attempts: int = 3
     #: Where a locally served model listens. Used only by the 'local' provider.
     local_llm_base_url: str = "http://127.0.0.1:11434/v1"
-    #: Whether `prometheus serve` starts `ollama serve` when the catalog has a
-    #: local model and nothing answers at the address above. Off for a machine
-    #: that runs its model server some other way and wants to see it missing.
+    #: Whether a call to a local model starts Ollama, hidden, when nothing
+    #: answers at the address above. Nothing is started until a local model is
+    #: actually used. Off for a machine that runs its model server some other
+    #: way and wants to see it missing.
     local_llm_autostart: bool = True
 
     # --- Tools ---------------------------------------------------------------

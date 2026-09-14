@@ -28,9 +28,8 @@ from app.config.container import (
     load_catalog,
     load_grants,
     prepare,
-    uses_local_models,
 )
-from app.config.settings import Settings, get_settings, normalise_database_url
+from app.config.settings import get_settings, normalise_database_url
 from domain.approvals.models import ApprovalState
 from domain.capabilities.models import Capability
 from domain.errors import PrometheusError, StorageNotInitializedError
@@ -509,8 +508,9 @@ def serve(
             fg="yellow",
             err=True,
         )
-    if settings.local_llm_autostart:
-        _start_local_models(settings)
+    # The local model server is not started here: the first call to a local
+    # model starts it (`infrastructure/llm/local_server.py`), so a machine
+    # working through an API key never opens Ollama.
     if settings.browser_tools_enabled:
         from infrastructure.browser.engine import fetch_in_background
 
@@ -523,38 +523,6 @@ def serve(
         reload=reload,
         log_level=settings.log_level.lower(),
     )
-
-
-def _start_local_models(settings: Settings) -> None:
-    """Here rather than in the app's start-up, which every interface test runs:
-    a suite that needs no network must not start a model server either."""
-    from infrastructure.llm.local_server import Outcome, ensure_running
-
-    async def _needed() -> bool:
-        container = build_container(settings)
-        try:
-            return await uses_local_models(container)
-        finally:
-            await container.aclose()
-
-    if not asyncio.run(_needed()):
-        return
-    outcome = ensure_running(settings.local_llm_base_url)
-    if outcome is Outcome.STARTED:
-        typer.secho("Started the local model server (ollama serve).", fg="cyan")
-    elif outcome is Outcome.NOT_INSTALLED:
-        typer.secho(
-            "The catalog has local models and nothing answers at "
-            f"{settings.local_llm_base_url}, and Ollama is not installed.",
-            fg="yellow",
-            err=True,
-        )
-    elif outcome is Outcome.DID_NOT_ANSWER:
-        typer.secho(
-            f"Started ollama serve, but {settings.local_llm_base_url} is not answering yet.",
-            fg="yellow",
-            err=True,
-        )
 
 
 @app.command()

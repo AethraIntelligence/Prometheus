@@ -26,6 +26,7 @@ class RuntimeSettings(Protocol):
     llm_timeout_seconds: float | None
     llm_retry_attempts: int
     local_llm_base_url: str
+    local_llm_autostart: bool
     knowledge_min_similarity: float
 
     # --- Tools ----------------------------------------------------------------

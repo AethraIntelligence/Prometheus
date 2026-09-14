@@ -88,6 +88,8 @@ def _ignore_the_developers_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.config.settings import Settings, get_settings
 
     monkeypatch.setitem(Settings.model_config, "env_file", None)
+    # Nor does one start a model server on the machine running it.
+    monkeypatch.setenv("PROMETHEUS_LOCAL_LLM_AUTOSTART", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

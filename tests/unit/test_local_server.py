@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from infrastructure.llm import local_server
-from infrastructure.llm.local_server import Outcome, ensure_running
+from infrastructure.llm.local_server import OnDemandServer, Outcome, ensure_running
 
 
 @pytest.fixture
@@ -70,4 +70,37 @@ def test_the_application_is_started_rather_than_the_binary(
         application=Path("/Applications/Ollama.app"),
         wait_seconds=0.1,
     )
-    assert spawned == [["open", "-g", "-a", "/Applications/Ollama.app"]]
+    assert spawned == [["open", "-g", "-j", "-a", "/Applications/Ollama.app"]]
+
+
+async def test_nothing_is_started_until_a_local_model_is_called() -> None:
+    """A machine working through an API key never opens a model server it never uses."""
+    asked: list[str] = []
+    server = OnDemandServer(
+        "http://127.0.0.1:11434/v1", start=lambda url: asked.append(url) or Outcome.STARTED
+    )
+    assert asked == []
+    await server.ensure()
+    assert asked == ["http://127.0.0.1:11434/v1"]
+
+
+async def test_a_machine_with_nothing_to_start_is_not_asked_again() -> None:
+    asked: list[str] = []
+
+    def start(url: str) -> Outcome:
+        asked.append(url)
+        return Outcome.NOT_INSTALLED
+
+    server = OnDemandServer("http://127.0.0.1:11434/v1", start=start)
+    await server.ensure()
+    await server.ensure()
+    assert len(asked) == 1
+
+
+async def test_a_server_that_stopped_is_started_again() -> None:
+    """Answering once is not answering forever: somebody may quit Ollama mid-session."""
+    outcomes = [Outcome.ANSWERING, Outcome.STARTED]
+    server = OnDemandServer("http://127.0.0.1:11434/v1", start=lambda _: outcomes.pop(0))
+    await server.ensure()
+    await server.ensure()
+    assert outcomes == []

@@ -6,11 +6,14 @@ says plainly that nothing is answering - but the fix it asks for is one command
 the person should not have had to know, on a machine where the platform already
 knows it is the one that will be calling.
 
-So `prometheus serve` starts it, and only in the one case where that is
+So the local provider starts it, and only in the one case where that is
 unambiguous:
 
-* **The catalog has a local entry.** A machine working through a hosted
-  provider gets no model server it never asked for.
+* **A local model is being called, now.** Not when `prometheus serve` starts
+  and the catalog merely *has* a local entry: the hosted catalog ships a local
+  embedding model, so that rule opened Ollama on every launch of a machine that
+  works entirely through an API key - and one with no documents never embeds
+  anything. The first call pays the start-up instead, once.
 * **The address is this machine's.** A runner on another host is somebody
   else's to start, and spawning one here would answer a different address.
 * **Nothing is already answering.** A server started from a terminal, or by the
@@ -31,17 +34,20 @@ this process, because it is shared: the Ollama application, a terminal and the
 test suite all talk to the same one, and closing a window is not a reason to
 unload a model somebody else is using. That is also how Ollama itself runs.
 
-Failing to start it is not fatal. The runtime starts anyway, and the provider's
-own error still says what is missing.
+Failing to start it is not fatal. The call goes ahead anyway, and the
+provider's own error still says what is missing.
 """
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -130,11 +136,48 @@ def ensure_running(
     return Outcome.DID_NOT_ANSWER
 
 
+class OnDemandServer:
+    """Starts the server at one address before a call to it, if it is silent.
+
+    Shared by every client of that address - chat and embeddings alike - so
+    parallel tasks reaching a stopped server start it once. The lock is a
+    thread's rather than the loop's because the check runs in a worker thread,
+    and a CLI command may drive the same container from more than one loop.
+
+    An address that is not this machine's, or a machine with nothing to start,
+    is not asked about again: the answer will not change within this process,
+    and a hosted-only machine should not pay a filesystem search per call.
+    """
+
+    def __init__(
+        self, base_url: str, *, start: Callable[[str], Outcome] = ensure_running
+    ) -> None:
+        self._base_url = base_url
+        self._start = start
+        self._lock = threading.Lock()
+        self._settled = False
+
+    async def ensure(self) -> None:
+        if self._settled:
+            return
+        await asyncio.to_thread(self._ensure_blocking)
+
+    def _ensure_blocking(self) -> None:
+        with self._lock:
+            if self._settled:
+                return
+            outcome = self._start(self._base_url)
+            if outcome in (Outcome.NOT_LOCAL, Outcome.NOT_INSTALLED):
+                self._settled = True
+            elif outcome is Outcome.STARTED:
+                log.info("local_models.started_on_demand", base_url=self._base_url)
+
+
 def _command(application: Path | None, binary: Path | None) -> list[str] | None:
     if application is not None:
-        # `-g` keeps it in the background: the person opened a window of ours,
-        # not Ollama's.
-        return ["open", "-g", "-a", str(application)]
+        # `-g` does not bring it to the front and `-j` launches it hidden: the
+        # person opened a window of ours, not Ollama's.
+        return ["open", "-g", "-j", "-a", str(application)]
     if binary is not None:
         return [str(binary), "serve"]
     return None

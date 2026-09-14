@@ -19,6 +19,7 @@ import httpx
 from domain.errors import ProviderUnavailableError
 from domain.llm.models import LLMRequest, LLMResponse
 from infrastructure.llm.chat_completions import ChatCompletionsProvider
+from infrastructure.llm.local_server import OnDemandServer
 
 PROVIDER_NAME = "local"
 BASE_URL = "http://127.0.0.1:11434/v1"
@@ -37,8 +38,11 @@ class LocalProvider(ChatCompletionsProvider):
         base_url: str = BASE_URL,
         default_model: str,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        server: OnDemandServer | None = None,
         **kwargs: object,
     ) -> None:
+        """`server`, when given, is started before a call finds it silent;
+        without one a stopped server is the caller's to start."""
         super().__init__(
             None,
             base_url=base_url,
@@ -46,8 +50,11 @@ class LocalProvider(ChatCompletionsProvider):
             timeout_seconds=timeout_seconds,
             **kwargs,  # type: ignore[arg-type]
         )
+        self._server = server
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
+        if self._server is not None:
+            await self._server.ensure()
         try:
             return await super().generate(request)
         except ProviderUnavailableError as error:

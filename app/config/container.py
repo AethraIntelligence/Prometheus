@@ -151,19 +151,6 @@ async def load_catalog(container: Container) -> None:
     await _load_catalog(container)
 
 
-async def uses_local_models(container: Container) -> bool:
-    """Whether any model this installation can route to runs on a local server.
-
-    Read from the catalog the process will actually use - the stored one, when
-    there is one - because that is where a person adds a local model in the
-    window, and the file it shipped with would say otherwise.
-    """
-    from infrastructure.llm.local import PROVIDER_NAME
-
-    await _load_catalog(container)
-    return any(entry.provider == PROVIDER_NAME for entry in container.model_catalog.entries)
-
-
 async def prepare(container: Container) -> None:
     """Everything that has to be true before this process does any work.
 

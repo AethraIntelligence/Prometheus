@@ -33,6 +33,7 @@ from domain.errors import ConfigurationError, ProviderError
 from domain.knowledge.models import Vector
 from domain.knowledge.protocols import EmbeddingProvider
 from infrastructure.llm.errors import translate_status, translate_transport_error
+from infrastructure.llm.local_server import OnDemandServer
 from infrastructure.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -53,7 +54,9 @@ class OpenAICompatibleEmbeddings:
         dimensions: int = 0,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
+        server: OnDemandServer | None = None,
     ) -> None:
+        self._server = server
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._api_key = api_key
@@ -75,6 +78,8 @@ class OpenAICompatibleEmbeddings:
         wanted = [text for text in texts]
         if not wanted:
             return []
+        if self._server is not None:
+            await self._server.ensure()
         payload: dict[str, object] = {"model": self._model, "input": wanted}
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         client = self._client or httpx.AsyncClient(timeout=self._timeout)
