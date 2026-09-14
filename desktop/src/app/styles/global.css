@@ -2633,3 +2633,164 @@ article > .actions {
 .own-credentials[open] {
   padding-bottom: 4px;
 }
+
+/* ── settings: general ───────────────────── */
+
+/* One setting per row of its panel's card: what it is on the left, the control
+   on the right, stacked when the window is too narrow for both. */
+.setting-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 13px 15px;
+}
+
+.setting-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-text label,
+.setting-text .setting-title {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.settings .setting-text .note {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+}
+
+.setting-text code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--panel);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.setting-control {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 1px;
+}
+
+.setting-control input,
+.setting-control select {
+  width: 190px;
+}
+
+.settings .setting-control textarea {
+  width: 190px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--field);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 13.5px;
+  resize: vertical;
+  outline: none;
+}
+
+@media (max-width: 640px) {
+  .setting-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .setting-control,
+  .setting-control input,
+  .setting-control select,
+  .settings .setting-control textarea {
+    width: 100%;
+  }
+}
+
+/* The design's toggle: an ink track when on, a hairline one when off. */
+.switch {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 980px;
+  background: var(--send-off);
+  transition: background 0.16s;
+  flex: 0 0 auto;
+}
+
+.switch.on {
+  background: var(--ink);
+}
+
+.switch:disabled {
+  opacity: 0.45;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.16s;
+}
+
+.switch.on .switch-knob {
+  transform: translateX(16px);
+}
+
+.restart-note {
+  border: 1px solid var(--wait-line);
+  background: var(--wait-bg);
+  color: var(--wait-text);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin: 4px 0 18px;
+  font-size: 13.5px;
+}
+
+.settings .setting-reset {
+  margin-top: 6px;
+  padding: 0;
+  font-size: 12.5px;
+  color: var(--grey);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--hair-2);
+}
+
+.settings .setting-reset:hover {
+  color: var(--text);
+}
+
+.settings-reset .setting-row {
+  align-items: center;
+  border: 1px solid var(--hair);
+  border-radius: 14px;
+  background: var(--bg);
+}
+
+.settings-reset .actions {
+  flex: 0 0 auto;
+}
+
+.setting-text .setting-title {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .settings-reset .setting-row {
+    align-items: stretch;
+  }
+
+  .settings-reset .actions {
+    margin-left: 0;
+  }
+}

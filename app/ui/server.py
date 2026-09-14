@@ -132,6 +132,18 @@ class NewObjective(BaseModel):
     model: str = Field(default="", max_length=120)
 
 
+class SettingsChange(BaseModel):
+    """Some of Settings -> General, by key. What each value may be is the editor's to say."""
+
+    values: dict[str, bool | int | float | str | list[str] | None] = Field(min_length=1)
+
+
+class SettingsReset(BaseModel):
+    """Which settings to reset. None means every one a window saved."""
+
+    keys: list[str] | None = None
+
+
 class ConversationEdit(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
@@ -666,6 +678,20 @@ def _routes(app: FastAPI) -> None:
     @app.delete("/api/providers/defaults/{task_kind}")
     async def clear_task_default(request: Request, task_kind: str) -> dict[str, Any]:
         return {"defaults": await _settings_change(_service(request).clear_task_default(task_kind))}
+
+    # --- General settings -----------------------------------------------------
+
+    @app.get("/api/settings")
+    async def general_settings(request: Request) -> dict[str, Any]:
+        return await _settings_change(_service(request).list_settings())
+
+    @app.put("/api/settings")
+    async def change_general_settings(request: Request, body: SettingsChange) -> dict[str, Any]:
+        return await _settings_change(_service(request).change_settings(body.values))
+
+    @app.post("/api/settings/reset")
+    async def reset_general_settings(request: Request, body: SettingsReset) -> dict[str, Any]:
+        return await _settings_change(_service(request).reset_settings(body.keys))
 
     # --- Integrations ---------------------------------------------------------
 

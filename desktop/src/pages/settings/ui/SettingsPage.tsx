@@ -1,12 +1,13 @@
 /**
  * Settings: one screen per thing, and a menu down the side.
  *
- * Deliberately not an administration console. Everything else configurable is a
- * file on this machine that the runtime already reads, and a screen that
- * mirrored those files would be a second place to change them - the one that
- * goes stale. What is here is what has no file: a workspace, a document
- * somebody brought, what the platform has remembered, the models it may reach
- * and the plugins it can act through.
+ * General is the switches the runtime starts with - capabilities, approvals,
+ * timeouts - saved to one file beside the database that the runtime reads
+ * ahead of `.env` (ADR 0023). Not every field: keys, paths, the store and the
+ * address this window talks to stay where changing them cannot lock the window
+ * out. The rest is what has no file: a workspace, a document somebody brought,
+ * what the platform has remembered, the models it may reach and the plugins it
+ * can act through.
  *
  * It used to be all five of those in one column, every form standing open,
  * navigated by jump links. That is a document, not a settings screen: the thing
@@ -17,14 +18,23 @@
 
 import { useState } from "react";
 
-import { BackIcon, BookIcon, BoxIcon, FolderIcon, PlugIcon, SparkIcon } from "../../../shared/ui";
+import {
+  BackIcon,
+  BookIcon,
+  BoxIcon,
+  FolderIcon,
+  GearIcon,
+  PlugIcon,
+  SparkIcon,
+} from "../../../shared/ui";
 import { DocumentsSection } from "./sections/DocumentsSection";
+import { GeneralSection } from "./sections/GeneralSection";
 import { MemorySection } from "./sections/MemorySection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { PluginsSection } from "./sections/PluginsSection";
 import { WorkspacesSection } from "./sections/WorkspacesSection";
 
-type SectionId = "workspaces" | "documents" | "memory" | "models" | "plugins";
+type SectionId = "general" | "workspaces" | "documents" | "memory" | "models" | "plugins";
 
 interface Section {
   id: SectionId;
@@ -33,8 +43,12 @@ interface Section {
   icon: typeof FolderIcon;
 }
 
-/** The order they are read in: what work happens inside, then what it happens with. */
+/**
+ * The order they are read in: how the platform behaves at all, what work
+ * happens inside, then what it happens with.
+ */
 const SECTIONS: Section[] = [
+  { id: "general", label: "General", group: "Prometheus", icon: GearIcon },
   { id: "workspaces", label: "Workspaces", group: "This machine", icon: FolderIcon },
   { id: "documents", label: "Documents", group: "This machine", icon: BookIcon },
   { id: "memory", label: "Memory", group: "This machine", icon: SparkIcon },
@@ -50,7 +64,7 @@ interface Props {
 }
 
 export function SettingsPage({ onSwitched, onBack, initial }: Props = {}) {
-  const [open, setOpen] = useState<SectionId>(initial ?? "workspaces");
+  const [open, setOpen] = useState<SectionId>(initial ?? "general");
   const current = SECTIONS.find((section) => section.id === open) ?? SECTIONS[0];
 
   return (
@@ -86,6 +100,7 @@ export function SettingsPage({ onSwitched, onBack, initial }: Props = {}) {
         </header>
         <div className="stream">
           <section className="col settings" aria-label={current.label}>
+            {open === "general" && <GeneralSection />}
             {open === "workspaces" && <WorkspacesSection onSwitched={onSwitched} />}
             {open === "documents" && <DocumentsSection />}
             {open === "memory" && <MemorySection />}

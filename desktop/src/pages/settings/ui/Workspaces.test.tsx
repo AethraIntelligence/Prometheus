@@ -153,12 +153,12 @@ function json(body: unknown) {
 function show(client: RuntimeClient, onSwitched?: () => void) {
   return render(
     <RuntimeProvider client={client}>
-      <SettingsPage onSwitched={onSwitched} />
+      <SettingsPage initial="workspaces" onSwitched={onSwitched} />
     </RuntimeProvider>,
   );
 }
 
-/** Workspaces is where the screen opens; everything else is one click away. */
+/** Opened on Workspaces, as a link to it would; everything else is one click away. */
 async function goTo(section: string) {
   await userEvent.click(await screen.findByRole("button", { name: section }));
 }

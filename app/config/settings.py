@@ -6,19 +6,71 @@ with a server behind it does not belong here.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
+from app.config import editable
 from app.config.feature_flags import FeatureFlags
 from domain.workspace.models import DEFAULT_WORKSPACE_ID
 
 
 def _default_data_dir() -> Path:
     return Path.home() / ".prometheus"
+
+
+class WindowSettingsSource(PydanticBaseSettingsSource):
+    """What a person saved from Settings -> General, read on every start.
+
+    It ranks below the process environment and above `.env`. Below the
+    environment, because a variable set in a shell is the most specific thing
+    anybody said about this one process, and the window shows such a setting as
+    locked rather than overriding it. Above `.env`, because the window is where
+    a person changes things *now*: a switch they turned off that came back on
+    because a file they never opened says otherwise is a switch that lies.
+
+    The file sits beside the database, so where it is follows `data_dir` - which
+    is itself resolved from the sources above this one, never from the file.
+    """
+
+    def __init__(
+        self,
+        settings_cls: type[BaseSettings],
+        *,
+        ahead: tuple[PydanticBaseSettingsSource, ...],
+    ) -> None:
+        super().__init__(settings_cls)
+        self._ahead = ahead
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        return None, field_name, False
+
+    def path(self) -> Path:
+        for source in self._ahead:
+            named = source().get("data_dir")
+            if named:
+                return Path(named).expanduser() / editable.FILE_NAME
+        return _default_data_dir() / editable.FILE_NAME
+
+    def __call__(self) -> dict[str, Any]:
+        try:
+            stored = json.loads(self.path().read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError):
+            # A damaged file must not stop the platform from starting: the
+            # window is where it would be repaired, and that needs a runtime.
+            return {}
+        return editable.only_editable(stored)
 
 
 def normalise_database_url(url: str) -> str:
@@ -194,6 +246,25 @@ class Settings(BaseSettings):
     response_language: str = "en"
 
     flags: FeatureFlags = Field(default_factory=FeatureFlags)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        window = WindowSettingsSource(
+            settings_cls, ahead=(init_settings, env_settings, dotenv_settings)
+        )
+        return init_settings, env_settings, window, dotenv_settings, file_secret_settings
+
+    @property
+    def window_settings_path(self) -> Path:
+        """Where Settings -> General keeps what a person chose."""
+        return self.data_dir / editable.FILE_NAME
 
     @field_validator("data_dir", "file_root", mode="after")
     @classmethod

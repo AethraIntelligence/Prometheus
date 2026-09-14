@@ -49,6 +49,8 @@ from domain.approvals.protocols import (
     ApprovalWaiter,
 )
 from domain.capabilities.models import Capability
+from domain.configuration.models import SettingValue
+from domain.configuration.protocols import SettingsEditor
 from domain.conversations.models import Conversation
 from domain.conversations.repository import ConversationRepository
 from domain.employees.protocols import EmployeeRegistry
@@ -182,6 +184,10 @@ class ServiceDependencies:
     #: authority on which tools exist, and who may call one is the employee's
     #: own declaration - neither is an interface's to change.
     tools: ToolRegistry | None = None
+    #: The switches this installation starts with, as Settings -> General
+    #: shows them. None where a surface was built without one; the listing is
+    #: then empty and a change is refused, rather than saved nowhere.
+    settings: SettingsEditor | None = None
     history_limit: int = DEFAULT_LIMIT
 
 
@@ -1069,6 +1075,34 @@ class PrometheusService:
         await store.store(name, value)
         return {"name": name, "stored": True}
 
+    # --- General settings -----------------------------------------------------
+
+    async def list_settings(self) -> dict[str, Any]:
+        """Every switch, and whether anything saved is still waiting for a restart.
+
+        `restart_needed` is read off the settings rather than kept here: the
+        editor already knows both what is running and what was saved, and a
+        second flag in the facade would be one more thing to fall out of step.
+        """
+        if self._d.settings is None:
+            return {"available": False, "restart_needed": False, "any_saved": False, "settings": []}
+        return _settings_view(self._d.settings.current())
+
+    async def change_settings(self, values: dict[str, SettingValue]) -> dict[str, Any]:
+        if self._d.settings is None:
+            raise ConfigurationError("This interface was built without settings.")
+        changed = self._d.settings.change(values)
+        log.info("settings.changed", keys=sorted(values))
+        return _settings_view(changed)
+
+    async def reset_settings(self, keys: list[str] | None = None) -> dict[str, Any]:
+        """Back to `.env` or the platform's default - the named keys, or every one."""
+        if self._d.settings is None:
+            raise ConfigurationError("This interface was built without settings.")
+        reset = self._d.settings.reset(keys)
+        log.info("settings.reset", keys=sorted(keys) if keys is not None else "all")
+        return _settings_view(reset)
+
     # --- The workforce --------------------------------------------------------
 
     def list_employees(self) -> list[dict[str, Any]]:
@@ -1138,6 +1172,15 @@ class PrometheusService:
             "workspace": str(DEFAULT_WORKSPACE_ID),
             "sources": [source.value for source in RequestSource],
         }
+
+
+def _settings_view(settings) -> dict[str, Any]:
+    return {
+        "available": True,
+        "restart_needed": any(item.restart_needed for item in settings),
+        "any_saved": any(item.saved for item in settings),
+        "settings": [views.setting(item) for item in settings],
+    }
 
 
 def _plugin_of(item: Integration) -> str:

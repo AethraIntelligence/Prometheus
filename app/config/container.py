@@ -8,6 +8,7 @@ is for. See docs/adr/0001.
 
 from __future__ import annotations
 
+from app.config.general import FileSettingsEditor
 from app.config.settings import Settings, get_settings
 from application.computer.screen_reader import LLMScreenReader
 from application.employee_runtime.approvals import ApprovalGate
@@ -416,9 +417,21 @@ def build_service(
             memory_maintenance=container.memory_maintenance,
             credentials=container.credential_store,
             providers=build_providers(container),
+            settings=_settings_editor(container),
             history_limit=history_limit,
         )
     )
+
+
+def _settings_editor(container: Container) -> FileSettingsEditor | None:
+    """Settings -> General, for a container built from the real settings class.
+
+    A container handed some other `RuntimeSettings` - a test's stub - has no
+    fields to describe, and gets no editor rather than one that would fail on
+    the first read.
+    """
+    settings = container.settings
+    return FileSettingsEditor(settings) if isinstance(settings, Settings) else None
 
 
 def build_workflow_engine(container: Container) -> WorkflowEngine:

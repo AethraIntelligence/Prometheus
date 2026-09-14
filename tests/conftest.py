@@ -74,7 +74,9 @@ def sqlite_repository(session_factory: async_sessionmaker[AsyncSession]) -> SqlT
 
 
 @pytest.fixture(autouse=True)
-def _ignore_the_developers_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
+def _ignore_the_developers_env_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     """No test reads `.env`, whoever is running it.
 
     The rule this defends is one the project states plainly: the suite needs no
@@ -88,6 +90,11 @@ def _ignore_the_developers_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.config.settings import Settings, get_settings
 
     monkeypatch.setitem(Settings.model_config, "env_file", None)
+    # Nor what a person saved from Settings -> General on this machine: that
+    # file sits beside the developer's own database, and a flag switched off
+    # there would switch it off in every test that never named a data dir.
+    home = tmp_path_factory.mktemp("prometheus-home")
+    monkeypatch.setattr("app.config.settings._default_data_dir", lambda: home)
     # Nor does one start a model server on the machine running it.
     monkeypatch.setenv("PROMETHEUS_LOCAL_LLM_AUTOSTART", "false")
     get_settings.cache_clear()

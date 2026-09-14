@@ -23,6 +23,14 @@ class DependencyNotConfiguredError(ConfigurationError):
     """A dependency was requested from the container before it was available."""
 
 
+class SettingValueError(PrometheusError):
+    """A person asked for a setting value this installation will not take.
+
+    Not a `ConfigurationError`: nothing is misconfigured yet, and the refusal is
+    what keeps it that way. A transport answers it as a 400 with this sentence.
+    """
+
+
 # --- Domain rules -------------------------------------------------------------
 
 

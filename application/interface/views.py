@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from domain.approvals.models import Approval, ApprovalRequest
+from domain.configuration.models import Setting
 from domain.conversations.models import Conversation
 from domain.employees.definition import EmployeeDefinition
 from domain.integrations.catalog import FieldKind, Plugin
@@ -584,3 +585,27 @@ def model_entry(entry: ModelEntry, *, used_for: tuple[str, ...] = ()) -> dict[st
         "generates_text": entry.generates_text,
         "used_for": list(used_for),
     }
+
+
+def setting(item: Setting) -> dict[str, Any]:
+    """One switch: what is saved, what is running, and whether it can be changed here."""
+    return {
+        "key": item.key,
+        "group": item.group,
+        "label": item.label,
+        "help": item.help,
+        "kind": item.kind.value,
+        "value": _jsonable(item.value),
+        "running": _jsonable(item.running),
+        "default": _jsonable(item.default),
+        "saved": item.saved,
+        "choices": list(item.choices),
+        "minimum": item.minimum,
+        "optional": item.optional,
+        "locked_by": item.locked_by,
+        "restart_needed": item.restart_needed,
+    }
+
+
+def _jsonable(value: object) -> object:
+    return list(value) if isinstance(value, tuple) else value
