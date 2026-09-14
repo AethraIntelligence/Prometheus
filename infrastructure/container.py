@@ -579,6 +579,39 @@ class Container:
         self._integrations = factory
 
     @cached_property
+    def plugin_catalog(self):
+        """The services this machine offers to install, declared under `plugins/`."""
+        from infrastructure.integrations.yaml_catalog import YamlPluginCatalog
+
+        return YamlPluginCatalog(self.settings.plugins_dir)
+
+    @property
+    def plugin_credentials(self) -> dict[str, str]:
+        """What this installation supplies to plugins, keyed as the plugins name it.
+
+        Upper-cased here because the settings reader lower-cases what it reads
+        from the environment, and a plugin's setting keys are variable names.
+        """
+        return {
+            key.upper(): value
+            for key, value in (self.settings.plugin_credentials or {}).items()
+            if value
+        }
+
+    def plugin_runtimes(self) -> dict[str, dict[str, object]]:
+        """Whether each kind of server can start here, and what to install if not.
+
+        A method rather than a cached value: installing Node.js while the window
+        is open should change the answer the next time the screen asks.
+        """
+        from infrastructure.integrations.runtimes import HINTS, available
+
+        return {
+            runtime.value: {"ready": ready, "hint": HINTS[runtime][0], "url": HINTS[runtime][1]}
+            for runtime, ready in available().items()
+        }
+
+    @cached_property
     def integrations(self):
         """The lifecycle of connected services, or None if there is none.
 

@@ -69,9 +69,11 @@ from application.interface.contracts import (
 from application.interface.service import ApprovalsDisabledError, PrometheusService
 from application.scheduling.scheduler import Scheduler
 from domain.errors import (
+    DuplicateIntegrationError,
     DuplicateWorkspaceError,
     IntegrationNotFoundError,
     NotFoundError,
+    PluginConfigurationError,
     PrometheusError,
     ProtectedWorkspaceError,
     StorageNotInitializedError,
@@ -195,6 +197,22 @@ class NewIntegration(BaseModel):
     capabilities: tuple[str, ...] = ()
     #: Names only. A value is sent to `/api/credentials` and never lands here.
     secret_names: tuple[str, ...] = ()
+
+
+class PluginInstall(BaseModel):
+    """A plugin's settings as a person filled them in, and who may use it.
+
+    Values only for the settings the plugin declares - anything else is
+    refused in the domain, so this form cannot put a variable of its choosing
+    into a server's environment. `employees` left out means the suggestion.
+    """
+
+    values: dict[str, str] = Field(default_factory=dict)
+    employees: tuple[str, ...] | None = None
+
+
+class Grants(BaseModel):
+    employees: tuple[str, ...] = ()
 
 
 class DocumentFile(BaseModel):
@@ -713,6 +731,46 @@ def _routes(app: FastAPI) -> None:
     async def remove_integration(request: Request, integration_id: UUID) -> dict[str, Any]:
         removed = await _integration(_service(request).remove_integration(integration_id))
         return {"removed": removed}
+
+    @app.post("/api/integrations/{integration_id}/sign-in")
+    async def sign_in_integration(request: Request, integration_id: UUID) -> dict[str, Any]:
+        """Start - or confirm - a plugin's browser sign-in. See the facade."""
+        try:
+            return await _integration(_service(request).sign_in_integration(integration_id))
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.put("/api/integrations/{integration_id}/grants")
+    async def grant_integration(
+        request: Request, integration_id: UUID, body: Grants
+    ) -> dict[str, Any]:
+        return await _integration(
+            _service(request).grant_integration(integration_id, body.employees)
+        )
+
+    # --- Plugins --------------------------------------------------------------
+
+    @app.get("/api/plugins")
+    async def plugins(request: Request) -> dict[str, Any]:
+        """Everything installable, everything installed, and what this machine lacks."""
+        return await _guarded(_service(request).list_plugins())
+
+    @app.post("/api/plugins/{plugin_id}/install", status_code=201)
+    async def install_plugin(
+        request: Request, plugin_id: str, body: PluginInstall
+    ) -> dict[str, Any]:
+        try:
+            return await _integration(
+                _service(request).install_plugin(
+                    plugin_id, body.values, employees=body.employees
+                )
+            )
+        except PluginConfigurationError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except DuplicateIntegrationError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except NotFoundError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post("/api/credentials", status_code=201)
     async def store_credential(request: Request, body: NewCredential) -> dict[str, Any]:

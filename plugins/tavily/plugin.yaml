@@ -1,0 +1,32 @@
+id: tavily
+name: Tavily
+description: Search built for AI research
+about: Search, extraction and multi-step research that returns sources with every answer.
+category: Search and research
+publisher: Tavily
+homepage: https://github.com/tavily-ai/tavily-mcp
+runtime: NODE
+command: npx
+args:
+- -y
+- tavily-mcp
+settings:
+- key: TAVILY_API_KEY
+  label: API key
+  kind: SECRET
+  required: true
+  help: The free plan includes monthly credits.
+  help_url: https://app.tavily.com/home
+  placeholder: tvly-...
+capabilities:
+- WEB_BROWSING
+effects:
+  READ:
+  - tavily_search
+  - tavily_extract
+  - tavily_crawl
+  - tavily_map
+  - tavily_research
+icon:
+  color: '#4F46E5'
+  background: '#FFFFFF'

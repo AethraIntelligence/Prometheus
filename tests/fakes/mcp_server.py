@@ -70,10 +70,28 @@ def _call(arguments: dict[str, Any], name: str) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": f"no such tool: {name}"}], "isError": True}
 
 
+def _option(name: str) -> str:
+    """The value after `name` on the command line, or empty."""
+    if name in sys.argv[1:-1]:
+        return sys.argv[sys.argv.index(name) + 1]
+    return ""
+
+
 def main() -> None:
-    broken = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--broken" else ""
+    import os
+
+    broken = _option("--broken")
     if broken == "start":
         raise SystemExit(1)
+    # A plugin's secret arrives in the environment; one that did not is a
+    # server that will not start, which is what a real one does without a token.
+    expected = _option("--expect-env")
+    if expected and not os.environ.get(expected):
+        raise SystemExit(f"{expected} is not set")
+    # An argument filled from a setting: refuse the placeholder left unfilled.
+    folder = _option("--folder")
+    if folder.startswith("${"):
+        raise SystemExit(f"--folder was never filled in: {folder}")
 
     for line in sys.stdin:
         line = line.strip()
@@ -92,6 +110,19 @@ def main() -> None:
         if broken == "silent":
             continue
 
+        if broken == "chatty":
+            # What a real server does between a request and its reply: logs.
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/message",
+                        "params": {"level": "info", "data": "working"},
+                    }
+                )
+                + "\n"
+            )
+
         if method == "initialize":
             payload = {
                 "protocolVersion": "2024-11-05",
@@ -99,7 +130,12 @@ def main() -> None:
                 "serverInfo": {"name": "fake", "version": "1"},
             }
         elif method == "tools/list":
-            payload = {"tools": [] if broken == "no_tools" else TOOLS}
+            tools = [] if broken == "no_tools" else TOOLS
+            if broken == "big":
+                # One line past asyncio's 64 KiB default, as sixty real tools are.
+                tools = [*TOOLS, *({**TOOLS[2], "name": f"extra_{n}", "description": "x" * 2000}
+                                   for n in range(40))]
+            payload = {"tools": tools}
         elif method == "tools/call":
             params = message.get("params", {})
             payload = _call(params.get("arguments", {}) or {}, params.get("name", ""))

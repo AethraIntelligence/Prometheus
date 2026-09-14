@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What the window may do: talk to a runtime on this machine, be moved by its own header (it has no title bar), ask the system to let a person choose a file, and nothing else.",
+  "description": "What the window may do: talk to a runtime on this machine, be moved by its own header (it has no title bar), ask the system to let a person choose a file, open an https link in the system browser, and nothing else.",
   "windows": [
     "main"
   ],
@@ -9,6 +9,14 @@
     "core:default",
     "core:window:allow-start-dragging",
     "dialog:allow-open",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://*"
+        }
+      ]
+    },
     {
       "identifier": "http:default",
       "allow": [

@@ -1,0 +1,46 @@
+id: supabase
+name: Supabase
+description: Projects, tables, logs and docs - read-only
+about: 'Supabase''s official server, started in read-only mode: employees can inspect a project and its
+  data but not change it.'
+category: Developer tools
+publisher: Supabase
+homepage: https://github.com/supabase-community/supabase-mcp
+runtime: NODE
+command: npx
+args:
+- -y
+- '@supabase/mcp-server-supabase'
+- --read-only
+settings:
+- key: SUPABASE_ACCESS_TOKEN
+  label: Personal access token
+  kind: SECRET
+  required: true
+  help: ''
+  help_url: https://supabase.com/dashboard/account/tokens
+  placeholder: sbp_...
+capabilities:
+- CODE
+effects:
+  READ:
+  - search_docs
+  - list_organizations
+  - get_organization
+  - list_projects
+  - get_project
+  - get_cost
+  - list_tables
+  - list_extensions
+  - list_migrations
+  - query_logs
+  - get_advisors
+  - get_project_url
+  - get_publishable_keys
+  - generate_typescript_types
+  - list_edge_functions
+  - get_edge_function
+  - list_branches
+icon:
+  color: '#3FCF8E'
+  background: '#FFFFFF'

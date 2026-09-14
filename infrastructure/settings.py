@@ -22,6 +22,8 @@ class RuntimeSettings(Protocol):
     model_catalog_path: Path | None
     employees_dir: Path | None
     workflows_dir: Path | None
+    plugins_dir: Path | None
+    plugin_credentials: dict[str, str]
     scenarios_dir: Path | None
     llm_timeout_seconds: float | None
     llm_retry_attempts: int

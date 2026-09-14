@@ -1,0 +1,78 @@
+id: gmail
+name: Gmail
+description: Search, read and draft email; sending asks first
+about: Employees can find and read your mail, threads and attachments and prepare drafts. Sending a message,
+  changing labels or filters asks you every time. Uses your own Google Cloud client, so nothing passes
+  through anyone else's account.
+category: Productivity
+publisher: taylorwilsdon (workspace-mcp)
+homepage: https://github.com/taylorwilsdon/google_workspace_mcp
+popular: true
+runtime: PYTHON
+command: uvx
+args:
+- workspace-mcp
+- --single-user
+- --tools
+- gmail
+- --tool-tier
+- extended
+env:
+  WORKSPACE_MCP_CREDENTIALS_DIR: ~/.google_workspace_mcp/prometheus-gmail
+setup:
+- text: Open Google Cloud Console and create a project (any name).
+  url: https://console.cloud.google.com/projectcreate
+- text: Enable the Gmail API for that project.
+  url: https://console.cloud.google.com/apis/library/gmail.googleapis.com
+- text: 'Set up the OAuth consent screen: choose External, fill in the app name and your email, and add
+    yourself under Test users.'
+  url: https://console.cloud.google.com/auth/overview
+- text: Create an OAuth client ID of type Desktop app, then copy its Client ID and Client secret into
+    the fields below.
+  url: https://console.cloud.google.com/auth/clients
+- 'After installing, press Sign in with Google: a Google page opens in your browser once, and the account
+  stays signed in on this machine.'
+settings:
+- key: GOOGLE_OAUTH_CLIENT_ID
+  label: OAuth client ID
+  kind: SECRET
+  required: true
+  placeholder: 1234-abcd.apps.googleusercontent.com
+  help: From the Desktop app client you created. Gmail and Google Drive can share one client.
+  help_url: https://console.cloud.google.com/auth/clients
+- key: GOOGLE_OAUTH_CLIENT_SECRET
+  label: OAuth client secret
+  kind: SECRET
+  required: true
+  placeholder: GOCSPX-...
+- key: USER_GOOGLE_EMAIL
+  label: Your Google address
+  kind: TEXT
+  required: true
+  placeholder: you@gmail.com
+  help: The account employees work in.
+capabilities:
+- EMAIL
+effects:
+  READ:
+  - search_gmail_messages
+  - get_gmail_message_content
+  - get_gmail_messages_content_batch
+  - get_gmail_attachment_content
+  - get_gmail_thread_content
+  - list_gmail_labels
+  - list_gmail_filters
+  WRITE:
+  - draft_gmail_message
+  SEND:
+  - send_gmail_message
+sign_in:
+  label: Sign in with Google
+  tool: search_gmail_messages
+  arguments:
+    query: in:inbox
+    page_size: 1
+  help: A Google page opens in your browser. Allow access there, come back and press Check.
+icon:
+  color: '#EA4335'
+  background: '#FFFFFF'

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,6 +35,7 @@ from domain.errors import (
     IntegrationTimeoutError,
     IntegrationUnavailableError,
 )
+from infrastructure.integrations import programs
 
 log = structlog.get_logger(__name__)
 
@@ -43,6 +46,12 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 #: A frame larger than this is refused rather than buffered. An external process
 #: must not be able to exhaust this machine's memory by answering at length.
 MAX_LINE_BYTES = 8 * 1024 * 1024
+
+#: `${NAME}` in an argument, replaced from the child's environment at start.
+#: A server that takes its credential as an argument rather than a variable -
+#: a database URL, say - still never has the value written on the record: the
+#: record holds the placeholder, and the secret arrives with the environment.
+PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,9 +72,15 @@ class ServerCommand:
                 "an MCP server over stdio needs a 'command' to start"
             )
         raw_args = configuration.get("args", ())
+        raw_env = configuration.get("env", {})
         return cls(
             command=command,
             args=tuple(str(arg) for arg in raw_args) if isinstance(raw_args, list) else (),
+            # Plain values only - a plugin's fixed settings. A secret is never
+            # on the record; it arrives with the environment at connect.
+            env=(
+                {str(k): str(v) for k, v in raw_env.items()} if isinstance(raw_env, dict) else {}
+            ),
         )
 
 
@@ -91,14 +106,26 @@ class StdioTransport:
     async def start(self, env: dict[str, str] | None = None) -> None:
         if self._process is not None and self._process.returncode is None:
             return
+        found = programs.find(self._command.command)
+        if found is None:
+            raise IntegrationUnavailableError(
+                f"could not start '{self._command.command}': it is not installed on "
+                "this machine, or not anywhere this program can find it"
+            )
+        environment = self._environment(env)
+        environment["PATH"] = programs.child_path(found, environment.get("PATH"))
         try:
             self._process = await asyncio.create_subprocess_exec(
-                self._command.command,
-                *self._command.args,
+                str(found),
+                *self._arguments(environment),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=self._environment(env),
+                env=environment,
+                # A tool list is one line of JSON, and a server with sixty
+                # tools sends more than asyncio's 64 KiB default: the reader
+                # refused it before the size check below could say so.
+                limit=MAX_LINE_BYTES + 1,
             )
         except (OSError, ValueError) as error:
             raise IntegrationUnavailableError(
@@ -106,19 +133,28 @@ class StdioTransport:
             ) from error
         log.info("mcp.server_started", command=self._command.command)
 
-    def _environment(self, extra: dict[str, str] | None) -> dict[str, str] | None:
-        """The child's environment, or None to inherit this process's.
+    def _environment(self, extra: dict[str, str] | None) -> dict[str, str]:
+        """The child's environment: this process's, plus what it was handed.
 
         Secrets reach the server this way and no other: they are put in the
         child's environment at the moment of connecting, and never written to
         the integration record, a log line or a prompt.
         """
-        import os
+        return {**os.environ, **self._command.env, **(extra or {})}
 
-        merged = {**self._command.env, **(extra or {})}
-        if not merged:
-            return None
-        return {**os.environ, **merged}
+    def _arguments(self, environment: dict[str, str]) -> list[str]:
+        """The arguments with `${NAME}` filled in from the environment.
+
+        A placeholder with nothing behind it is left as written: the server
+        then says what is wrong with its argument, which is more use than an
+        empty string it would read as a valid, empty value.
+        """
+        return [
+            PLACEHOLDER.sub(
+                lambda match: environment.get(match.group(1), match.group(0)), arg
+            )
+            for arg in self._command.args
+        ]
 
     async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """One JSON-RPC call, and the result it produced."""
@@ -132,7 +168,7 @@ class StdioTransport:
                 "params": params or {},
             }
             await self._write(process, payload)
-            message = await self._read(process)
+            message = await self._reply(process, self._next_id)
 
         if "error" in message:
             error = message["error"] or {}
@@ -169,6 +205,26 @@ class StdioTransport:
             raise IntegrationUnavailableError(
                 f"'{self._command.command}' closed its input: {error}"
             ) from error
+
+    async def _reply(
+        self, process: asyncio.subprocess.Process, request_id: int
+    ) -> dict[str, Any]:
+        """The answer to this request, past anything the server said meanwhile.
+
+        A server may log or report progress as notifications between a request
+        and its reply; taking the first message as the answer made such a
+        server's handshake fail on a "result" that was a log line. Still bound
+        by the timeout per message, so a chatty server that never answers ends.
+        """
+        while True:
+            message = await self._read(process)
+            if message.get("id") == request_id and "method" not in message:
+                return message
+            log.debug(
+                "mcp.message_skipped",
+                command=self._command.command,
+                method=str(message.get("method", "")),
+            )
 
     async def _read(self, process: asyncio.subprocess.Process) -> dict[str, Any]:
         assert process.stdout is not None

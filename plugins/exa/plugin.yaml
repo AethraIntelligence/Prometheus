@@ -1,0 +1,28 @@
+id: exa
+name: Exa
+description: Search the web by meaning
+about: 'Neural web search: finds pages that mean what was asked, not only ones that contain its words.'
+category: Search and research
+publisher: Exa
+homepage: https://github.com/exa-labs/exa-mcp-server
+runtime: NODE
+command: npx
+args:
+- -y
+- exa-mcp-server
+settings:
+- key: EXA_API_KEY
+  label: API key
+  kind: SECRET
+  required: true
+  help: ''
+  help_url: https://dashboard.exa.ai/api-keys
+capabilities:
+- WEB_BROWSING
+effects:
+  READ:
+  - web_search_exa
+  - web_fetch_exa
+icon:
+  color: '#1E40AF'
+  background: '#FFFFFF'

@@ -1,0 +1,31 @@
+id: figma
+name: Figma
+description: Read designs and export images from Figma files
+about: Gives employees the layout, styles and assets of a Figma file, so what they build matches the design.
+category: Productivity
+publisher: GLips
+homepage: https://github.com/GLips/Figma-Context-MCP
+runtime: NODE
+command: npx
+args:
+- -y
+- figma-developer-mcp
+- --stdio
+settings:
+- key: FIGMA_API_KEY
+  label: Personal access token
+  kind: SECRET
+  required: true
+  help: ''
+  help_url: https://www.figma.com/developers/api#access-tokens
+  placeholder: figd_...
+capabilities:
+- FILE_ACCESS
+effects:
+  READ:
+  - get_figma_data
+  WRITE:
+  - download_figma_images
+icon:
+  color: '#F24E1E'
+  background: '#FFFFFF'

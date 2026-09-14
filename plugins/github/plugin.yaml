@@ -1,0 +1,48 @@
+id: github
+name: GitHub
+description: Repositories, issues and pull requests
+about: GitHub's own MCP server, run in Docker. Employees can read code, issues and pull requests; opening,
+  commenting or merging anything asks you first.
+category: Developer tools
+publisher: GitHub
+homepage: https://github.com/github/github-mcp-server
+popular: true
+runtime: DOCKER
+command: docker
+args:
+- run
+- -i
+- --rm
+- -e
+- GITHUB_PERSONAL_ACCESS_TOKEN
+- ghcr.io/github/github-mcp-server
+settings:
+- key: GITHUB_PERSONAL_ACCESS_TOKEN
+  label: Personal access token
+  kind: SECRET
+  required: true
+  help: A fine-grained token limited to the repositories employees should see.
+  help_url: https://github.com/settings/personal-access-tokens/new
+  placeholder: github_pat_...
+capabilities:
+- CODE
+effects:
+  READ:
+  - get_me
+  - search_repositories
+  - get_file_contents
+  - list_issues
+  - get_issue
+  - search_issues
+  - list_pull_requests
+  - get_pull_request
+  - get_pull_request_files
+  - get_pull_request_diff
+  - list_commits
+  - get_commit
+  - list_branches
+  - search_code
+  - search_users
+icon:
+  color: '#181717'
+  background: '#FFFFFF'

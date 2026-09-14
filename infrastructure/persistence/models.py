@@ -649,6 +649,7 @@ class IntegrationRow(Base):
     capabilities: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     secret_names: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     discovered: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    granted_to: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)

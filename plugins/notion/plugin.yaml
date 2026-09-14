@@ -1,0 +1,43 @@
+id: notion
+name: Notion
+description: Search, read and update pages and databases
+about: Notion's official MCP server. Reading pages and databases runs on its own; creating, editing, moving
+  or deleting anything asks you first.
+category: Productivity
+publisher: Notion
+homepage: https://github.com/makenotion/notion-mcp-server
+popular: true
+runtime: NODE
+command: npx
+args:
+- -y
+- '@notionhq/notion-mcp-server'
+settings:
+- key: NOTION_TOKEN
+  label: Integration token
+  kind: SECRET
+  required: true
+  help: Create an internal integration, then share the pages it may see with it.
+  help_url: https://www.notion.so/profile/integrations
+  placeholder: ntn_...
+capabilities:
+- FILE_ACCESS
+effects:
+  READ:
+  - API-get-user
+  - API-get-users
+  - API-get-self
+  - API-post-search
+  - API-get-block-children
+  - API-retrieve-a-block
+  - API-retrieve-a-page
+  - API-retrieve-a-page-property
+  - API-retrieve-a-comment
+  - API-query-data-source
+  - API-retrieve-a-data-source
+  - API-list-data-source-templates
+  - API-retrieve-a-database
+  - API-retrieve-page-markdown
+icon:
+  color: '#000000'
+  background: '#FFFFFF'

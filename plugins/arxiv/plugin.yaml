@@ -1,0 +1,39 @@
+id: arxiv
+name: arXiv
+description: Find, read and follow scientific papers
+about: Search arXiv and read papers in full. Downloaded papers are kept on this machine so they can be
+  searched again.
+category: Search and research
+publisher: blazickjp
+homepage: https://github.com/blazickjp/arxiv-mcp-server
+runtime: PYTHON
+command: uvx
+args:
+- arxiv-mcp-server
+capabilities:
+- WEB_BROWSING
+effects:
+  READ:
+  - search_papers
+  - list_papers
+  - read_paper
+  - get_abstract
+  - semantic_search
+  - citation_graph
+  - export_citations
+  - check_alerts
+  - list_watches
+  - get_paper_latex
+  - list_paper_latex_sections
+  - get_paper_latex_section
+  - get_paper_outline
+  - read_paper_section
+  - search_paper_text
+  WRITE:
+  - download_paper
+  - reindex
+  - watch_topic
+  - unwatch_topic
+icon:
+  color: '#B31B1B'
+  background: '#FFFFFF'

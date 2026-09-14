@@ -168,3 +168,56 @@ async def test_closing_twice_is_safe(client) -> None:
     await client.connect()
     await client.aclose()
     await client.aclose()
+
+
+# --- What real servers do that the first transport could not read ----------------
+
+
+async def test_a_tool_list_longer_than_the_stream_default_is_read() -> None:
+    """Brave Search and Notion both send more than 64 KiB in one line."""
+    connected = MCPClient(StdioTransport(command("--broken", "big")))
+    await connected.connect()
+
+    assert len(await connected.list_tools()) == 43
+    await connected.aclose()
+
+
+async def test_a_notification_before_the_reply_is_not_taken_for_it() -> None:
+    connected = MCPClient(StdioTransport(command("--broken", "chatty")))
+    await connected.connect()
+
+    assert [tool.name for tool in await connected.list_tools()][:1] == ["search_notes"]
+    await connected.aclose()
+
+
+async def test_a_secret_placeholder_in_an_argument_is_filled_from_the_environment() -> None:
+    connected = MCPClient(
+        StdioTransport(
+            ServerCommand(
+                command=sys.executable,
+                args=(str(SERVER), "--folder", "${WHERE}", "--expect-env", "WHERE"),
+            )
+        )
+    )
+    await connected.connect({"WHERE": "/tmp/notes"})
+
+    assert await connected.list_tools()
+    await connected.aclose()
+
+
+def test_a_program_is_found_outside_a_short_path(tmp_path, monkeypatch) -> None:
+    """A window opened from the Dock has launchd's PATH, not the shell's."""
+    from infrastructure.integrations import programs
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    tool = bin_dir / "some-runner"
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setattr(programs, "SEARCH_PATTERNS", (str(bin_dir),))
+
+    found = programs.find("some-runner")
+
+    assert found == tool
+    assert programs.child_path(found, "/usr/bin").split(":")[:2] == [str(bin_dir), "/usr/bin"]

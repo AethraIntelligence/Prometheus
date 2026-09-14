@@ -89,6 +89,7 @@ def build_integrations(container: Container) -> IntegrationService:
             timeout_seconds=container.settings.integration_timeout_seconds
         ),
         secrets=container.secret_resolver,
+        provided=container.plugin_credentials,
         on_change=container.refresh_grants,
     )
 
@@ -405,6 +406,9 @@ def build_service(
             llm_calls=container.llm_call_log,
             approval_service=container.approval_service,
             integrations=container.integrations,
+            plugins=container.plugin_catalog,
+            plugin_runtimes=container.plugin_runtimes,
+            provided_credentials=frozenset(container.plugin_credentials),
             workspaces=build_workspaces(container),
             knowledge=build_knowledge(container),
             retriever=container.retriever,

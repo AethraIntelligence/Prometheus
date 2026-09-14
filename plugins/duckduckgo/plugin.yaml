@@ -1,0 +1,23 @@
+id: duckduckgo
+name: DuckDuckGo
+description: Web search with no account and no key
+about: Search the web and read the pages it finds. Nothing to sign up for, which makes it the quickest
+  way to give employees search.
+category: Search and research
+publisher: nickclyde
+homepage: https://github.com/nickclyde/duckduckgo-mcp-server
+popular: true
+runtime: PYTHON
+command: uvx
+args:
+- duckduckgo-mcp-server
+capabilities:
+- WEB_BROWSING
+effects:
+  READ:
+  - search
+  - fetch_content
+  - expand_link
+icon:
+  color: '#DE5833'
+  background: '#FFFFFF'

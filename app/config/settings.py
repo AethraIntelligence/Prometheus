@@ -104,6 +104,16 @@ class Settings(BaseSettings):
     #: Where workflow declarations are read from. None means the ones that
     #: ship with the platform, the same way employees are found.
     workflows_dir: Path | None = None
+    #: Where plugin declarations are read from - the services Settings ->
+    #: Plugins offers to install. None means the ones that ship.
+    plugins_dir: Path | None = None
+    #: Credentials this installation supplies to plugins that ask for them by
+    #: name, so a person does not have to - the platform's own Google OAuth
+    #: client, for one. Set as `PROMETHEUS_PLUGIN_CREDENTIALS__<NAME>=value` in
+    #: `.env`, never in the repository: a client secret in public source is
+    #: found and flagged within hours. A credential a person stored under the
+    #: same name wins over this one.
+    plugin_credentials: dict[str, str] = Field(default_factory=dict)
     #: Where validation scenarios are read from. Same rule again: the real work
     #: the platform is measured on is a directory of files, not a fixture.
     scenarios_dir: Path | None = None

@@ -1,0 +1,36 @@
+id: brave-search
+name: Brave Search
+description: Web, news, image and local search
+about: 'Brave''s official search server: an independent index, answered as data rather than a page an
+  employee has to read.'
+category: Search and research
+publisher: Brave
+homepage: https://github.com/brave/brave-search-mcp-server
+popular: true
+runtime: NODE
+command: npx
+args:
+- -y
+- '@brave/brave-search-mcp-server'
+settings:
+- key: BRAVE_API_KEY
+  label: API key
+  kind: SECRET
+  required: true
+  help: The free plan is enough to start.
+  help_url: https://api-dashboard.search.brave.com/app/keys
+capabilities:
+- WEB_BROWSING
+effects:
+  READ:
+  - brave_web_search
+  - brave_local_search
+  - brave_video_search
+  - brave_image_search
+  - brave_news_search
+  - brave_summarizer
+  - brave_llm_context
+  - brave_place_search
+icon:
+  color: '#FB542B'
+  background: '#FFFFFF'

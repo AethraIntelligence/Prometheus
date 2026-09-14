@@ -24,6 +24,7 @@ from typing import Any
 from domain.approvals.models import Approval, ApprovalRequest
 from domain.conversations.models import Conversation
 from domain.employees.definition import EmployeeDefinition
+from domain.integrations.catalog import FieldKind, Plugin
 from domain.integrations.models import Integration
 from domain.integrations.specs import spec_for
 from domain.knowledge.models import Document, Passage
@@ -194,6 +195,90 @@ def integration(item: Integration) -> dict[str, Any]:
         "secrets": list(item.secret_names),
         "tool_count": len(item.discovered),
         "tools": [integration_capability(item, tool) for tool in item.discovered],
+    }
+
+
+def installed_integration(
+    item: Integration, *, plugin: str = "", holders: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """A connected service as the Plugins screen shows it.
+
+    `plugin` is the catalog entry it came from, or empty for a server somebody
+    added by hand. `holders` is everyone who may use it, however they were
+    granted - the file or the window - and `granted_to` is the window's half
+    alone, which is the half a person can change there.
+    """
+    return {
+        **integration(item),
+        "plugin": plugin,
+        "holders": list(holders),
+        "granted_to": sorted(item.granted_to),
+    }
+
+
+# --- Plugins ------------------------------------------------------------------
+
+
+def plugin(
+    item: Plugin,
+    *,
+    installed: Integration | None,
+    runtime_ready: bool,
+    suggested: list[str],
+    stored: set[str],
+    provided: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """One installable service, and whether this machine has it.
+
+    `settings` carries `stored` for each secret - whether a value is already
+    kept under that name - so reinstalling after a removal does not ask for a
+    token the machine already holds. Never the value.
+    """
+    return {
+        "id": item.id,
+        "name": item.name,
+        "description": item.description,
+        "about": item.about,
+        "category": item.category,
+        "publisher": item.publisher,
+        "homepage": item.homepage,
+        "popular": item.popular,
+        "runtime": item.runtime.value,
+        "runtime_ready": runtime_ready,
+        "icon": (
+            {
+                "view_box": item.icon.view_box,
+                "paths": list(item.icon.paths),
+                "color": item.icon.color,
+                "background": item.icon.background,
+            }
+            if item.icon
+            else None
+        ),
+        "capabilities": sorted(str(c) for c in item.capabilities),
+        "settings": [
+            {
+                "key": field.key,
+                "label": field.label,
+                "kind": field.kind.value,
+                "required": field.required,
+                "placeholder": field.placeholder,
+                "help": field.help,
+                "help_url": field.help_url,
+                "stored": field.kind is FieldKind.SECRET and field.key in stored,
+                # The installation supplies it, so a person may leave it empty;
+                # typing their own replaces it for this machine.
+                "provided": field.kind is FieldKind.SECRET and field.key in provided,
+            }
+            for field in item.fields
+        ],
+        "setup": [{"text": step.text, "url": step.url} for step in item.setup],
+        "sign_in": (
+            {"label": item.sign_in.label, "help": item.sign_in.help} if item.sign_in else None
+        ),
+        "suggested_employees": suggested,
+        "installed": str(installed.id) if installed else "",
+        "status": installed.status.value if installed else "",
     }
 
 

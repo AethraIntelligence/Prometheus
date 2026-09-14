@@ -1,0 +1,30 @@
+id: context7
+name: Context7
+description: Up-to-date documentation for code libraries
+about: Current documentation and examples for thousands of libraries, so code written here matches the
+  version actually installed.
+category: Developer tools
+publisher: Upstash
+homepage: https://github.com/upstash/context7
+popular: true
+runtime: NODE
+command: npx
+args:
+- -y
+- '@upstash/context7-mcp'
+settings:
+- key: CONTEXT7_API_KEY
+  label: API key (optional)
+  kind: SECRET
+  required: false
+  help: Works without one; a key raises the rate limit.
+  help_url: https://context7.com/dashboard
+capabilities:
+- CODE
+effects:
+  READ:
+  - resolve-library-id
+  - query-docs
+icon:
+  color: '#0F766E'
+  background: '#FFFFFF'

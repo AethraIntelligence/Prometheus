@@ -30,7 +30,7 @@ slowest one.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from uuid import UUID
 
@@ -69,6 +69,7 @@ class IntegrationService:
         *,
         restorer: Connector | None = None,
         secrets: SecretResolver | None = None,
+        provided: Mapping[str, str] | None = None,
         on_change: Callable[[list[Integration]], None] | None = None,
     ) -> None:
         self._repository = repository
@@ -82,6 +83,10 @@ class IntegrationService:
         # wants and what an integration kind with no cheap path would use.
         self._restorer = restorer or connector
         self._secrets = secrets
+        # What the installation supplies when nobody stored their own: the
+        # platform's Google client, so signing in is a button rather than a
+        # Cloud Console. Consulted after the resolver, so a person's own wins.
+        self._provided = dict(provided or {})
         # Called whenever the set of integrations changes, so the employee
         # registry's snapshot of grants can follow it without polling.
         self._on_change = on_change
@@ -108,6 +113,8 @@ class IntegrationService:
         kind: IntegrationKind = IntegrationKind.MCP,
         capabilities: frozenset[Capability] = frozenset(),
         secret_names: tuple[str, ...] = (),
+        effects: dict[str, Effect] | None = None,
+        granted_to: frozenset[str] = frozenset(),
     ) -> Integration:
         """Record a service. Connecting to it is a separate step on purpose.
 
@@ -128,6 +135,8 @@ class IntegrationService:
             configuration=dict(configuration),
             granted_capabilities=capabilities,
             secret_names=secret_names,
+            effects=dict(effects or {}),
+            granted_to=granted_to,
         )
         await self._repository.save(integration)
         log.info("integration.added", integration=integration.name, kind=kind.value)
@@ -188,11 +197,12 @@ class IntegrationService:
         than passed as an empty string: a server told its token is "" fails in a
         way nobody can read, and its absence is at least the truth.
         """
-        if self._secrets is None:
-            return {}
         found = {}
         for name in integration.secret_names:
-            secret = self._secrets.maybe(name)
+            secret = self._secrets.maybe(name) if self._secrets is not None else None
+            if secret is None and name in self._provided:
+                found[name] = self._provided[name]
+                continue
             if secret is None:
                 log.info(
                     "integration.secret_missing",
@@ -266,6 +276,54 @@ class IntegrationService:
             log.warning(
                 "integration.close_failed", integration=integration.name, error=str(error)
             )
+
+    # --- Asking a server to sign in ---------------------------------------------
+
+    async def try_tool(
+        self, integration_id: UUID, tool_name: str, arguments: dict[str, object]
+    ) -> bool:
+        """Call one of its tools on a person's behalf, and say only whether it worked.
+
+        What a sign-in button needs: a server that signs in through the browser
+        opens its own page when a call arrives unauthorised, and answers with
+        data once it is not. The reply is not read - success is the whole
+        answer, so no wording of any server is parsed. Only a tool the plugin's
+        declaration names is ever asked for (see the facade), and it is a read.
+        """
+        integration = await self.get(integration_id)
+        if integration.id not in self._live:
+            integration = await self.connect(integration_id)
+        connection = self._live.get(integration.id)
+        if connection is None:
+            return False
+        wanted = integration.qualified(tool_name)
+        tool = next((one for one in connection.tools if one.spec.name == wanted), None)
+        if tool is None:
+            return False
+        result = await tool.execute(dict(arguments))
+        log.info("integration.tool_tried", integration=integration.name, succeeded=result.success)
+        return result.success
+
+    # --- Who may use it ---------------------------------------------------------
+
+    async def grant(self, integration_id: UUID, employees: frozenset[str]) -> Integration:
+        """Say which employees may use it from the window.
+
+        Replaces the machine's list and leaves every employee file alone: a
+        name written in a declaration stays granted whatever is chosen here,
+        because the file is the other half of the rule and this is not the
+        place to edit it.
+        """
+        integration = await self.get(integration_id)
+        chosen = integration.granted_to_only(employees)
+        await self._repository.save(chosen)
+        log.info(
+            "integration.granted",
+            integration=integration.name,
+            employees=sorted(chosen.granted_to),
+        )
+        await self._changed()
+        return chosen
 
     # --- Classifying what it offers -------------------------------------------
 

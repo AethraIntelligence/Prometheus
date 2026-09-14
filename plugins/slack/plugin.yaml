@@ -1,0 +1,38 @@
+id: slack
+name: Slack
+description: Read channels and threads, search messages
+about: An open-source Slack server. Reading runs on its own; posting a message is off in the server by
+  default, and asks you first when it is on.
+category: Productivity
+publisher: korotovsky
+homepage: https://github.com/korotovsky/slack-mcp-server
+popular: true
+runtime: NODE
+command: npx
+args:
+- -y
+- slack-mcp-server
+- --transport
+- stdio
+settings:
+- key: SLACK_MCP_XOXP_TOKEN
+  label: User OAuth token
+  kind: SECRET
+  required: true
+  help: Create a Slack app, add user token scopes for channels and history, install it and copy the token
+    that starts with xoxp-.
+  help_url: https://api.slack.com/apps
+  placeholder: xoxp-...
+capabilities:
+- EMAIL
+effects:
+  READ:
+  - channels_list
+  - conversations_history
+  - conversations_replies
+  - conversations_search_messages
+  SEND:
+  - conversations_add_message
+icon:
+  color: '#4A154B'
+  background: '#FFFFFF'

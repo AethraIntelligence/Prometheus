@@ -35,8 +35,8 @@ export function IntegrationCard({ integration, actions, children }: Props) {
         <span className={`state ${tone}`}>{integration.status.replace(/_/g, " ").toLowerCase()}</span>
       </header>
       <p className="meta">
-        {integration.kind} · {integration.tool_count} capability
-        {integration.tool_count === 1 ? "" : "ies"}
+        {integration.kind} · {integration.tool_count} capabilit
+        {integration.tool_count === 1 ? "y" : "ies"}
         {integration.capabilities.length > 0 && ` · offers ${integration.capabilities.join(", ")}`}
       </p>
       {integration.secrets.length > 0 && (

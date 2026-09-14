@@ -39,20 +39,33 @@ def granted(
     usable = [
         integration
         for integration in integrations
-        if integration.is_usable and integration.name in definition.integrations
+        if integration.is_usable and holds(definition, integration)
     ]
     if not usable:
         return definition
 
     tools = set(definition.allowed_tools)
     capabilities = set(definition.capabilities)
+    names = set(definition.integrations)
     for integration in usable:
         tools |= integration.tool_names
         capabilities |= integration.granted_capabilities
+        # The name too, so routing by service (ADR 0018) finds a holder granted
+        # from the window exactly as it finds one granted in the file.
+        names.add(integration.name)
     return replace(
         definition,
         allowed_tools=frozenset(tools),
         capabilities=frozenset(capabilities),
+        integrations=frozenset(names),
+    )
+
+
+def holds(definition: EmployeeDefinition, integration: Integration) -> bool:
+    """Granted either way: in the employee's own file, or on this machine's record."""
+    return (
+        integration.name in definition.integrations
+        or definition.name in integration.granted_to
     )
 
 

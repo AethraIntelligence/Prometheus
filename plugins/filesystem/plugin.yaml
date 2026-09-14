@@ -1,0 +1,41 @@
+id: filesystem
+name: Folder access
+description: Read and organise files in a folder you choose
+about: Gives employees a second folder beside the workspace's own. Reading runs on its own; writing, editing
+  or moving a file asks you first.
+category: Productivity
+publisher: Model Context Protocol
+homepage: https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
+popular: true
+runtime: NODE
+command: npx
+args:
+- -y
+- '@modelcontextprotocol/server-filesystem'
+- ${FOLDER}
+settings:
+- key: FOLDER
+  label: Folder
+  kind: PATH
+  required: true
+  placeholder: /Users/you/Documents/Projects
+  help: Nothing outside this folder can be reached.
+capabilities:
+- FILE_ACCESS
+effects:
+  READ:
+  - read_file
+  - read_text_file
+  - read_media_file
+  - read_multiple_files
+  - list_directory
+  - list_directory_with_sizes
+  - directory_tree
+  - search_files
+  - get_file_info
+  - list_allowed_directories
+  WRITE:
+  - create_directory
+icon:
+  color: '#CA8A04'
+  background: '#FFFFFF'

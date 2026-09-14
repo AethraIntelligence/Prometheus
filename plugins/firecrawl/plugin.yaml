@@ -1,0 +1,41 @@
+id: firecrawl
+name: Firecrawl
+description: Scrape, crawl and extract data from websites
+about: Turns whole websites into structured data. Scraping and searching run on their own; agents, monitors
+  and anything that keeps running asks you first.
+category: Search and research
+publisher: Firecrawl
+homepage: https://github.com/firecrawl/firecrawl-mcp-server
+runtime: NODE
+command: npx
+args:
+- -y
+- firecrawl-mcp
+settings:
+- key: FIRECRAWL_API_KEY
+  label: API key
+  kind: SECRET
+  required: true
+  help: ''
+  help_url: https://www.firecrawl.dev/app/api-keys
+  placeholder: fc-...
+capabilities:
+- WEB_BROWSING
+effects:
+  READ:
+  - firecrawl_scrape
+  - firecrawl_map
+  - firecrawl_search
+  - firecrawl_crawl
+  - firecrawl_check_crawl_status
+  - firecrawl_extract
+  - firecrawl_parse
+  - firecrawl_research_search_papers
+  - firecrawl_research_inspect_paper
+  - firecrawl_research_related_papers
+  - firecrawl_research_read_paper
+  - firecrawl_research_search_github
+  - firecrawl_developer_search
+icon:
+  color: '#F97316'
+  background: '#FFFFFF'

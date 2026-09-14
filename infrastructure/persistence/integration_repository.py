@@ -55,6 +55,7 @@ def _to_row(integration: Integration) -> dict[str, Any]:
             }
             for tool in integration.discovered
         ],
+        "granted_to": sorted(integration.granted_to),
         "enabled": integration.enabled,
         "updated_at": datetime.now(UTC),
     }
@@ -111,6 +112,7 @@ def _to_integration(row: IntegrationRow) -> Integration:
         discovered=_discovered(row.discovered),
         enabled=bool(row.enabled),
         workspace_id=WorkspaceId(row.workspace_id),
+        granted_to=frozenset(str(name) for name in (row.granted_to or [])),
     )
 
 

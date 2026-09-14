@@ -114,6 +114,12 @@ class Integration:
     #: would make "disable" the more destructive of the two operations.
     enabled: bool = True
     workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    #: Employees granted this integration on this machine, by name. The other
+    #: way to grant one is `integrations:` in the employee's own file; this is
+    #: the one a person uses from the window, and like that one it can only
+    #: add (see `domain/integrations/grants.py`). Names rather than ids for the
+    #: reason a declaration uses names: the directory is the identity.
+    granted_to: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def create(cls, name: str, **extra: Any) -> Integration:
@@ -146,6 +152,11 @@ class Integration:
         offline.
         """
         return replace(self, status=status)
+
+    def granted_to_only(self, employees: frozenset[str]) -> Integration:
+        """Who may use it from now on, as a person chose from the window."""
+        chosen = frozenset(name.strip() for name in employees if name.strip())
+        return replace(self, granted_to=chosen)
 
     def set_enabled(self, enabled: bool) -> Integration:
         """Switched off without being forgotten, and back on without setup."""

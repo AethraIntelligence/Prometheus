@@ -141,3 +141,31 @@ def test_removing_the_integration_takes_the_grant_away_from_the_next_run() -> No
     registry.refresh([])
 
     assert registry.get("researcher").allowed_tools == {"fs.read"}
+
+
+# --- The window's half of a grant (migration 024) -----------------------------
+
+
+def test_a_grant_from_the_window_adds_exactly_what_the_file_would() -> None:
+    by_window = granted(definition(), [notes(granted_to=frozenset({"researcher"}))])
+    by_file = granted(definition(integrations=frozenset({"notes"})), [notes()])
+
+    assert by_window.allowed_tools == by_file.allowed_tools
+    assert by_window.capabilities == by_file.capabilities
+    # And the name, so routing by service finds this holder too (ADR 0018).
+    assert "notes" in by_window.integrations
+
+
+def test_a_grant_from_the_window_names_one_employee_and_reaches_no_other() -> None:
+    other = granted(definition("analyst"), [notes(granted_to=frozenset({"researcher"}))])
+
+    assert other.allowed_tools == frozenset()
+    assert "notes" not in other.integrations
+
+
+def test_clearing_the_window_grant_leaves_the_file_grant_standing() -> None:
+    integration = notes(granted_to=frozenset({"researcher"})).granted_to_only(frozenset())
+    declared = definition(integrations=frozenset({"notes"}))
+
+    assert integration.granted_to == frozenset()
+    assert "notes.search_notes" in granted(declared, [integration]).allowed_tools

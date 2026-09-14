@@ -99,6 +99,14 @@ class DuplicateIntegrationError(DomainError):
     """
 
 
+class PluginConfigurationError(DomainError, ValueError):
+    """What a person supplied cannot install this plugin, and which part.
+
+    A `ValueError` too, because it is one - a value that does not fit - and a
+    caller that only knows the standard hierarchy should still recognise it.
+    """
+
+
 class DuplicateWorkspaceError(DomainError):
     """Two workspaces of one name would resolve to one id.
 

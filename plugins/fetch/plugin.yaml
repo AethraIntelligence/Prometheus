@@ -1,0 +1,20 @@
+id: fetch
+name: Web page reader
+description: Read any web page as clean text
+about: 'The reference fetch server from the Model Context Protocol project: a URL in, readable Markdown
+  out.'
+category: Search and research
+publisher: Model Context Protocol
+homepage: https://github.com/modelcontextprotocol/servers/tree/main/src/fetch
+runtime: PYTHON
+command: uvx
+args:
+- mcp-server-fetch
+capabilities:
+- WEB_BROWSING
+effects:
+  READ:
+  - fetch
+icon:
+  color: '#2563EB'
+  background: '#FFFFFF'

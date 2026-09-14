@@ -1,0 +1,41 @@
+id: hubspot
+name: HubSpot
+description: Contacts, companies, deals and engagements
+about: HubSpot's official server. Looking things up runs on its own; creating or changing CRM records
+  asks you first.
+category: Business
+publisher: HubSpot
+homepage: https://developers.hubspot.com/mcp
+runtime: NODE
+command: npx
+args:
+- -y
+- '@hubspot/mcp-server'
+settings:
+- key: PRIVATE_APP_ACCESS_TOKEN
+  label: Private app access token
+  kind: SECRET
+  required: true
+  help: ''
+  help_url: https://developers.hubspot.com/docs/api/private-apps
+  placeholder: pat-...
+capabilities:
+- EMAIL
+effects:
+  READ:
+  - hubspot-get-user-details
+  - hubspot-list-objects
+  - hubspot-search-objects
+  - hubspot-get-association-definitions
+  - hubspot-list-associations
+  - hubspot-batch-read-objects
+  - hubspot-list-properties
+  - hubspot-get-property
+  - hubspot-get-engagement
+  - hubspot-get-schemas
+  - hubspot-get-link
+  - hubspot-list-workflows
+  - hubspot-get-workflow
+icon:
+  color: '#FF7A59'
+  background: '#FFFFFF'

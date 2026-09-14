@@ -1,0 +1,19 @@
+id: sequential-thinking
+name: Step-by-step thinking
+description: A scratchpad for working through hard problems
+about: Lets a model break a problem into steps, revise them and branch, which helps smaller local models
+  most.
+category: Utilities
+publisher: Model Context Protocol
+homepage: https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking
+runtime: NODE
+command: npx
+args:
+- -y
+- '@modelcontextprotocol/server-sequential-thinking'
+effects:
+  READ:
+  - sequentialthinking
+icon:
+  color: '#DB2777'
+  background: '#FFFFFF'

@@ -1,0 +1,19 @@
+id: time
+name: Time and time zones
+description: Current time anywhere, and conversions
+about: Answers what time it is in a place and converts between zones - small, and wrong surprisingly often
+  without it.
+category: Utilities
+publisher: Model Context Protocol
+homepage: https://github.com/modelcontextprotocol/servers/tree/main/src/time
+runtime: PYTHON
+command: uvx
+args:
+- mcp-server-time
+effects:
+  READ:
+  - get_current_time
+  - convert_time
+icon:
+  color: '#7C3AED'
+  background: '#FFFFFF'

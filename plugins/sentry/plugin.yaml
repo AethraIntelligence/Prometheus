@@ -1,0 +1,34 @@
+id: sentry
+name: Sentry
+description: Errors, issues and events from production
+about: Sentry's official server. Investigating runs on its own; resolving or assigning issues asks you
+  first.
+category: Developer tools
+publisher: Sentry
+homepage: https://github.com/getsentry/sentry-mcp
+runtime: NODE
+command: npx
+args:
+- -y
+- '@sentry/mcp-server'
+settings:
+- key: SENTRY_ACCESS_TOKEN
+  label: User auth token
+  kind: SECRET
+  required: true
+  help: ''
+  help_url: https://sentry.io/settings/account/api/auth-tokens/
+  placeholder: sntryu_...
+capabilities:
+- CODE
+effects:
+  READ:
+  - find_organizations
+  - find_projects
+  - search_events
+  - search_issues
+  - get_sentry_resource
+  - search_sentry_tools
+icon:
+  color: '#362D59'
+  background: '#FFFFFF'

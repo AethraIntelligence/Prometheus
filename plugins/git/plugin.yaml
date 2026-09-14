@@ -1,0 +1,40 @@
+id: git
+name: Git
+description: History, diffs, branches and commits of a repository
+about: The reference Git server. Everything happens in the local repository; nothing is pushed anywhere,
+  and resetting asks you first.
+category: Developer tools
+publisher: Model Context Protocol
+homepage: https://github.com/modelcontextprotocol/servers/tree/main/src/git
+runtime: PYTHON
+command: uvx
+args:
+- mcp-server-git
+- --repository
+- ${REPOSITORY}
+settings:
+- key: REPOSITORY
+  label: Repository folder
+  kind: PATH
+  required: true
+  placeholder: /Users/you/code/project
+  help: A folder that is a Git repository.
+capabilities:
+- CODE
+effects:
+  READ:
+  - git_status
+  - git_diff_unstaged
+  - git_diff_staged
+  - git_diff
+  - git_log
+  - git_show
+  - git_branch
+  WRITE:
+  - git_add
+  - git_commit
+  - git_create_branch
+  - git_checkout
+icon:
+  color: '#F03C2E'
+  background: '#FFFFFF'

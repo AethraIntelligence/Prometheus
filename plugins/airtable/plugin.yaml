@@ -1,0 +1,34 @@
+id: airtable
+name: Airtable
+description: Bases, tables and records
+about: Read and search records. Creating, updating or deleting anything asks you first.
+category: Productivity
+publisher: domdomegg
+homepage: https://github.com/domdomegg/airtable-mcp-server
+runtime: NODE
+command: npx
+args:
+- -y
+- airtable-mcp-server
+settings:
+- key: AIRTABLE_API_KEY
+  label: Personal access token
+  kind: SECRET
+  required: true
+  help: Give it the data.records and schema.bases scopes for the bases employees should see.
+  help_url: https://airtable.com/create/tokens
+  placeholder: pat...
+capabilities:
+- FILE_ACCESS
+effects:
+  READ:
+  - list_records
+  - search_records
+  - list_bases
+  - list_tables
+  - describe_table
+  - get_record
+  - list_comments
+icon:
+  color: '#18BFFF'
+  background: '#FFFFFF'

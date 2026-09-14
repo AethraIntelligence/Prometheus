@@ -25,7 +25,8 @@ went wrong.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import re
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -51,8 +52,19 @@ from domain.capabilities.models import Capability
 from domain.conversations.models import Conversation
 from domain.conversations.repository import ConversationRepository
 from domain.employees.protocols import EmployeeRegistry
-from domain.errors import ConfigurationError, IntegrationNotFoundError, PrometheusError
-from domain.integrations.models import IntegrationKind
+from domain.errors import (
+    ConfigurationError,
+    IntegrationNotFoundError,
+    NotFoundError,
+    PrometheusError,
+)
+from domain.integrations.catalog import (
+    PLUGIN_KEY,
+    PluginCatalog,
+    plan_install,
+    suggested_holders,
+)
+from domain.integrations.models import Integration, IntegrationKind
 from domain.knowledge.models import KnowledgeQuery
 from domain.knowledge.protocols import Retriever
 from domain.llm.catalog import DEFAULT_CONTEXT_TOKENS, ModelEntry
@@ -133,6 +145,14 @@ class ServiceDependencies:
     #: says so rather than pretending there are none: an interface showing
     #: an empty list would invite the user to add one and then fail.
     integrations: IntegrationService | None = None
+    #: The services this machine offers to install, and whether each kind of
+    #: server can start here. Both None where a surface was built without them;
+    #: the listing is then empty rather than an error.
+    plugins: PluginCatalog | None = None
+    plugin_runtimes: Callable[[], dict[str, dict[str, object]]] | None = None
+    #: Names of credentials the installation supplies to plugins. Names only:
+    #: the values reach a server at connect and never this object.
+    provided_credentials: frozenset[str] = frozenset()
     #: Where a credential typed into an interface is kept. Separate from
     #: the resolver every tool holds, so that reading one does not imply
     #: being able to write one.
@@ -895,6 +915,145 @@ class PrometheusService:
         )
         return views.integration(classified)
 
+    # --- Plugins -----------------------------------------------------------------
+
+    async def list_plugins(self) -> dict[str, Any]:
+        """Everything that can be installed, and what is installed already.
+
+        One answer for the whole screen, because every part of it depends on
+        the same three reads: the catalog, the integrations, the employees. An
+        integration that no plugin describes - a server somebody added by hand -
+        is listed among the installed ones too, since to the person it is
+        simply another thing this machine is connected to.
+        """
+        if self._d.integrations is None:
+            return {"available": False, "runtimes": {}, "plugins": [], "installed": []}
+        installed = await self._integrations().list()
+        by_plugin = {_plugin_of(item): item for item in installed if _plugin_of(item)}
+        runtimes = self._d.plugin_runtimes() if self._d.plugin_runtimes else {}
+        definitions = self._d.employees.list()
+        stored = set(await self._d.credentials.names()) if self._d.credentials else set()
+        plugins = self._d.plugins.list() if self._d.plugins else []
+        known = {plugin.id for plugin in plugins}
+        return {
+            "available": True,
+            "runtimes": runtimes,
+            "plugins": [
+                views.plugin(
+                    plugin,
+                    installed=by_plugin.get(plugin.id),
+                    runtime_ready=bool(runtimes.get(plugin.runtime.value, {}).get("ready", True)),
+                    suggested=suggested_holders(plugin, definitions),
+                    stored=stored,
+                    provided=self._d.provided_credentials,
+                )
+                for plugin in plugins
+            ],
+            "installed": [
+                views.installed_integration(
+                    item,
+                    plugin=_plugin_of(item) if _plugin_of(item) in known else "",
+                    holders=_holders(item, definitions),
+                )
+                for item in installed
+            ],
+        }
+
+    async def install_plugin(
+        self,
+        plugin_id: str,
+        values: dict[str, str],
+        *,
+        employees: tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        """Install a plugin: keep its secrets, record it, grant it, start it.
+
+        Four operations the core already has, in the one order that works - a
+        secret before the record that names it, the grant before the connection
+        announces its tools - so a person asking for one thing gets one call.
+        A server that does not start still leaves the record, with the status
+        saying why, exactly as adding one by hand does.
+
+        `employees` None means the suggestion; an empty tuple means nobody, which
+        a person may choose and which is then theirs to change.
+        """
+        integrations = self._integrations()
+        if self._d.plugins is None:
+            raise NotFoundError("No plugins are declared on this machine.")
+        plugin = self._d.plugins.get(plugin_id)
+        if plugin is None:
+            raise NotFoundError(f"Unknown plugin: {plugin_id}")
+        stored = (
+            frozenset(await self._d.credentials.names()) if self._d.credentials else frozenset()
+        )
+        plan = plan_install(plugin, values, stored=stored | self._d.provided_credentials)
+        if plan.secrets:
+            if self._d.credentials is None:
+                raise IntegrationsDisabledError(
+                    "There is nowhere to keep a credential in this configuration."
+                )
+            for name, value in plan.secrets.items():
+                await self._d.credentials.store(name, value)
+        definitions = self._d.employees.list()
+        known = {definition.name for definition in definitions}
+        chosen = (
+            suggested_holders(plugin, definitions)
+            if employees is None
+            else [name for name in employees if name in known]
+        )
+        item = await integrations.add(
+            plugin.id,
+            plan.configuration,
+            capabilities=plugin.capabilities,
+            secret_names=plan.secret_names,
+            effects=dict(plugin.effects),
+            granted_to=frozenset(chosen),
+        )
+        connected = await integrations.connect(item.id)
+        return views.installed_integration(
+            connected, plugin=plugin.id, holders=_holders(connected, self._d.employees.list())
+        )
+
+    async def sign_in_integration(self, integration_id: UUID) -> dict[str, Any]:
+        """Ask a plugin whose server signs in through the browser to do so.
+
+        The call is the plugin's declared probe - a read - with `${KEY}` filled
+        from the plain settings it was installed with. `signed_in` false means
+        the server was not yet authorised and has opened its own sign-in page on
+        this machine; asking again once that is done answers true.
+        """
+        integrations = self._integrations()
+        item = await integrations.get(integration_id)
+        plugin = self._d.plugins.get(_plugin_of(item)) if self._d.plugins else None
+        if plugin is None or plugin.sign_in is None:
+            raise NotFoundError(f"{item.name} has no sign-in to start.")
+        env = item.configuration.get("env") or {}
+        arguments = {
+            key: _filled(value, env if isinstance(env, dict) else {})
+            for key, value in plugin.sign_in.arguments.items()
+        }
+        signed_in = await integrations.try_tool(item.id, plugin.sign_in.tool, arguments)
+        return {"signed_in": signed_in}
+
+    async def grant_integration(
+        self, integration_id: UUID, employees: tuple[str, ...]
+    ) -> dict[str, Any]:
+        """Which employees may use a connected service, as chosen in the window.
+
+        A name that is not an employee here is dropped rather than stored: a grant
+        to nobody-in-particular would read as a restriction that is in force.
+        """
+        known = {definition.name for definition in self._d.employees.list()}
+        item = await self._integrations().grant(
+            integration_id, frozenset(name for name in employees if name in known)
+        )
+        # Read again after the grant: the registry's snapshot of who holds what
+        # is refreshed by the change itself, and the list from before it would
+        # still carry the grant just taken away.
+        return views.installed_integration(
+            item, plugin=_plugin_of(item), holders=_holders(item, self._d.employees.list())
+        )
+
     async def store_credential(self, name: str, value: str) -> dict[str, Any]:
         """Keep a credential this machine will need at the moment of a call.
 
@@ -979,6 +1138,29 @@ class PrometheusService:
             "workspace": str(DEFAULT_WORKSPACE_ID),
             "sources": [source.value for source in RequestSource],
         }
+
+
+def _plugin_of(item: Integration) -> str:
+    """The plugin an integration was installed from, if it was installed from one."""
+    return str(item.configuration.get(PLUGIN_KEY, "") or "")
+
+
+def _filled(value: object, env: dict) -> object:
+    """A probe argument with `${KEY}` taken from the installation's plain settings."""
+    if not isinstance(value, str):
+        return value
+    return re.sub(
+        r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
+        lambda match: str(env.get(match.group(1), "")),
+        value,
+    )
+
+
+def _holders(item: Integration, definitions) -> tuple[str, ...]:
+    """Everyone who may use it, whichever way they were granted it."""
+    from domain.integrations.grants import holds
+
+    return tuple(sorted(d.name for d in definitions if holds(d, item)))
 
 
 def _capability(value: str) -> Capability:

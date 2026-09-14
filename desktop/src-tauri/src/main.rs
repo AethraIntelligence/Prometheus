@@ -50,6 +50,9 @@ fn main() {
         // where it is, so what the window needs is a path - and a person should
         // pick the file, not type where it lives.
         .plugin(tauri_plugin_dialog::init())
+        // A plugin's "get a token" link, in the system browser rather than in
+        // this window, which only ever shows its own page.
+        .plugin(tauri_plugin_opener::init())
         .manage(RuntimeHandle::default())
         .invoke_handler(tauri::generate_handler![runtime_status, window_problem])
         .setup(|app| {
