@@ -69,11 +69,29 @@ export class RuntimeClient {
     return this.call<T>(path, { method: "DELETE" });
   }
 
+  /**
+   * The bytes of a file the runtime serves, for a page to show as it is.
+   *
+   * A Blob rather than a URL to the runtime: the packaged window cannot point
+   * an iframe or an image at `http://127.0.0.1`, for the reason every request
+   * goes through the shell. The caller makes an object URL of what came back.
+   */
+  async blob(path: string): Promise<Blob> {
+    const response = await this.fetch(`${this.baseUrl}${path}`);
+    await this.check(response);
+    return response.blob();
+  }
+
   private async call<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await this.fetch(`${this.baseUrl}${path}`, {
       headers: { "Content-Type": "application/json" },
       ...init,
     });
+    await this.check(response);
+    return (await response.json()) as T;
+  }
+
+  private async check(response: Response): Promise<void> {
     if (!response.ok) {
       // The runtime explains itself in `detail`, in words written for a person
       // - "Unknown employee: x", "run the migration". Showing that beats a
@@ -85,7 +103,6 @@ export class RuntimeClient {
         .catch(() => null);
       throw new RuntimeRequestError(detail ?? response.statusText, response.status);
     }
-    return (await response.json()) as T;
   }
 
   /**

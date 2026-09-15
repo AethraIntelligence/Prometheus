@@ -36,7 +36,7 @@ from uuid import UUID
 import structlog
 
 from application.integrations.service import IntegrationService
-from application.interface import views
+from application.interface import artifacts, views
 from application.interface.activity import Activity, ActivityEvent
 from application.interface.contracts import RequestSource, UserRequest
 from application.interface.runs import Runs
@@ -84,6 +84,7 @@ from domain.tasks.repository import TaskRepository
 from domain.tools.protocols import ToolRegistry
 from domain.tools.telemetry import ToolCallLog
 from domain.workforce.directions import ApprovalChoice
+from domain.workforce.protocols import Objective
 from domain.workforce.repository import ObjectiveRepository, PlanRepository
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
@@ -282,10 +283,59 @@ class PrometheusService:
             "directions": views.directions(chosen) if chosen is not None else None,
             "schedule_id": str(schedule.id) if schedule is not None else None,
             "messages": [
-                views.message(item, thinking=self._d.runs.is_thinking(item.id))
+                views.message(
+                    item,
+                    thinking=self._d.runs.is_thinking(item.id),
+                    artifacts=await self._artifacts(item),
+                )
                 for item in thread
             ],
         }
+
+    async def _artifacts(self, objective: Objective) -> list[dict[str, Any]]:
+        """The files an objective's tasks wrote, where they are on this machine now.
+
+        Only a finished turn is read: a running one is still writing, and its
+        list is re-read when the answer arrives. A failed read is an empty list -
+        a thread must open even if the accounting cannot be read.
+        """
+        if objective.result is None:
+            return []
+        root = (
+            self._d.workspaces.root_for(objective.workspace_id)
+            if self._d.workspaces is not None
+            else None
+        )
+        return [artifacts.artifact(path, root) for path in await self._produced(objective)]
+
+    async def _produced(self, objective: Objective) -> list[str]:
+        try:
+            calls = []
+            for plan in await self._d.plans.for_objective(objective.id):
+                for task in plan.tasks:
+                    calls.extend(await self._d.tool_calls.list_for_task(task.id))
+            return artifacts.produced_files(calls)
+        except Exception as error:
+            log.warning("interface.artifacts_unreadable", error=str(error))
+            return []
+
+    async def artifact_file(self, objective_id: UUID, path: str) -> tuple[Path, str] | None:
+        """A file an objective produced, for an interface to show.
+
+        Only a path the work is recorded as having written is served, not any
+        path under the root: the window asks to preview what it was shown, and a
+        route that read whatever it was handed would be a file browser nobody
+        decided to build.
+        """
+        objective = await self._d.objectives.get(objective_id)
+        if objective is None or self._d.workspaces is None:
+            return None
+        if path not in await self._produced(objective):
+            return None
+        target = artifacts.within(self._d.workspaces.root_for(objective.workspace_id), path)
+        if target is None or not target.is_file():
+            return None
+        return target, artifacts.media_type(path) or "application/octet-stream"
 
     async def _schedule_writing_into(self, conversation: Conversation) -> Schedule | None:
         if self._d.schedules is None:

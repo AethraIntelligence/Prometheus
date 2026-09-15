@@ -61,6 +61,35 @@ describe("MessageTurn", () => {
     expect(screen.getByText("No access to the sales folder")).toBeInTheDocument();
   });
 
+  it("shows the files the work wrote, and says which one was chosen", () => {
+    const opened: string[] = [];
+    render(
+      <MessageTurn
+        message={message({
+          answered: true,
+          status: "DONE",
+          answer: "Saved to `raw_news.txt`.",
+          artifacts: [
+            {
+              path: "raw_news.txt",
+              name: "raw_news.txt",
+              location: "/tmp/raw_news.txt",
+              media_type: "text/plain",
+              size: 2048,
+              exists: true,
+            },
+          ],
+        })}
+        onOpenFile={(_, artifact) => opened.push(artifact.path)}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /raw_news.txt/ }));
+
+    expect(screen.getByText("Text · 2 KB")).toBeInTheDocument();
+    expect(opened).toEqual(["raw_news.txt"]);
+  });
+
   it("describes the stage the run is actually in", () => {
     expect(statusLine(message({ status: "PLANNING" }))).toBe("Working out what this takes…");
     expect(statusLine(message({ answered: true }))).toBe("");

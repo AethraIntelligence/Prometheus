@@ -33,6 +33,25 @@ export interface Directions {
 export const NO_DIRECTIONS: Directions = { approvals: "ASK", model: "" };
 
 /**
+ * A file the work left behind, as the runtime recorded it.
+ *
+ * Read off the tool calls that succeeded, not off the answer's text - so a
+ * card here is a file that was written, not a sentence saying one was.
+ */
+export interface Artifact {
+  /** Relative to the workspace's file root; what the runtime serves it by. */
+  path: string;
+  name: string;
+  /** Where it is on this machine, for opening it in its own application. */
+  location: string;
+  /** Empty when the runtime cannot tell. */
+  media_type: string;
+  size: number | null;
+  /** False once the file has been moved or deleted since. */
+  exists: boolean;
+}
+
+/**
  * One turn: what was asked, and what came back.
  *
  * A turn is an objective - the unit the platform already records in full.
@@ -52,6 +71,8 @@ export interface Message {
   cost_usd: number;
   created_at: string;
   finished_at: string | null;
+  /** The files this turn's work wrote. Absent from an older runtime. */
+  artifacts?: Artifact[];
 }
 
 export interface Conversation {

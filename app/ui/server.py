@@ -545,6 +545,15 @@ def _routes(app: FastAPI) -> None:
         found = await _guarded(_service(request).get_objective(objective_id))
         return _found(found, f"Unknown objective: {objective_id}")
 
+    @app.get("/api/objectives/{objective_id}/file")
+    async def objective_file(request: Request, objective_id: UUID, path: str) -> FileResponse:
+        found = await _guarded(_service(request).artifact_file(objective_id, path))
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"No file '{path}' from this request")
+        target, media_type = found
+        return FileResponse(target, media_type=media_type, filename=target.name,
+                            content_disposition_type="inline")
+
     @app.post("/api/objectives/{objective_id}/cancel")
     async def stop_objective(request: Request, objective_id: UUID) -> dict[str, Any]:
         found = await _guarded(_service(request).cancel_objective(objective_id))

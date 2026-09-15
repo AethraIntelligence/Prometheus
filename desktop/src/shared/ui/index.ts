@@ -25,5 +25,6 @@ export {
   TrashIcon,
   WarningIcon,
 } from "./icons";
+export { Markdown, siteOf } from "./Markdown";
 export { Modal } from "./Modal";
 export { PageHead } from "./PageHead";

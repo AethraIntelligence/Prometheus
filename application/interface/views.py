@@ -415,7 +415,9 @@ def conversation(
     }
 
 
-def message(item: Objective, *, thinking: bool = False) -> dict[str, Any]:
+def message(
+    item: Objective, *, thinking: bool = False, artifacts: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """One turn of a conversation: what was asked, and what came back.
 
     A turn is an objective, so this is the objective summary plus the two things
@@ -423,6 +425,9 @@ def message(item: Objective, *, thinking: bool = False) -> dict[str, Any]:
     whether there is an answer yet. There is no separate message record; see
     `domain/conversations/models.py` for why one would be a second history of
     the same work.
+
+    `artifacts` are the files the work left behind (`artifacts.py`), so a turn
+    can show the file and not only a sentence saying it was written.
     """
     answer = item.result
     return {
@@ -431,6 +436,7 @@ def message(item: Objective, *, thinking: bool = False) -> dict[str, Any]:
         "missing": list(answer.missing) if answer else [],
         "answered": answer is not None,
         "directions": directions(item.directions),
+        "artifacts": artifacts or [],
     }
 
 

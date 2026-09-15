@@ -17,9 +17,10 @@
 
 import { useState, type ReactNode } from "react";
 
-import { CheckIcon, ChevronRight, CopyIcon, WarningIcon } from "../../../shared/ui";
+import { CheckIcon, ChevronRight, CopyIcon, Markdown, WarningIcon } from "../../../shared/ui";
 import { statusLine } from "../model/status";
-import type { Message } from "../model/types";
+import type { Artifact, Message } from "../model/types";
+import { FileCard } from "./FileCard";
 
 /**
  * How long a finished turn took, the way a person would say it.
@@ -38,20 +39,14 @@ export function workedFor(message: Message): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-/** An answer's paragraphs, split where the writer left a blank line. */
-function paragraphs(text: string): string[] {
-  return text
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
 interface Props {
   message: Message;
   work?: ReactNode;
+  /** Opening a file the turn produced. Without it the cards are shown and do nothing. */
+  onOpenFile?: (message: Message, artifact: Artifact) => void;
 }
 
-export function MessageTurn({ message, work }: Props) {
+export function MessageTurn({ message, work, onOpenFile }: Props) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const took = workedFor(message);
@@ -92,9 +87,18 @@ export function MessageTurn({ message, work }: Props) {
                 <p className="worked still">Worked for {took}</p>
               ))}
             {open && work}
-            {paragraphs(message.answer).map((paragraph, index) => (
-              <p key={index}>{paragraph}</p>
-            ))}
+            {message.answer && <Markdown text={message.answer} />}
+            {(message.artifacts ?? []).length > 0 && (
+              <div className="files" aria-label="Files from this answer">
+                {(message.artifacts ?? []).map((artifact) => (
+                  <FileCard
+                    key={artifact.path}
+                    artifact={artifact}
+                    onOpen={(chosen) => onOpenFile?.(message, chosen)}
+                  />
+                ))}
+              </div>
+            )}
             {message.missing.length > 0 && (
               <section className="rescard short" aria-label="What is still missing">
                 <div className="res-top">

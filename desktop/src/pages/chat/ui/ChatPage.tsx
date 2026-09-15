@@ -16,9 +16,10 @@
  * conversation happens in, named in the header and chosen under the field.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApprovalCard } from "../../../entities/approval";
+import type { Artifact } from "../../../entities/conversation";
 import { DirectionChips } from "../../../features/choose-directions";
 import { ApprovalDecision } from "../../../features/decide-approval";
 import { RequestComposer } from "../../../features/send-request";
@@ -26,6 +27,7 @@ import { StopButton } from "../../../features/stop-run";
 import { useRuntime } from "../../../shared/api";
 import { PageHead } from "../../../shared/ui";
 import { ConversationView } from "../../../widgets/conversation";
+import { FilePreview } from "../../../widgets/file-preview";
 import { WorkforcePanel } from "../../../widgets/workforce";
 import { WorkspaceBar, useWorkspaces } from "../../../widgets/workspace-bar";
 import { useChat } from "../model/useChat";
@@ -70,6 +72,11 @@ export function ChatPage({
   } = useChat(client, conversationId, { onOpened, onChanged, refresh });
   const { active } = useWorkspaces(client);
 
+  // Which file is open beside the conversation. It belongs to a turn in this
+  // thread, so opening another thread closes it.
+  const [preview, setPreview] = useState<{ objectiveId: string; artifact: Artifact } | null>(null);
+  useEffect(() => setPreview(null), [conversationId]);
+
   // Keep the newest thing in view. The stream is the page's own scroll, so a
   // turn arriving below the fold would otherwise arrive unseen.
   const stream = useRef<HTMLDivElement>(null);
@@ -94,6 +101,7 @@ export function ChatPage({
         // The workforce goes under the composer when the composer is in the
         // middle of the screen, so the greeting and the field stay together.
         empty={blank ? null : <WorkforcePanel employees={employees} />}
+        onOpenFile={(message, artifact) => setPreview({ objectiveId: message.id, artifact })}
       />
       {approvals.map((approval) => (
         <ApprovalCard
@@ -134,32 +142,42 @@ export function ChatPage({
   );
 
   return (
-    <main className="main">
-      <PageHead
-        title={thread?.title || "New task"}
-        chip={active?.name}
-        railOpen={railOpen}
-        onOpenRail={onOpenRail}
-      />
+    <div className={preview ? "split previewing" : "split"}>
+      <main className="main">
+        <PageHead
+          title={thread?.title || "New task"}
+          chip={active?.name}
+          railOpen={railOpen}
+          onOpenRail={onOpenRail}
+        />
 
-      {blank ? (
-        <div className="stream blank">
-          <div className="col">
-            {conversation}
-            {composer}
-            <WorkforcePanel employees={employees} />
+        {blank ? (
+          <div className="stream blank">
+            <div className="col">
+              {conversation}
+              {composer}
+              <WorkforcePanel employees={employees} />
+            </div>
           </div>
-        </div>
-      ) : (
-        <>
-          <div className="stream" ref={stream}>
-            <div className="col">{conversation}</div>
-          </div>
-          <div className="dock">
-            <div className="col">{composer}</div>
-          </div>
-        </>
+        ) : (
+          <>
+            <div className="stream" ref={stream}>
+              <div className="col">{conversation}</div>
+            </div>
+            <div className="dock">
+              <div className="col">{composer}</div>
+            </div>
+          </>
+        )}
+      </main>
+      {preview && (
+        <FilePreview
+          key={`${preview.objectiveId}:${preview.artifact.path}`}
+          objectiveId={preview.objectiveId}
+          artifact={preview.artifact}
+          onClose={() => setPreview(null)}
+        />
       )}
-    </main>
+    </div>
   );
 }

@@ -23,6 +23,11 @@ export const conversationApi = {
     return client.get<Thread>(`/api/conversations/${conversationId}`);
   },
 
+  /** The contents of a file a turn produced. Only files the turn is recorded as writing are served. */
+  file(client: RuntimeClient, objectiveId: string, path: string): Promise<Blob> {
+    return client.blob(`/api/objectives/${objectiveId}/file?path=${encodeURIComponent(path)}`);
+  },
+
   /** Say one thing. It becomes an objective; Prometheus decides what it takes. */
   send(
     client: RuntimeClient,

@@ -116,6 +116,31 @@ function scriptedRuntime() {
         messages: [],
       };
     }
+    if (path.endsWith("/api/conversations/c5")) {
+      return {
+        id: "c5",
+        title: "News",
+        created_at: "2026-09-08T09:00:00+00:00",
+        updated_at: "2026-09-08T09:00:00+00:00",
+        messages: [
+          {
+            ...message(true),
+            id: "o5",
+            answer: "Saved to `raw_news.txt`.",
+            artifacts: [
+              {
+                path: "raw_news.txt",
+                name: "raw_news.txt",
+                location: "/tmp/default/raw_news.txt",
+                media_type: "text/plain",
+                size: 7,
+                exists: true,
+              },
+            ],
+          },
+        ],
+      };
+    }
     if (path.includes("/api/conversations/c1")) {
       return {
         id: "c1",
@@ -163,6 +188,12 @@ function scriptedRuntime() {
     status: 200,
     statusText: "OK",
     json: async () => respond(url, init),
+    // Blob-shaped rather than jsdom's Blob, which has no `text()`.
+    blob: async () => ({
+      type: "text/plain",
+      text: async () =>
+        url.includes("/api/objectives/o5/file?path=raw_news.txt") ? "1. News" : "",
+    }),
   }));
 
   return { state, fetchMock };
@@ -208,10 +239,9 @@ describe("the desktop window", () => {
     // The runtime finishes. The window learns it by re-reading the thread,
     // never by deciding for itself that enough time has passed.
     runtime.state.answered = true;
-    await waitFor(
-      () => expect(screen.getByText("Sorted into four folders.")).toBeInTheDocument(),
-      { timeout: 4000 },
-    );
+    await waitFor(() => expect(screen.getByText("Sorted into four folders.")).toBeInTheDocument(), {
+      timeout: 4000,
+    });
   });
 
   it("shows the workforce it was told about, and nothing it was not", async () => {
@@ -269,6 +299,21 @@ describe("the desktop window", () => {
     expect(await screen.findByText("Prometheus wants to write raw_news.txt")).toBeInTheDocument();
   });
 
+  it("opens a file an answer produced beside the conversation", async () => {
+    render(
+      <RuntimeProvider client={new RuntimeClient(BASE)}>
+        <ChatPage conversationId="c5" />
+      </RuntimeProvider>,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: /raw_news.txt/ }));
+
+    const preview = await screen.findByRole("complementary", { name: "Preview: raw_news.txt" });
+    expect(await within(preview).findByText("1. News")).toBeInTheDocument();
+    await userEvent.click(within(preview).getByRole("button", { name: "Close preview" }));
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  });
+
   it("says so, in the runtime's own words, when the engine is not answering", async () => {
     vi.stubGlobal(
       "fetch",
@@ -282,9 +327,7 @@ describe("the desktop window", () => {
 
     render(<App client={new RuntimeClient(BASE)} />);
 
-    expect(
-      await screen.findByText("The local database has no schema yet."),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("The local database has no schema yet.")).toBeInTheDocument();
   });
 
   it("stops from where send was, and the turn then reads as stopped", async () => {

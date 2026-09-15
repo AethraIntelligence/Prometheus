@@ -11,7 +11,7 @@
 import type { ReactNode } from "react";
 
 import { ActivityTrail, type ActivityEvent } from "../../../entities/activity";
-import { MessageTurn, type Message } from "../../../entities/conversation";
+import { MessageTurn, type Artifact, type Message } from "../../../entities/conversation";
 import { Greeting } from "./Greeting";
 
 interface Props {
@@ -23,9 +23,18 @@ interface Props {
   trails?: Record<string, ActivityEvent[]>;
   /** Shown under the greeting while nothing has been asked. */
   empty?: ReactNode;
+  /** A file a turn produced was chosen. */
+  onOpenFile?: (message: Message, artifact: Artifact) => void;
 }
 
-export function ConversationView({ messages, activity, busy, trails = {}, empty }: Props) {
+export function ConversationView({
+  messages,
+  activity,
+  busy,
+  trails = {},
+  empty,
+  onOpenFile,
+}: Props) {
   if (messages.length === 0) {
     return (
       <>
@@ -38,13 +47,13 @@ export function ConversationView({ messages, activity, busy, trails = {}, empty 
   return (
     <ol className="turns">
       {messages.map((message) => {
-        const events =
-          message.id === running ? (busy ? activity : []) : (trails[message.id] ?? []);
+        const events = message.id === running ? (busy ? activity : []) : (trails[message.id] ?? []);
         return (
           <MessageTurn
             key={message.id}
             message={message}
             work={events.length > 0 ? <ActivityTrail events={events} /> : undefined}
+            onOpenFile={onOpenFile}
           />
         );
       })}
