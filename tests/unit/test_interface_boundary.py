@@ -400,6 +400,26 @@ async def test_what_is_waiting_says_which_questions_a_run_is_still_parked_on() -
     assert waiting["live"] is True
 
 
+async def test_a_question_names_the_thread_whose_work_asked_it() -> None:
+    """So a window puts it in that thread, not in whichever one is on screen.
+
+    A scheduled run asked while the person was starting a new task, and the
+    question appeared in the new task, which had asked nothing.
+    """
+    service, parts = build()
+    thread = await service.create_conversation()
+    objective = await parts["manager"].receive(
+        "Check the news", conversation_id=UUID(thread["id"])
+    )
+    parts["waiter"]._pending = [ApprovalRequest.create(objective.id, "fs.write")]
+    parts["waiter"]._pending.append(ApprovalRequest.create(uuid4(), "fs.delete"))
+
+    asked, orphan = await service.list_approvals()
+
+    assert asked["conversation_id"] == thread["id"]
+    assert orphan["conversation_id"] is None
+
+
 # --- Activity ------------------------------------------------------------------
 
 

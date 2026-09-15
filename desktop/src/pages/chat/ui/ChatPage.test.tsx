@@ -241,6 +241,34 @@ describe("the desktop window", () => {
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
+  it("puts a question in the thread whose work asked it, and nowhere else", async () => {
+    runtime.state.approvals = [
+      {
+        id: "a2",
+        task_id: "t2",
+        action: "write raw_news.txt",
+        risk: "HIGH",
+        reason: "Overwrite the existing file.",
+        payload: { path: "raw_news.txt" },
+        requested_at: "2026-09-08T09:00:00+00:00",
+        live: true,
+        conversation_id: "c9",
+      },
+    ];
+
+    const { unmount } = render(<App client={new RuntimeClient(BASE)} />);
+    expect(await screen.findByText("Researcher")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/write raw_news.txt/)).not.toBeInTheDocument());
+    unmount();
+
+    render(
+      <RuntimeProvider client={new RuntimeClient(BASE)}>
+        <ChatPage conversationId="c9" />
+      </RuntimeProvider>,
+    );
+    expect(await screen.findByText("Prometheus wants to write raw_news.txt")).toBeInTheDocument();
+  });
+
   it("says so, in the runtime's own words, when the engine is not answering", async () => {
     vi.stubGlobal(
       "fetch",

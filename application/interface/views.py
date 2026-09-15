@@ -20,6 +20,7 @@ second consumer of the resume cursor's shape.
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from domain.approvals.models import Approval, ApprovalRequest
 from domain.configuration.models import Setting
@@ -114,12 +115,19 @@ def tool_call(call: ToolCallRecord) -> dict[str, Any]:
     }
 
 
-def approval(request: ApprovalRequest, *, live: bool = True) -> dict[str, Any]:
+def approval(
+    request: ApprovalRequest, *, live: bool = True, conversation_id: UUID | None = None
+) -> dict[str, Any]:
     """A question waiting on a person.
 
     `live` says whether this process is the one parked on the answer. A PENDING
     row left behind by a killed run can still be recorded as decided, but no
     tool call is going to resume from it, and saying so beats implying it.
+
+    `conversation_id` is the thread whose work asked, so an interface can put
+    the question where that work is read. A scheduled run asking while the
+    person was starting a new task put it in the new task, which had not asked
+    anything. None where the work belongs to no thread - a terminal, a script.
     """
     safe = request.redacted()
     return {
@@ -131,11 +139,17 @@ def approval(request: ApprovalRequest, *, live: bool = True) -> dict[str, Any]:
         "payload": safe.payload,
         "requested_at": safe.requested_at.isoformat(),
         "live": live,
+        "conversation_id": str(conversation_id) if conversation_id else None,
     }
 
 
-def stored_approval(record: Approval, *, live: bool = False) -> dict[str, Any]:
-    return {**approval(record.request, live=live), "state": record.state.value}
+def stored_approval(
+    record: Approval, *, live: bool = False, conversation_id: UUID | None = None
+) -> dict[str, Any]:
+    return {
+        **approval(record.request, live=live, conversation_id=conversation_id),
+        "state": record.state.value,
+    }
 
 
 def employee(definition: EmployeeDefinition) -> dict[str, Any]:

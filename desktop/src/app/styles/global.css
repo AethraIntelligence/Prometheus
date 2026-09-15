@@ -1026,10 +1026,34 @@ button.worked:hover {
   overflow-wrap: anywhere;
 }
 
+.gate h4.folded {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
 .gate-acts {
   display: flex;
+  align-items: center;
   gap: 7px;
   flex-wrap: wrap;
+}
+
+.gate-more {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  padding: 4px 2px;
+  font-size: 13px;
+  color: var(--wait-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.gate-more:hover {
+  color: var(--wait);
 }
 
 /* ── buttons ───────────────────────────── */

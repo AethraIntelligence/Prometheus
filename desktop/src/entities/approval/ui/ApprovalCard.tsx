@@ -10,9 +10,13 @@
  * window heard about it. Whether it now happens is settled by the person.
  * Nothing in the interface gets a vote - which is why the risk is printed in
  * the runtime's own word rather than turned into a colour this layer chose.
+ *
+ * Folded by default. A write carries the whole file in its arguments, and a
+ * card as tall as the file pushed the buttons below the fold; the action is
+ * cut to one line and the arguments wait behind "Show details".
  */
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { WarningIcon } from "../../../shared/ui";
 import type { Approval } from "../model/types";
@@ -24,6 +28,7 @@ interface Props {
 
 export function ApprovalCard({ approval, actions }: Props) {
   const details = Object.entries(approval.payload ?? {});
+  const [open, setOpen] = useState(false);
   return (
     <article
       className={approval.live ? "gate" : "gate ended"}
@@ -35,9 +40,11 @@ export function ApprovalCard({ approval, actions }: Props) {
           Needs approval · <span className="risk">{approval.risk}</span>
         </b>
       </div>
-      <h4>Prometheus wants to {approval.action}</h4>
+      <h4 className={open ? undefined : "folded"} title={open ? undefined : approval.action}>
+        Prometheus wants to {approval.action}
+      </h4>
       {approval.reason && <p>{approval.reason}</p>}
-      {details.length > 0 && (
+      {open && details.length > 0 && (
         <dl className="gate-details">
           {details.map(([key, value]) => (
             <div key={key}>
@@ -53,7 +60,21 @@ export function ApprovalCard({ approval, actions }: Props) {
           only closes the question.
         </p>
       )}
-      {actions && <div className="gate-acts">{actions}</div>}
+      {(actions || details.length > 0) && (
+        <div className="gate-acts">
+          {actions}
+          {details.length > 0 && (
+            <button
+              type="button"
+              className="gate-more"
+              aria-expanded={open}
+              onClick={() => setOpen((now) => !now)}
+            >
+              {open ? "Hide details" : "Show details"}
+            </button>
+          )}
+        </div>
+      )}
     </article>
   );
 }

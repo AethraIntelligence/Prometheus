@@ -277,6 +277,16 @@ export function useChat(
     }
   }, [client, running, thread, reread, fail]);
 
+  // A question is shown in the thread whose work asked it, never in whichever
+  // one is on screen: a scheduled run that asked while the person was starting
+  // a new task put its question in the new task. One no thread holds is shown
+  // where nothing is open, which is the only place it can still be answered.
+  const threadId = thread?.id ?? null;
+  const asked = useMemo(
+    () => approvals.filter((item) => (item.conversation_id ?? null) === threadId),
+    [approvals, threadId],
+  );
+
   const decide = useCallback(
     async (approvalId: string, approved: boolean) => {
       try {
@@ -296,7 +306,7 @@ export function useChat(
     messages: thread?.messages ?? [],
     activity: running ? (trails[running.id] ?? []) : [],
     trails,
-    approvals,
+    approvals: asked,
     employees,
     directions,
     setDirections,

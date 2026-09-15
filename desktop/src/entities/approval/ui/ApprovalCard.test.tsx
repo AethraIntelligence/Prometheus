@@ -23,8 +23,17 @@ describe("ApprovalCard", () => {
     render(<ApprovalCard approval={approval()} />);
 
     expect(screen.getByText("Prometheus wants to send an email")).toBeInTheDocument();
-    expect(screen.getByText("client@example.com")).toBeInTheDocument();
     expect(screen.getByText("HIGH")).toBeInTheDocument();
+  });
+
+  it("keeps the arguments folded until somebody asks to see them", async () => {
+    render(<ApprovalCard approval={approval()} />);
+
+    expect(screen.queryByText("client@example.com")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show details" }));
+    expect(screen.getByText("client@example.com")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Hide details" }));
+    expect(screen.queryByText("client@example.com")).not.toBeInTheDocument();
   });
 
   it("has no decision of its own until one is handed to it", () => {

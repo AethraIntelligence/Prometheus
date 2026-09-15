@@ -675,9 +675,44 @@ class PrometheusService:
         """
         live = {item.id: item for item in self._d.waiter.pending()}
         stored = await self._d.approvals.list_pending()
-        return [views.approval(item, live=True) for item in live.values()] + [
-            views.stored_approval(record) for record in stored if record.id not in live
+        threads: dict[UUID, UUID | None] = {}
+
+        async def thread_of(task_id: UUID) -> UUID | None:
+            if task_id not in threads:
+                threads[task_id] = await self._conversation_of(task_id)
+            return threads[task_id]
+
+        return [
+            views.approval(item, live=True, conversation_id=await thread_of(item.task_id))
+            for item in live.values()
+        ] + [
+            views.stored_approval(
+                record, conversation_id=await thread_of(record.request.task_id)
+            )
+            for record in stored
+            if record.id not in live
         ]
+
+    async def _conversation_of(self, task_id: UUID) -> UUID | None:
+        """The thread a task's work was asked in: task -> plan -> objective.
+
+        The id may also be the objective's own, when the manager asked rather
+        than an employee. Anything that does not lead to a thread is None, and a
+        failed read is None too - a question must still reach the person.
+        """
+        try:
+            objective = await self._d.objectives.get(task_id)
+            if objective is None:
+                task = await self._d.tasks.get(task_id)
+                if task is None or task.plan_id is None:
+                    return None
+                plan = await self._d.plans.get(task.plan_id)
+                if plan is None:
+                    return None
+                objective = await self._d.objectives.get(plan.objective_id)
+            return objective.conversation_id if objective else None
+        except Exception:
+            return None
 
     async def decide_approval(
         self, approval_id: UUID, *, approved: bool, comment: str = ""
