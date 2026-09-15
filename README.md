@@ -27,7 +27,7 @@ assistant when you ask a question, and works like a team when you ask for work.
 
 | | |
 |---|---|
-| **It does real work, not just answers** | Reads and sorts your files, searches the web and reads pages, analyses data by running code, writes documents, answers from documents you gave it, and operates interfaces that have no API. |
+| **It does real work, not just answers** | Reads and sorts your files, searches the web and reads pages, analyses data by running code, writes documents and PDFs, answers from documents you gave it, and operates interfaces that have no API. |
 | **You can trust what it reports** | Success criteria are written *before* the work starts, and results are checked against what actually happened on your machine, not against what the model says it did. |
 | **You stay in control** | Anything irreversible waits for your approval. Employees get only the tools they are declared for. One command stops everything. Every action, including refused ones, is audited. |
 | **It is yours to run and extend** | Runs fully offline on local models through Ollama. A new employee, workflow or connected service is a file, not code. |
@@ -55,6 +55,7 @@ Then type a goal:
 > *What is the weather in Milan right now?* - looked up on the web.
 > *How much does express delivery cost?* - quoted from the policy you added.
 > *Read my meeting notes and write decisions.md, one line per person.* - planned, delegated, checked.
+> *Find this week's AI news and make me a PDF with sources.* - researched, written, shown beside the answer.
 
 <details>
 <summary>Prefer the terminal?</summary>
@@ -98,10 +99,21 @@ Each employee is a directory under [`employees/`](employees).
 | `organizer` | Puts a folder in order and says what it moved | files |
 | `analyst` | Computes answers from data on this machine | files, code it runs under limits |
 | `operator` | Works interfaces with no API - a canvas, an embedded viewer | browser, then the screen |
-| `writer` | Turns findings into the document that was asked for | files |
+| `writer` | Turns findings into the document that was asked for | files, PDF |
 
 Work is routed by what each employee declares it can do. Nothing in the manager
 names an employee, so adding a sixth is adding a directory.
+
+### Leaves its files where you can find them
+
+Every task works in a folder of its own, `~/Documents/Prometheus/<task name>`, made
+on the first request. The **+** under the field points a task at another folder -
+one you saved in **Settings -> Workspaces** or any folder picked from the system
+dialog - and a small bar under the field then says which. Answers render as
+Markdown, with sources as links named after the publication. The files a task
+wrote appear under its answer and open in a preview beside the conversation: PDF,
+images, Markdown and text. A PDF is written from Markdown by the local browser
+engine, so any alphabet prints.
 
 ### Knows your documents
 
@@ -122,7 +134,8 @@ they do not decay, and they are cited.
 ### Separates contexts
 
 Workspaces keep work and personal apart: each has its own files, documents and
-history, and switching moves the one directory the file tools can see.
+history. Its files live under one root, chosen with the system folder dialog, and
+each task gets a folder inside it.
 
 ### Uses the most direct way in
 
@@ -173,8 +186,9 @@ asked for is opt-in: `PROMETHEUS_FLAGS__SCHEDULER=true`.
 - **Least privilege is a list you can read.** An employee gets exactly the tools it
   lists (`prometheus tools`), and its declared policies (`read_only`, `no_sending`...)
   can only narrow what it may do.
-- **The filesystem is fenced.** File tools see one directory per workspace, symlinks
-  resolved; anything outside is refused, not approved.
+- **The filesystem is fenced.** File tools see one folder per task, symlinks
+  resolved; anything outside is refused, not approved. The top of the disk and
+  your home folder itself cannot be chosen as a task's folder.
 - **The desktop is opt-in per application.** With no allowed applications, nothing
   on your desktop can be touched, and every desktop action asks each time.
 - **There is a brake.** `prometheus stop` writes a file every screen action reads
@@ -208,7 +222,8 @@ Costs and tokens of every call are logged: `prometheus spend`.
 
 ## Where things are kept
 
-SQLite by default - one file in `~/.prometheus`. PostgreSQL (or Supabase) is a
+What the work produces goes to `~/Documents/Prometheus`, a folder per task. The
+platform's own data is SQLite by default - one file in `~/.prometheus`. PostgreSQL (or Supabase) is a
 setting, and moving is *copy -> verify row by row -> erase only when you confirm*:
 
 ```bash
