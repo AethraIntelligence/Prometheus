@@ -539,14 +539,9 @@ html[data-shell="mac"] .app.rail-closed .head .icobtn {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: var(--ink);
-  color: var(--on-ink);
-  display: grid;
-  place-items: center;
-  font-size: 11.5px;
-  font-weight: 600;
+  object-fit: cover;
+  display: block;
   flex: none;
-  letter-spacing: 0;
 }
 
 .acct-meta {
@@ -678,6 +673,25 @@ html[data-shell="mac"] .app.rail-closed .head .icobtn {
 
 .greeting {
   margin-bottom: 26px;
+}
+
+/* The logo is a black engraving; on the dark palette it is turned over like
+   every other token rather than drawn a second time. */
+.greeting-mark {
+  display: block;
+  width: 136px;
+  height: 136px;
+  margin: 0 0 18px;
+}
+
+.stream.blank .greeting-mark {
+  margin-inline: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .greeting-mark {
+    filter: invert(1);
+  }
 }
 
 .greeting h1 {

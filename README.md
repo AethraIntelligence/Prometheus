@@ -4,6 +4,7 @@
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB)
 ![Local-first](https://img.shields.io/badge/runs-on%20your%20machine-2e7d32)
 ![Desktop: Tauri + React](https://img.shields.io/badge/desktop-Tauri%20%2B%20React-24C8DB)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **Tell it what you want done. An AI manager plans the work, hands it to a team of
 digital employees, checks the result, and does it all on your own machine.**
@@ -320,3 +321,7 @@ workforce with memory, documents, integrations, a desktop window and a second
 storage backend - each closed only after doing real work, recorded in
 [`validation/tasks/`](validation/tasks). The roadmap is in
 `development/implementation-plan.md`.
+
+## License
+
+[MIT](LICENSE) © 2026 Denys Zhodik

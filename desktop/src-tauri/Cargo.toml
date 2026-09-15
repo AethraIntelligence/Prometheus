@@ -3,6 +3,8 @@ name = "prometheus-desktop"
 version = "0.1.0"
 description = "The Prometheus desktop shell"
 repository = "https://github.com/ysz7/Prometheus"
+license = "MIT"
+authors = ["Denys Zhodik"]
 edition = "2021"
 rust-version = "1.77.2"
 

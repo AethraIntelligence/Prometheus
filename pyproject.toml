@@ -3,6 +3,9 @@ name = "prometheus"
 version = "0.1.0"
 description = "Prometheus - a local-first platform where an AI manager runs digital employees on your machine."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Denys Zhodik" }]
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.9",

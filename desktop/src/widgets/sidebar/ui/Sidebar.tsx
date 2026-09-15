@@ -26,6 +26,7 @@ import {
   renameThread,
 } from "../../../features/manage-thread";
 import { report, useRuntime } from "../../../shared/api";
+import { avatarUrl } from "../../../shared/assets";
 import { describe } from "../../../shared/lib";
 import {
   ClockIcon,
@@ -245,9 +246,7 @@ export function Sidebar({
           aria-label="Settings"
           onClick={() => onSettings()}
         >
-          <span className="avatar" aria-hidden="true">
-            {(workspace || "P").slice(0, 1).toUpperCase()}
-          </span>
+          <img className="avatar" src={avatarUrl} alt="" />
           <span className="acct-meta">
             <b>{workspace || "Workspace"}</b>
             <span>
