@@ -151,7 +151,7 @@ describe("Scheduled", () => {
     await waitFor(() => expect(state.posted).toHaveLength(1));
     const sent = state.posted[0].body as Record<string, unknown>;
     expect(sent).toMatchObject({ request: "Summarise yesterday's notes", daily_at: "09:00" });
-    expect(sent.utc_offset_minutes).toBe(-new Date().getTimezoneOffset());
+    expect(sent.utc_offset_minutes).toBe(0 - new Date().getTimezoneOffset());
     expect(sent).not.toHaveProperty("every_minutes");
     expect(await screen.findByText("Morning digest")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

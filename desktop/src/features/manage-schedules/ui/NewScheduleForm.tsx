@@ -115,8 +115,9 @@ export function NewScheduleForm({
     if (when === "every") chosen.every_minutes = amount * UNIT_MINUTES[unit];
     if (when === "daily") {
       chosen.daily_at = time;
-      // getTimezoneOffset is minutes *behind* UTC; the core wants ahead.
-      chosen.utc_offset_minutes = -new Date().getTimezoneOffset();
+      // getTimezoneOffset is minutes *behind* UTC; the core wants ahead. Subtracting
+      // from zero rather than negating, because negating UTC's 0 gives -0.
+      chosen.utc_offset_minutes = 0 - new Date().getTimezoneOffset();
     }
     if (when === "event") chosen.on_event = event.trim();
     setBusy(true);
