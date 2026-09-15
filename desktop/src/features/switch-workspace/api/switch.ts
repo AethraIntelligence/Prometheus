@@ -25,3 +25,12 @@ export async function removeWorkspace(client: RuntimeClient, id: string): Promis
   const body = await client.del<{ removed: boolean }>(`/api/workspaces/${id}`);
   return body.removed;
 }
+
+/** Where its files go, and the folders offered to a thread. Each is checked by the core. */
+export async function editWorkspace(
+  client: RuntimeClient,
+  id: string,
+  change: { file_root?: string; folders?: string[] },
+): Promise<Workspace> {
+  return client.patch<Workspace>(`/api/workspaces/${id}`, change);
+}

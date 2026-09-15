@@ -153,7 +153,7 @@ def test_approvals_are_chosen_edited_checked_and_shown_in_the_thread(client: Tes
 
     thread = client.get(f"/api/conversations/{made['conversation_id']}").json()
     assert thread["schedule_id"] == made["id"]
-    assert thread["directions"] == {"approvals": "DENY", "model": ""}
+    assert _how(thread["directions"]) == {"approvals": "DENY", "model": ""}
 
     refused = client.put(
         f"/api/schedules/{made['id']}",
@@ -179,9 +179,14 @@ def test_a_thread_reopens_with_how_its_last_request_was_asked(client: TestClient
         json={"request": "Say hello", "approvals": "DENY", "source": "desktop"},
     )
     assert sent.status_code == 201, sent.text
-    assert sent.json()["directions"] == {"approvals": "DENY", "model": ""}
+    assert _how(sent.json()["directions"]) == {"approvals": "DENY", "model": ""}
 
     reopened = client.get(f"/api/conversations/{thread['id']}").json()
     assert reopened["schedule_id"] is None
-    assert reopened["directions"] == {"approvals": "DENY", "model": ""}
+    assert _how(reopened["directions"]) == {"approvals": "DENY", "model": ""}
     assert reopened["messages"][0]["directions"]["approvals"] == "DENY"
+
+
+def _how(directions: dict) -> dict:
+    """Approvals and model only: the folder is the thread's, and checked where folders are."""
+    return {key: directions[key] for key in ("approvals", "model")}

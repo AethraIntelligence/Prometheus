@@ -12,8 +12,10 @@ export interface Workspace {
   id: string;
   name: string;
   description: string;
-  /** Where its files are on this machine. Shown, never edited from here. */
+  /** Where its files are on this machine: each thread gets a folder of its own under it. */
   file_root: string;
+  /** Folders a person saved to point a thread at. Absent from an older runtime. */
+  folders?: string[];
   /** The first workspace. It holds everything written before there were others. */
   is_default: boolean;
   active: boolean;

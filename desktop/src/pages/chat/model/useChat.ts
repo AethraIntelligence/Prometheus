@@ -55,6 +55,8 @@ export interface ChatState {
   models: ModelEntry[];
   busy: boolean;
   send: (request: string) => Promise<void>;
+  /** Point this thread - or the next new one - at a folder. Empty: a folder of its own. */
+  chooseFolder: (folder: string) => Promise<void>;
   stop: () => Promise<void>;
   decide: (approvalId: string, approved: boolean) => Promise<void>;
 }
@@ -247,23 +249,53 @@ export function useChat(
       setProblem("");
       try {
         let current = thread;
+        let fresh = false;
         if (!current) {
           const opened = await conversationApi.open(client);
           current = { ...opened, messages: [] };
           adopt(current);
           told.current.onOpened?.(opened.id);
+          fresh = true;
         }
         const into = current.id;
-        const message = await conversationApi.send(client, into, request, directions);
+        // A folder travels with the first request only. After that it is the
+        // thread's, changed through `chooseFolder`; sending it again would be
+        // choosing it again, every time.
+        const message = await conversationApi.send(
+          client,
+          into,
+          request,
+          fresh ? directions : { ...directions, folder: "" },
+        );
         setThread((now) =>
           now && now.id === into ? { ...now, messages: [...now.messages, message] } : now,
         );
+        if (fresh) void reread(into);
         told.current.onChanged?.();
       } catch (error) {
         fail(error);
       }
     },
-    [client, thread, directions, adopt, fail],
+    [client, thread, directions, adopt, fail, reread],
+  );
+
+  const chooseFolder = useCallback(
+    async (folder: string) => {
+      setProblem("");
+      if (!thread) {
+        setDirections((now) => ({ ...now, folder }));
+        return;
+      }
+      try {
+        const read = await conversationApi.setFolder(client, thread.id, folder);
+        if (shown.current !== thread.id) return;
+        setThread(read);
+        setDirections((now) => ({ ...now, folder: read.folder ?? folder }));
+      } catch (error) {
+        fail(error);
+      }
+    },
+    [client, thread, fail],
   );
 
   const stop = useCallback(async () => {
@@ -313,6 +345,7 @@ export function useChat(
     models,
     busy,
     send,
+    chooseFolder,
     stop,
     decide,
   };

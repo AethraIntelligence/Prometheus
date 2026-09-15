@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApprovalCard } from "../../../entities/approval";
 import type { Artifact } from "../../../entities/conversation";
 import { DirectionChips } from "../../../features/choose-directions";
+import { ComposerMenu, FolderTray } from "../../../features/choose-folder";
 import { ApprovalDecision } from "../../../features/decide-approval";
 import { RequestComposer } from "../../../features/send-request";
 import { StopButton } from "../../../features/stop-run";
@@ -67,6 +68,7 @@ export function ChatPage({
     models,
     busy,
     send,
+    chooseFolder,
     stop,
     decide,
   } = useChat(client, conversationId, { onOpened, onChanged, refresh });
@@ -124,6 +126,15 @@ export function ChatPage({
     </>
   );
 
+  // One choice, shown in two places: the + menu and the tray under the field.
+  const folderChoice = {
+    folder: thread?.folder || directions.folder || "",
+    fileRoot: active?.file_root,
+    saved: active?.folders ?? [],
+    onChoose: chooseFolder,
+    disabled: !ready,
+  };
+
   const composer = (
     <>
       <RequestComposer
@@ -131,12 +142,14 @@ export function ChatPage({
         disabled={!ready}
         extras={
           <>
+            <ComposerMenu {...folderChoice} />
             <WorkspaceBar onSwitched={onSwitched} />
             <DirectionChips directions={directions} models={models} onChange={setDirections} />
           </>
         }
         stop={busy ? <StopButton onStop={stop} /> : undefined}
       />
+      <FolderTray {...folderChoice} />
       <p className="hint">Irreversible actions wait for you. Everything runs on this machine.</p>
     </>
   );

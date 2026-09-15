@@ -25,3 +25,21 @@ export async function chooseFiles(options: {
   if (chosen === null) return [];
   return Array.isArray(chosen) ? chosen : [chosen];
 }
+
+/**
+ * Asking the person to choose folders, with the same dialog and the same answers:
+ * `null` when there is no dialog here, an empty list when it was closed.
+ */
+export async function chooseFolders(options: {
+  multiple?: boolean;
+  title?: string;
+}): Promise<string[] | null> {
+  if (!isTauri()) return null;
+  const chosen = await open({
+    multiple: options.multiple ?? false,
+    directory: true,
+    title: options.title,
+  });
+  if (chosen === null) return [];
+  return Array.isArray(chosen) ? chosen : [chosen];
+}

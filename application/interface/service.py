@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import time
 from pathlib import Path
 from typing import Any
@@ -42,6 +42,7 @@ from application.interface.contracts import RequestSource, UserRequest
 from application.interface.runs import Runs
 from application.knowledge.service import KnowledgeService
 from application.providers.service import ProviderService
+from application.workspaces import folders
 from application.workspaces.service import WorkspaceService
 from domain.approvals.models import ApprovalState
 from domain.approvals.protocols import (
@@ -274,6 +275,10 @@ class PrometheusService:
             chosen = thread[-1].directions
         else:
             chosen = None
+        # The folder is the thread's, whatever the last request carried: a
+        # person may have pointed it elsewhere since.
+        if chosen is not None:
+            chosen = replace(chosen, folder=conversation.folder)
         return {
             **views.conversation(
                 conversation,
@@ -282,6 +287,7 @@ class PrometheusService:
             ),
             "directions": views.directions(chosen) if chosen is not None else None,
             "schedule_id": str(schedule.id) if schedule is not None else None,
+            "folder": conversation.folder,
             "messages": [
                 views.message(
                     item,
@@ -301,12 +307,18 @@ class PrometheusService:
         """
         if objective.result is None:
             return []
-        root = (
-            self._d.workspaces.root_for(objective.workspace_id)
-            if self._d.workspaces is not None
-            else None
-        )
-        return [artifacts.artifact(path, root) for path in await self._produced(objective)]
+        return [
+            artifacts.artifact(path, self._ran_in(objective))
+            for path in await self._produced(objective)
+        ]
+
+    def _ran_in(self, objective: Objective) -> Path | None:
+        """Where an objective's relative paths lead: the folder it ran in, as recorded."""
+        if objective.directions.folder:
+            return Path(objective.directions.folder)
+        if self._d.workspaces is None:
+            return None
+        return self._d.workspaces.root_for(objective.workspace_id)
 
     async def _produced(self, objective: Objective) -> list[str]:
         try:
@@ -328,11 +340,12 @@ class PrometheusService:
         decided to build.
         """
         objective = await self._d.objectives.get(objective_id)
-        if objective is None or self._d.workspaces is None:
+        root = self._ran_in(objective) if objective is not None else None
+        if objective is None or root is None:
             return None
         if path not in await self._produced(objective):
             return None
-        target = artifacts.within(self._d.workspaces.root_for(objective.workspace_id), path)
+        target = artifacts.within(root, path)
         if target is None or not target.is_file():
             return None
         return target, artifacts.media_type(path) or "application/octet-stream"
@@ -416,11 +429,16 @@ class PrometheusService:
         name: str | None = None,
         description: str | None = None,
         file_root: str | None = None,
+        folders: list[str] | None = None,
     ) -> dict[str, Any]:
         if self._d.workspaces is None:
             raise WorkspacesDisabledError("This interface has no workspaces behind it.")
         item = await self._d.workspaces.update(
-            workspace_id, name=name, description=description, file_root=file_root
+            workspace_id,
+            name=name,
+            description=description,
+            file_root=file_root,
+            folders=folders,
         )
         return views.workspace(item, file_root=str(self._d.workspaces.root_for(item.id)))
 
@@ -601,11 +619,17 @@ class PrometheusService:
             raise PrometheusError("An empty request has nothing to work on.")
 
         conversation = await self._thread_for(request)
+        directions = request.directions
+        if conversation is not None:
+            conversation = await self._folder_for(conversation, directions.folder)
+            directions = replace(directions, folder=conversation.folder)
+        elif directions.folder:
+            directions = replace(directions, folder=str(folders.chosen_folder(directions.folder)))
         objective = await self._d.runs.ask(
             text,
             conversation_id=conversation.id if conversation else None,
             workspace_id=request.workspace_id,
-            directions=request.directions,
+            directions=directions,
         )
         log.info(
             "interface.request_submitted",
@@ -639,6 +663,48 @@ class PrometheusService:
         updated = conversation.titled_from(request.text).touched(request.received_at)
         await self._d.conversations.save(updated)
         return updated
+
+    async def _folder_for(self, conversation: Conversation, chosen: str = "") -> Conversation:
+        """The folder this thread works in, given one if it has none yet.
+
+        A folder chosen with the request replaces the thread's. Otherwise the
+        thread keeps the one it has, and a thread with none gets its own under
+        the workspace's root. Without workspaces there is no root to put one
+        under, and the thread works where the machine's tools already point.
+        """
+        if chosen.strip():
+            folder = str(folders.chosen_folder(chosen))
+        elif conversation.folder:
+            return conversation
+        elif self._d.workspaces is not None:
+            root = self._d.workspaces.root_for(conversation.workspace_id)
+            folder = str(folders.session_folder(root, conversation))
+        else:
+            return conversation
+        if folder == conversation.folder:
+            return conversation
+        updated = conversation.in_folder(folder)
+        await self._d.conversations.save(updated)
+        log.info("interface.thread_folder", conversation_id=str(conversation.id), folder=folder)
+        return updated
+
+    async def set_conversation_folder(
+        self, conversation_id: UUID, folder: str
+    ) -> dict[str, Any] | None:
+        """Point a thread at another folder, for the requests that follow.
+
+        What was already written stays where it was; each earlier answer
+        records the folder it ran in, so its files are still found. An empty
+        folder gives the thread its own again.
+        """
+        conversation = await self._d.conversations.get(conversation_id)
+        if conversation is None:
+            return None
+        if not folder.strip():
+            conversation = conversation.in_folder("")
+            await self._d.conversations.save(conversation)
+        await self._folder_for(conversation, folder)
+        return await self.get_conversation(conversation_id)
 
     async def start_task(self, goal: str, employee: str) -> dict[str, Any]:
         """Hand one task to one named employee, bypassing the manager.

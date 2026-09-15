@@ -32,15 +32,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID
 
 import structlog
 
+from application.workspaces import folders
 from domain.conversations.repository import ConversationRepository
 from domain.scheduling.models import Event, Schedule, Trigger
 from domain.scheduling.protocols import EventLog, ScheduleRepository
 from domain.workforce import directions as carried
+from domain.workforce.directions import Directions
 from domain.workforce.protocols import ObjectiveResult, WorkforceManager
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
@@ -78,6 +82,9 @@ class Scheduler:
         # Where a firing's thread is marked as spoken in, so it rises to the top
         # of the list the way a thread somebody typed into does.
         conversations: ConversationRepository | None = None,
+        # Where a thread with no folder of its own gets one - the workspace's
+        # root. Without it a firing works where the machine's tools point.
+        folder_root: Callable[[WorkspaceId], Path] | None = None,
     ) -> None:
         self._manager = manager
         self._schedules = schedules
@@ -87,6 +94,7 @@ class Scheduler:
         self._clock = clock
         self._workspaces = workspaces
         self._conversations = conversations
+        self._folder_root = folder_root
         #: Schedules with an objective in flight. In memory on purpose: it is a
         #: fact about this process, and a process that died is not still running
         #: anything.
@@ -170,7 +178,7 @@ class Scheduler:
         try:
             # Carried around the whole objective, as a window request's are, so
             # every task it starts prefers the schedule's model.
-            with carried.given(schedule.directions):
+            with carried.given(await self._directions_for(schedule)):
                 return await self._run(schedule, now, trigger, event)
         except Exception as error:
             # One schedule's failure is not the loop's. The others on this
@@ -220,6 +228,29 @@ class Scheduler:
                 await self._conversations.save(thread.touched(now))
         except Exception as error:
             log.warning("scheduler.thread_not_touched", error=str(error))
+
+    async def _directions_for(self, schedule: Schedule) -> Directions:
+        """The schedule's directions, in the folder of the thread it writes into.
+
+        The same folder a person typing into that thread would get, so the
+        morning run and the question asked about it afterwards see one set of
+        files. Guarded: a thread that cannot be read still fires, where the
+        machine's tools point.
+        """
+        if self._conversations is None or schedule.conversation_id is None:
+            return schedule.directions
+        try:
+            thread = await self._conversations.get(schedule.conversation_id)
+            if thread is None:
+                return schedule.directions
+            if not thread.folder and self._folder_root is not None:
+                root = self._folder_root(thread.workspace_id)
+                thread = thread.in_folder(str(folders.session_folder(root, thread)))
+                await self._conversations.save(thread)
+            return replace(schedule.directions, folder=thread.folder)
+        except Exception as error:
+            log.warning("scheduler.thread_folder_unreadable", error=str(error))
+            return schedule.directions
 
     async def _record(self, schedule: Schedule, objective_id: UUID | None, status: str) -> None:
         """Say what became of a firing, in the log a person reads afterwards.

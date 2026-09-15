@@ -41,6 +41,12 @@ export const conversationApi = {
       input_type: "text",
       approvals: directions.approvals,
       model: directions.model,
+      folder: directions.folder ?? "",
     });
+  },
+
+  /** Point a thread at a folder for the requests that follow. Empty: its own again. */
+  setFolder(client: RuntimeClient, conversationId: string, folder: string): Promise<Thread> {
+    return client.put<Thread>(`/api/conversations/${conversationId}/folder`, { folder });
   },
 };

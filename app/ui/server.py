@@ -72,6 +72,7 @@ from application.scheduling.scheduler import Scheduler
 from domain.errors import (
     DuplicateIntegrationError,
     DuplicateWorkspaceError,
+    FolderError,
     IntegrationNotFoundError,
     NotFoundError,
     PluginConfigurationError,
@@ -131,6 +132,9 @@ class NewObjective(BaseModel):
     #: every request meant before a window could say otherwise.
     approvals: ApprovalChoice = ApprovalChoice.ASK
     model: str = Field(default="", max_length=120)
+    #: A folder the person chose for this thread's work. Empty keeps the one
+    #: the thread has, or gives it its own.
+    folder: str = Field(default="", max_length=1024)
 
 
 class SettingsChange(BaseModel):
@@ -179,6 +183,11 @@ class SettingsReset(BaseModel):
 
 class ConversationEdit(BaseModel):
     title: str = Field(min_length=1, max_length=200)
+
+
+class ConversationFolder(BaseModel):
+    #: An absolute path the person chose. Empty gives the thread its own again.
+    folder: str = Field(default="", max_length=1024)
 
 
 class NewConversation(BaseModel):
@@ -299,6 +308,8 @@ class WorkspaceEdit(BaseModel):
     name: str | None = None
     description: str | None = None
     file_root: str | None = None
+    #: The whole list of saved folders. Absent leaves it as it is.
+    folders: list[str] | None = None
 
 
 class Classification(BaseModel):
@@ -380,6 +391,7 @@ def create_app(
                 tick_seconds=resolved.scheduler_tick_seconds,
                 workspaces=every_workspace,
                 conversations=container.conversation_repository,
+                folder_root=container.workspaces.root_for,
             )
             scheduler_task = asyncio.create_task(scheduler.run_forever(stop_scheduler))
 
@@ -514,6 +526,18 @@ def _routes(app: FastAPI) -> None:
         request: Request, conversation_id: UUID, body: ConversationEdit
     ) -> dict[str, Any]:
         found = await _guarded(_service(request).rename_conversation(conversation_id, body.title))
+        return _found(found, f"Unknown conversation: {conversation_id}")
+
+    @app.put("/api/conversations/{conversation_id}/folder")
+    async def thread_folder(
+        request: Request, conversation_id: UUID, body: ConversationFolder
+    ) -> dict[str, Any]:
+        try:
+            found = await _guarded(
+                _service(request).set_conversation_folder(conversation_id, body.folder)
+            )
+        except FolderError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
         return _found(found, f"Unknown conversation: {conversation_id}")
 
     @app.delete("/api/conversations/{conversation_id}")
@@ -661,6 +685,7 @@ def _routes(app: FastAPI) -> None:
                 name=body.name,
                 description=body.description,
                 file_root=body.file_root,
+                folders=body.folders,
             )
         )
 
@@ -1038,7 +1063,11 @@ async def _ask(
                     input_type=body.input_type,
                     conversation_id=conversation_id,
                     workspace_id=WorkspaceId(named),
-                    directions=Directions(approvals=body.approvals, model=body.model.strip()),
+                    directions=Directions(
+                        approvals=body.approvals,
+                        model=body.model.strip(),
+                        folder=body.folder.strip(),
+                    ),
                 )
             )
         )
@@ -1082,6 +1111,8 @@ async def _workspace(awaitable):
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (DuplicateWorkspaceError, ProtectedWorkspaceError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except FolderError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except WorkspacesDisabledError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 

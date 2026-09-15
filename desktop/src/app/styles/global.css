@@ -1537,6 +1537,8 @@ button.worked:hover {
 }
 
 .composer {
+  position: relative;
+  z-index: 1;
   border: 1px solid var(--hair);
   border-radius: 24px;
   background: var(--field);
@@ -1609,6 +1611,223 @@ button.worked:hover {
   width: 100%;
   opacity: 0;
   cursor: pointer;
+}
+
+/* ── the + under the field ─────────────── */
+
+/* Static on purpose: the menu is placed against the whole composer, not
+   against the + it came from. */
+.plus {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plus-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  background: var(--panel);
+  margin-right: 4px;
+  transition: background 0.16s;
+}
+
+.plus-btn:hover,
+.plus-btn[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+.plus-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Under the composer and tucked behind it, the way a drawer sits under a
+   lid: part of the field, not another row of controls. */
+.composer-tray {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -14px 14px 0;
+  padding: 20px 10px 7px;
+  border: 1px solid var(--hair);
+  border-top: 0;
+  border-radius: 0 0 16px 16px;
+  background: var(--panel-2);
+}
+
+.tray-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: 9px;
+  font-size: 13px;
+  color: var(--text);
+  transition: background 0.16s;
+}
+
+.tray-folder:hover,
+.tray-folder[aria-expanded="true"] {
+  background: var(--hover);
+}
+
+.tray-folder > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--grey);
+}
+
+.tray-folder > svg:last-child {
+  width: 10px;
+  height: 10px;
+  color: var(--grey-2);
+}
+
+.tray-folder b {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+.tray-folder span {
+  color: var(--grey);
+  white-space: nowrap;
+}
+
+.dock .plus-menu {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
+/* Drops below the composer, as wide as it, the way the field's own
+   suggestions would. A docked composer sits on the window's bottom edge with
+   nothing below it, so there the same menu opens upwards instead. */
+.plus-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  text-align: left;
+  padding: 6px;
+  border: 1px solid var(--hair);
+  border-radius: 16px;
+  background: var(--field);
+  box-shadow: 0 16px 40px -18px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.05);
+  pointer-events: auto;
+}
+
+.plus-head {
+  margin: 4px 10px 6px;
+  font-size: 12.5px;
+  color: var(--grey);
+}
+
+.plus-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.plus-menu > button:hover {
+  background: var(--hover);
+}
+
+.plus-menu > button > svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--grey);
+}
+
+.plus-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+.plus-hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--grey);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plus-menu > button > .plus-go {
+  margin-left: auto;
+  width: 11px;
+  height: 11px;
+}
+
+/* ── a workspace's folders ─────────────── */
+
+.ws-folders {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  justify-items: start;
+}
+
+.ws-folder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.ws-folder > svg {
+  width: 15px;
+  height: 15px;
+  color: var(--grey);
+  flex: none;
+}
+
+.ws-folder-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  line-height: 1.3;
+}
+
+.ws-folder-text b {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.ws-folder-text span {
+  font-size: 12px;
+  color: var(--grey);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws-folders > .note {
+  margin: -2px 0 4px 2px;
 }
 
 .dock-extras {

@@ -43,6 +43,7 @@ allowed_tools:
   - fs.list
   - fs.read
   - fs.write
+  - fs.write_pdf
 
 # FILE_ACCESS only. There is no WRITING capability and there should not be:
 # capabilities name what a tool lets an employee reach, and writing well is a

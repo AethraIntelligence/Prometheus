@@ -30,6 +30,7 @@ def _to_row(conversation: Conversation) -> dict[str, object]:
         "id": str(conversation.id),
         "workspace_id": str(conversation.workspace_id),
         "title": conversation.title,
+        "folder": conversation.folder,
         "created_at": conversation.created_at,
         "updated_at": conversation.updated_at,
     }
@@ -39,6 +40,7 @@ def _to_conversation(row: ConversationRow) -> Conversation:
     return Conversation(
         id=UUID(row.id),
         title=row.title,
+        folder=row.folder or "",
         workspace_id=WorkspaceId(row.workspace_id),
         created_at=_aware(row.created_at),
         updated_at=_aware(row.updated_at),

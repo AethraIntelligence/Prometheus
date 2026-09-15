@@ -28,9 +28,14 @@ export interface Directions {
   approvals: ApprovalChoice;
   /** A catalog entry by name. Empty lets the runtime choose. */
   model: string;
+  /**
+   * The folder the work reads and writes, as a full path. Empty: a folder of
+   * the thread's own, which the runtime makes under the workspace's files.
+   */
+  folder?: string;
 }
 
-export const NO_DIRECTIONS: Directions = { approvals: "ASK", model: "" };
+export const NO_DIRECTIONS: Directions = { approvals: "ASK", model: "", folder: "" };
 
 /**
  * A file the work left behind, as the runtime recorded it.
@@ -99,4 +104,6 @@ export interface Thread extends Omit<Conversation, "messages"> {
   directions?: Directions | null;
   /** The schedule that writes into this thread, if one does. */
   schedule_id?: string | null;
+  /** The folder this thread works in. Empty until its first request gives it one. */
+  folder?: string;
 }

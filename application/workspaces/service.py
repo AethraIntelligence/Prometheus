@@ -29,6 +29,7 @@ from pathlib import Path
 
 import structlog
 
+from application.workspaces.folders import chosen_folder
 from domain.errors import (
     DuplicateWorkspaceError,
     ProtectedWorkspaceError,
@@ -110,8 +111,14 @@ class WorkspaceService:
         name: str | None = None,
         description: str | None = None,
         file_root: str | None = None,
+        folders: list[str] | None = None,
     ) -> Workspace:
         """Rename or repoint a workspace, keeping the id it is stored under.
+
+        `folders` are the folders a person saved to work in, offered when a
+        thread is pointed somewhere other than its own. A list of places to
+        choose from, not a grant: a run still sees only the one folder its
+        thread works in. Each is checked the way a folder chosen for a thread is.
 
         The id is a slug of the *original* name and is written on every row the
         workspace owns; renaming does not rewrite them. So a workspace called
@@ -127,7 +134,11 @@ class WorkspaceService:
             name=(name.strip() if name else existing.name),
             description=existing.description if description is None else description,
             file_root=existing.file_root if file_root is None else (file_root or None),
-            settings=existing.settings,
+            settings=(
+                existing.settings
+                if folders is None
+                else {**existing.settings, "folders": _saved(folders)}
+            ),
             created_at=existing.created_at,
         )
         await self._repository.save(updated)
@@ -166,3 +177,8 @@ class WorkspaceService:
         await self.list()
         log.info("workspace.deleted", workspace_id=str(workspace_id), removed=removed)
         return removed
+
+
+def _saved(folders: list[str]) -> list[str]:
+    """Checked, absolute, in the order given, each once."""
+    return list(dict.fromkeys(str(chosen_folder(item)) for item in folders if item.strip()))

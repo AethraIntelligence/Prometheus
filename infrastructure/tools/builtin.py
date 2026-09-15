@@ -16,8 +16,10 @@ from pathlib import Path
 
 from domain.browser.protocols import Browser
 from domain.computer.protocols import Computer, ScreenReader
+from domain.documents.protocols import PdfRenderer
 from domain.search.protocols import SearchEngine
 from domain.tools.protocols import Tool
+from infrastructure.documents.pdf import ChromiumPdfRenderer
 from infrastructure.tools.code import CodeExecutionTool
 from infrastructure.tools.computer import computer_tools
 from infrastructure.tools.filesystem import (
@@ -27,11 +29,14 @@ from infrastructure.tools.filesystem import (
     FileRoot,
     FileWriteTool,
 )
+from infrastructure.tools.pdf import PdfWriteTool
 from infrastructure.tools.registry import InMemoryToolRegistry
 from infrastructure.tools.web import BrowserExtractTool, BrowserOpenTool, WebSearchTool
 
 
-def filesystem_tools(root: Path | Callable[[], Path]) -> list[Tool]:
+def filesystem_tools(
+    root: Path | Callable[[], Path], *, pdf_renderer: PdfRenderer | None = None
+) -> list[Tool]:
     file_root = FileRoot(root)
     file_root.ensure()
     return [
@@ -39,6 +44,9 @@ def filesystem_tools(root: Path | Callable[[], Path]) -> list[Tool]:
         FileReadTool(file_root),
         FileWriteTool(file_root),
         FileMoveTool(file_root),
+        # The engine is started only when a PDF is written, so offering the
+        # tool costs a machine that never writes one nothing.
+        PdfWriteTool(file_root, pdf_renderer or ChromiumPdfRenderer()),
     ]
 
 

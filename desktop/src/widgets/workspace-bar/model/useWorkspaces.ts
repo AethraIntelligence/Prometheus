@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { workspaceApi, type Workspace } from "../../../entities/workspace";
 import {
   addWorkspace,
+  editWorkspace,
   removeWorkspace,
   useWorkspace as switchTo,
 } from "../../../features/switch-workspace";
@@ -26,6 +27,7 @@ export interface WorkspacesState {
   use: (id: string) => Promise<void>;
   add: (name: string, description: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
+  edit: (id: string, change: { file_root?: string; folders?: string[] }) => Promise<void>;
 }
 
 export function useWorkspaces(
@@ -83,5 +85,6 @@ export function useWorkspaces(
     use: (id) => perform(() => switchTo(client, id), true),
     add: (name, description) => perform(() => addWorkspace(client, name, description)),
     remove: (id) => perform(() => removeWorkspace(client, id), true),
+    edit: (id, change) => perform(() => editWorkspace(client, id, change)),
   };
 }

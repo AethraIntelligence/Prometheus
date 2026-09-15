@@ -34,6 +34,7 @@ dependencies = [
     # PROMETHEUS_FLAGS__COMPUTER_USE is on and an application is allowed.
     "playwright>=1.48",  # the browser tools; the engine itself is fetched on first start
     "pypdf>=5.1",  # reading a PDF
+    "markdown-it-py>=3.0",  # writing one: Markdown to the page Chromium prints
     "asyncpg>=0.30",  # the PostgreSQL backend (ADR 0017)
     "pyautogui>=0.9.54",  # the desktop surface, off by a flag
 ]

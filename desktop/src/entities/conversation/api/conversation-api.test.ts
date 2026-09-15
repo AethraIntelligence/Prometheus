@@ -27,6 +27,7 @@ describe("conversationApi", () => {
       input_type: "text",
       approvals: "ASK",
       model: "",
+      folder: "",
     });
   });
 

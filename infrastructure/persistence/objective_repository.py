@@ -34,6 +34,7 @@ def _to_row(objective: Objective) -> dict[str, object]:
         "directions": {
             "approvals": objective.directions.approvals.value,
             "model": objective.directions.model,
+            "folder": objective.directions.folder,
         },
         "status": objective.status.value,
         "result": (
@@ -85,7 +86,11 @@ def _directions(stored: dict) -> Directions:
         approvals = ApprovalChoice(str(stored.get("approvals") or "ASK"))
     except ValueError:
         approvals = ApprovalChoice.ASK
-    return Directions(approvals=approvals, model=str(stored.get("model") or ""))
+    return Directions(
+        approvals=approvals,
+        model=str(stored.get("model") or ""),
+        folder=str(stored.get("folder") or ""),
+    )
 
 
 def _aware(value):

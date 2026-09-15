@@ -41,6 +41,7 @@ allowed_tools:
   - fs.list
   - fs.read
   - fs.write
+  - fs.write_pdf
   - code.run
 
 # CODE is what makes this employee findable for work the others cannot do:

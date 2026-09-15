@@ -16,6 +16,11 @@ it runs, and two tasks running at once in different workspaces resolve the same
 relative path to different files. An `asyncio` task copies the context at
 creation, which is what makes that true without anybody passing it down.
 
+**A thread's folder narrows it further.** A request carries the folder of the
+thread it was asked in (`domain.workforce.directions`), and `current_root`
+answers with that folder when there is one. The workspace's root is still what
+a request with no thread - the CLI, a script - works in.
+
 **Roots are declared, not queried.** The filesystem tools ask for the current
 root on every call, and a call cannot wait on a database read; so the
 application hands the known workspaces in whenever they change, the same way it
@@ -31,6 +36,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
+from domain.workforce import directions
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, Workspace, WorkspaceId
 from infrastructure.observability.logging import get_logger
 
@@ -111,7 +117,11 @@ class LocalWorkspaceContext:
         return self._roots_base / str(workspace_id)
 
     def current_root(self) -> Path:
-        return self.root_for(self.current)
+        # A thread's folder wins where the run carries one. Read here, at the
+        # moment of the call, for the reason the workspace is: the tools were
+        # built once and two threads run at once.
+        folder = directions.current().folder
+        return Path(folder).expanduser() if folder else self.root_for(self.current)
 
 
 class FixedWorkspaceContext:

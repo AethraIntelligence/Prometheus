@@ -8,7 +8,7 @@
 import { useState } from "react";
 
 import { WorkspaceRow, type Workspace } from "../../../../entities/workspace";
-import { NewWorkspaceForm } from "../../../../features/switch-workspace";
+import { NewWorkspaceForm, WorkspaceFolders } from "../../../../features/switch-workspace";
 import { useRuntime } from "../../../../shared/api";
 import { Modal, PlusIcon } from "../../../../shared/ui";
 import { useWorkspaces } from "../../../../widgets/workspace-bar";
@@ -21,9 +21,9 @@ export function WorkspacesSection({ onSwitched }: { onSwitched?: () => void }) {
   return (
     <>
       <p className="lede">
-        A workspace separates one context of work from another: its own files,
-        its own documents, its own history. Switching moves what the employees
-        can see; work already running keeps the workspace it started in.
+        A workspace separates one context of work from another: its own files, its own documents,
+        its own history. Every task in it works in a folder of its own under the workspace's files,
+        or in a folder you point it at from the + under the field.
       </p>
 
       {workspaces.problem && (
@@ -66,6 +66,13 @@ export function WorkspacesSection({ onSwitched }: { onSwitched?: () => void }) {
                     </button>
                   )}
                 </span>
+              }
+              folders={
+                <WorkspaceFolders
+                  workspace={workspace}
+                  onChange={(change) => workspaces.edit(workspace.id, change)}
+                  disabled={!workspaces.ready}
+                />
               }
             />
           ))}

@@ -124,6 +124,10 @@ class DuplicateWorkspaceError(DomainError):
     """
 
 
+class FolderError(DomainError):
+    """A folder a person chose that no work can be confined to."""
+
+
 class ProtectedWorkspaceError(DomainError):
     """Asked to remove the workspace everything else falls back to.
 

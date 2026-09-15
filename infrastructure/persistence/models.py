@@ -320,6 +320,7 @@ class ConversationRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    folder: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 

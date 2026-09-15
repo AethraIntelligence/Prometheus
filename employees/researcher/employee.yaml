@@ -25,6 +25,7 @@ allowed_tools:
   - browser.extract
   - fs.read
   - fs.write
+  - fs.write_pdf
 
 # What kind of work this employee can be given. Prometheus searches by these, so a
 # capability left out here is work that never arrives - and one claimed without

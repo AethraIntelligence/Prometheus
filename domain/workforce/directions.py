@@ -1,10 +1,11 @@
 """What the person said about *how* to do one request, beside what to do.
 
-Two things, both chosen under the field a request is typed into: whether an
-action that needs approval is asked about, done or refused, and which model the
-work should prefer. Neither is part of the request's text - a sentence ending
-"and don't ask me" is a sentence a model weighs, and §67 is about exactly that -
-so they travel beside it, as values something other than a model reads.
+Three things, all chosen under the field a request is typed into: whether an
+action that needs approval is asked about, done or refused, which model the
+work should prefer, and which folder it works in. None is part of the request's
+text - a sentence ending "and don't ask me" is a sentence a model weighs, and §67
+is about exactly that - so they travel beside it, as values something other than
+a model reads.
 
 **They are carried, not passed.** The approval gate sits below the employee
 runtime and the model router below the container, and threading two arguments
@@ -45,6 +46,11 @@ class Directions:
     approvals: ApprovalChoice = ApprovalChoice.ASK
     #: A catalog entry by name. Empty means the router decides, as it always has.
     model: str = ""
+    #: The directory this request's file tools see, absolute. Empty means the
+    #: workspace's root. Carried for the same reason the other two are: the
+    #: tools resolve their root at the moment of the call, several layers below
+    #: anybody who knows which thread the request was asked in.
+    folder: str = ""
 
 
 NONE = Directions()

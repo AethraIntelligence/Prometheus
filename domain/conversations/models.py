@@ -42,6 +42,12 @@ class Conversation:
     #: a thread picked up after a week belongs at the top, and `created_at`
     #: would bury it under threads nobody has touched since.
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    #: The directory this thread's work reads and writes, absolute. Empty until
+    #: the first request, which gives it one of its own under the workspace's
+    #: root (`application/workspaces/folders.py`); a person can point it
+    #: elsewhere. Kept on the thread rather than chosen per request, because the
+    #: second request in a thread is usually about the first one's files.
+    folder: str = ""
 
     @classmethod
     def create(cls, title: str = "", **extra: Any) -> Conversation:
@@ -68,3 +74,6 @@ class Conversation:
             return self
         short = text if len(text) <= TITLE_LIMIT else text[: TITLE_LIMIT - 1].rstrip() + "…"
         return replace(self, title=short)
+
+    def in_folder(self, folder: str) -> Conversation:
+        return replace(self, folder=folder)

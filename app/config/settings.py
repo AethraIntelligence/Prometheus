@@ -280,8 +280,20 @@ class Settings(BaseSettings):
 
     @property
     def resolved_file_root(self) -> Path:
-        """Where the first workspace's files live, separate from the platform's own."""
-        return self.file_root or (self.data_dir / "workspace")
+        """Where the first workspace's files live, separate from the platform's own.
+
+        `~/Documents/Prometheus` on an installation that keeps its data where
+        the platform does by default: what the work produces is the person's,
+        and a hidden directory beside the database is not where anybody looks
+        for a report. A data directory pointed elsewhere - a test, a second
+        installation - keeps its files beside it, so it never writes into the
+        documents of whoever is running it.
+        """
+        if self.file_root:
+            return self.file_root
+        if self.data_dir == _default_data_dir():
+            return Path.home() / "Documents" / "Prometheus"
+        return self.data_dir / "workspace"
 
     @property
     def workspace_roots_dir(self) -> Path:

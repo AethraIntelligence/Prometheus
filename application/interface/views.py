@@ -457,6 +457,7 @@ def workspace(
         "name": item.name,
         "description": item.description,
         "file_root": file_root or item.file_root or "",
+        "folders": [str(folder) for folder in item.settings.get("folders", [])],
         "is_default": item.is_default,
         "active": active,
         "created_at": item.created_at.isoformat(),
@@ -730,5 +731,9 @@ def schedule(item: Schedule, *, last_status: str | None = None) -> dict[str, Any
 
 
 def directions(item: Any) -> dict[str, str]:
-    """Approvals and a preferred model, as the composer shows them."""
-    return {"approvals": item.approvals.value, "model": item.model}
+    """Approvals, a preferred model and the folder, as the composer shows them."""
+    return {
+        "approvals": item.approvals.value,
+        "model": item.model,
+        "folder": getattr(item, "folder", ""),
+    }
