@@ -1,10 +1,16 @@
-# Prometheus
+<p align="center">
+  <img src="desktop/src-tauri/icons/icon.png" alt="Prometheus" width="128" height="128" />
+</p>
 
-[![CI](https://github.com/ysz7/Prometheus/actions/workflows/ci.yml/badge.svg)](https://github.com/ysz7/Prometheus/actions/workflows/ci.yml)
-![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB)
-![Local-first](https://img.shields.io/badge/runs-on%20your%20machine-2e7d32)
-![Desktop: Tauri + React](https://img.shields.io/badge/desktop-Tauri%20%2B%20React-24C8DB)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+<h1 align="center">Prometheus</h1>
+
+<p align="center">
+  <a href="https://github.com/AethraIntelligence/Prometheus/actions/workflows/ci.yml"><img src="https://github.com/AethraIntelligence/Prometheus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/python-3.12%2B-3776AB" alt="Python 3.12+" />
+  <img src="https://img.shields.io/badge/runs-on%20your%20machine-2e7d32" alt="Local-first" />
+  <img src="https://img.shields.io/badge/desktop-Tauri%20%2B%20React-24C8DB" alt="Desktop: Tauri + React" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
+</p>
 
 **Tell it what you want done. An AI manager plans the work, hands it to a team of
 digital employees, checks the result, and does it all on your own machine.**
@@ -41,7 +47,7 @@ assistant when you ask a question, and works like a team when you ask for work.
 toolchain, and either [Ollama](https://ollama.com) (free, local) or a provider key.
 
 ```bash
-git clone https://github.com/ysz7/Prometheus.git && cd Prometheus
+git clone https://github.com/AethraIntelligence/Prometheus.git && cd Prometheus
 ./start.sh
 ```
 
@@ -311,7 +317,7 @@ the agents answer in is configuration: `PROMETHEUS_RESPONSE_LANGUAGE`.
 ## Contributing and feedback
 
 Found something that does not work, or a request it handled badly? Open an issue at
-[github.com/ysz7/Prometheus/issues](https://github.com/ysz7/Prometheus/issues) with the request you typed and
+[github.com/AethraIntelligence/Prometheus/issues](https://github.com/AethraIntelligence/Prometheus/issues) with the request you typed and
 what came back - that is exactly what a validation scenario is made from.
 
 ## Status

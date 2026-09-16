@@ -6,10 +6,10 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ysz7/Prometheus.git",
+    "url": "https://github.com/AethraIntelligence/Prometheus.git",
     "directory": "desktop"
   },
-  "bugs": "https://github.com/ysz7/Prometheus/issues",
+  "bugs": "https://github.com/AethraIntelligence/Prometheus/issues",
   "description": "The Prometheus desktop interface. A shell around the local runtime, never a second one.",
   "scripts": {
     "dev": "vite",

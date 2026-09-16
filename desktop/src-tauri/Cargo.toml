@@ -2,7 +2,7 @@
 name = "prometheus-desktop"
 version = "0.1.0"
 description = "The Prometheus desktop shell"
-repository = "https://github.com/ysz7/Prometheus"
+repository = "https://github.com/AethraIntelligence/Prometheus"
 license = "MIT"
 authors = ["Denys Zhodik"]
 edition = "2021"

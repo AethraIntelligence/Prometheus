@@ -253,7 +253,7 @@
     <span class="nav-badge">Local-first</span>
     <div class="nav-search"><span>⌕</span><input id="search" placeholder="Search..." oninput="onSearch(this.value)" /></div>
     <span class="nav-version">v0.1.0</span>
-    <a class="nav-gh" href="https://github.com/ysz7/Prometheus" target="_blank" rel="noopener">GitHub ↗</a>
+    <a class="nav-gh" href="https://github.com/AethraIntelligence/Prometheus" target="_blank" rel="noopener">GitHub ↗</a>
     <button class="mob-menu-btn" id="mobBtn" onclick="toggleSidebar()"><span></span><span></span><span></span></button>
   </nav>
 
@@ -366,7 +366,7 @@
   const LABELS = {};
   NAV.forEach(s => s.items.forEach(i => LABELS[i.id] = i.label));
 
-  const REPO = "https://github.com/ysz7/Prometheus";
+  const REPO = "https://github.com/AethraIntelligence/Prometheus";
   function src(path){ return '<a href="'+REPO+'/tree/main/'+path+'" target="_blank" rel="noopener">'+path+'</a>'; }
 
   const TOC = {
@@ -446,7 +446,7 @@
   </tbody></table>
 
   <h2 class="section-title" id="window">Start the window</h2>
-  ${code("bash","",`git clone https://github.com/ysz7/Prometheus.git && cd Prometheus
+  ${code("bash","",`git clone https://github.com/AethraIntelligence/Prometheus.git && cd Prometheus
 ./start.sh`)}
   ${steps([
     ["Python dependencies","One <code>uv sync</code> installs everything — browser automation, PDF, PostgreSQL driver, desktop driver. There are no extras to remember."],
@@ -1646,7 +1646,7 @@ uv run alembic upgrade head`)}
   <div class="prose"><p>SQL is written natively for SQLite; portability is the job of the domain protocols and the dialect module.</p></div>
 
   <h2 class="section-title" id="issues">Reporting a problem</h2>
-  <div class="prose"><p>Found a request it handled badly? Open an issue at <a href="https://github.com/ysz7/Prometheus/issues" target="_blank" rel="noopener">github.com/ysz7/Prometheus/issues</a> with the request you typed and what came back — that is exactly what a validation scenario is made from.</p></div>
+  <div class="prose"><p>Found a request it handled badly? Open an issue at <a href="https://github.com/AethraIntelligence/Prometheus/issues" target="_blank" rel="noopener">github.com/AethraIntelligence/Prometheus/issues</a> with the request you typed and what came back — that is exactly what a validation scenario is made from.</p></div>
   ${callout("tip","Prometheus is MIT-licensed. © 2026 Denys Zhodik.")}
   ${pageNav("Validation",null)}
 `;

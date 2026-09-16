@@ -43,9 +43,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ysz7/Prometheus"
-Repository = "https://github.com/ysz7/Prometheus.git"
-Issues = "https://github.com/ysz7/Prometheus/issues"
+Homepage = "https://github.com/AethraIntelligence/Prometheus"
+Repository = "https://github.com/AethraIntelligence/Prometheus.git"
+Issues = "https://github.com/AethraIntelligence/Prometheus/issues"
 
 [project.scripts]
 prometheus = "app.cli.main:app"
