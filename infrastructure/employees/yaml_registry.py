@@ -30,6 +30,13 @@ from uuid import UUID, uuid5
 import yaml
 
 from domain.capabilities.models import Capability, CapabilityRequirement
+from domain.employees.contract import (
+    UNDECLARED,
+    EvidenceKind,
+    FailureKind,
+    WorkContract,
+    WorkProduct,
+)
 from domain.employees.definition import EmployeeDefinition, Goal, Role
 from domain.employees.limits import ExecutionLimits
 from domain.errors import ConfigurationError, EmployeeNotFoundError
@@ -64,8 +71,12 @@ KNOWN_FIELDS = frozenset(
         "memory_scope",
         "limits",
         "enabled",
+        "contract",
     }
 )
+
+#: Every field a `contract:` may carry. Same reason as above.
+KNOWN_CONTRACT_FIELDS = frozenset({"accepts", "produces", "evidence", "failure_kinds"})
 
 
 def employee_id_for(name: str, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID) -> UUID:
@@ -119,6 +130,48 @@ def _limits(path: Path, raw: object) -> ExecutionLimits:
         if value <= 0:
             raise ConfigurationError(f"{path}: {name} must be greater than 0, not {value}")
     return limits
+
+
+def _contract(path: Path, raw: object) -> WorkContract:
+    """The hand-off terms, or the defaults a declaration without them has always had.
+
+    Missing is not an error: every declaration written before Phase 11 has no
+    contract and must route exactly as it did. A contract that is present is
+    read as strictly as the rest of the file - `produce` instead of `produces`
+    would otherwise be a role that silently delivers only an answer.
+    """
+    if raw is None:
+        return UNDECLARED
+    if not isinstance(raw, dict):
+        raise ConfigurationError(f"{path}: contract must be a mapping")
+    unknown = sorted(set(raw) - KNOWN_CONTRACT_FIELDS)
+    if unknown:
+        raise ConfigurationError(
+            f"{path}: contract has unknown field(s): {', '.join(unknown)}. "
+            f"Known fields: {', '.join(sorted(KNOWN_CONTRACT_FIELDS))}"
+        )
+
+    def terms[T](field: str, vocabulary: type[T], default: frozenset[T]) -> frozenset[T]:
+        if field not in raw:
+            return default
+        values = raw[field]
+        if not isinstance(values, list | tuple):
+            raise ConfigurationError(f"{path}: contract.{field} must be a list")
+        try:
+            return frozenset(vocabulary(str(value).strip().upper()) for value in values)  # type: ignore[call-arg]
+        except ValueError as error:
+            known = ", ".join(item.value for item in vocabulary)  # type: ignore[attr-defined]
+            raise ConfigurationError(
+                f"{path}: contract.{field}: {error}. Known: {known}"
+            ) from error
+
+    return WorkContract(
+        accepts=terms("accepts", WorkProduct, UNDECLARED.accepts),
+        produces=terms("produces", WorkProduct, UNDECLARED.produces),
+        evidence=terms("evidence", EvidenceKind, UNDECLARED.evidence),
+        failure_kinds=terms("failure_kinds", FailureKind, UNDECLARED.failure_kinds),
+        declared=True,
+    )
 
 
 def _system_prompt(path: Path) -> str:
@@ -228,6 +281,7 @@ class YamlEmployeeRegistry:
             memory_scope=memory_scope,
             limits=_limits(path, raw.get("limits") or {}),
             system_prompt=_system_prompt(path),
+            contract=_contract(path, raw.get("contract")),
             workspace_id=self._workspace_id,
             enabled=bool(raw.get("enabled", True)),
         )

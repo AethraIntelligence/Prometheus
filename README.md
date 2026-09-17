@@ -118,7 +118,12 @@ Each employee is a directory under [`employees/`](employees).
 | `writer` | Turns findings into the document that was asked for | files, PDF |
 
 Work is routed by what each employee declares it can do. Nothing in the manager
-names an employee, so adding a sixth is adding a directory.
+names an employee, so adding a sixth is adding a directory. The **Workforce**
+screen shows whether each role is ready on this machine, its hand-off contract,
+permissions, model requirements and recent assignments. Selection reasons and
+rejected alternatives are stored with each assignment; performance figures are
+scoped to a workspace and time window and show their sample size or explain why
+there is not enough data.
 
 ### Leaves its files where you can find them
 
@@ -183,6 +188,13 @@ persistent renewable lease prevents two runtime processes from firing the same
 schedule, and each automatic or manual run keeps its status, cost and schedule
 version in the run history. Overlapping runs are skipped and missed times
 coalesce into one current run rather than creating a catch-up burst.
+
+When the same multi-step structure succeeds at least three times in one
+workspace, Workforce may suggest saving it as a workflow. The suggestion keeps
+the structural steps and source run IDs, not the request text. Saving requires a
+separate confirmation and creates only a manual YAML draft: it does not run,
+schedule itself or grant a role new permissions. Suggestions can be snoozed or
+dismissed.
 
 Tool execution is crash-safe by default: the `(task, provider call id)` intent
 is persisted before an external action. A completed result is replayed after a
@@ -289,6 +301,10 @@ capabilities: [FILE_ACCESS]          # can it?  what the manager routes by
 model_profile:
   capabilities: [TEXT_REASONING, LONG_CONTEXT]
 limits: { max_steps: 8, max_cost_usd: 0.50 }
+contract:
+  accepts: [FINDINGS]
+  produces: [ANSWER, FILE]
+  evidence: [ARTIFACT]
 ```
 
 ---
@@ -310,7 +326,7 @@ employees/  workflows/  prompts/  validation/scenarios/    declarations and cont
 - **One runtime for every employee.** Employees differ only by declaration.
 - **Layering is enforced**, by `import-linter` and by tests that read the source; the
   frontend follows Feature-Sliced Design with its own architecture test.
-- **Decisions are written down.** Twenty-five ADRs in [`docs/adr/`](docs/adr) record
+- **Decisions are written down.** Twenty-eight ADRs in [`docs/adr/`](docs/adr) record
   what was chosen, what was rejected, and the failure that forced the choice.
 
 <details>

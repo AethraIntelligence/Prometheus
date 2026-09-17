@@ -209,6 +209,11 @@ class TaskAssignmentRow(Base):
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Why this employee and who else was considered (migration 041). Empty on
+    #: rows written before decisions were kept.
+    decision: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    #: The manager's verdict on the evidence. Null until judged, and on old rows.
+    acceptance: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class ToolCallRow(Base):
@@ -523,6 +528,36 @@ class MemoryUseRow(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     used_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+
+
+class WorkflowSuggestionRow(Base):
+    """A recurring process noticed in successful plans (`domain/workflows/suggestion.py`).
+
+    Structure only: who did each step, what it needed, what it waited on - and
+    the objectives it was seen in, by id. No request text is stored here.
+    """
+
+    __tablename__ = "workflow_suggestions"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "fingerprint", name="uq_workflow_suggestions_fingerprint"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="OPEN")
+    pattern_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    sources: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    dismissed_sources: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    first_seen: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    last_seen: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    snoozed_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    workflow_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 
 
 class ConversationSessionRow(Base):

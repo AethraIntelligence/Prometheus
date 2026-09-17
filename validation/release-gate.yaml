@@ -1,4 +1,4 @@
-# Five product promises plus one safety invariant. The gate reads the latest
+# Six product promises plus one safety invariant. The gate reads the latest
 # complete window for every scenario and compares it with the preceding window.
 # These are initial targets: strict enough to expose the current reliability
 # gap, then raised after the platform meets them consistently.
@@ -58,6 +58,20 @@ targets:
     max_median_duration_seconds: 360
     max_median_cost_usd: 0.50
     max_interventions_per_run: 1
+    max_cost_per_success_usd: 0.63
+    max_baseline_drop: 0.2
+    max_regression_drop: 0.2
+
+  # Phase 11: the choice of employee and the acceptance of every result are
+  # checks inside the scenario (`employees_involved`, `results_accepted`), so
+  # choice quality is held by the pass-rate floor; interventions stay at the
+  # approvals the request declares and no more.
+  - scenario: delegation-handoff-evidence
+    attempts: 5
+    min_pass_rate: 0.8
+    max_median_duration_seconds: 360
+    max_median_cost_usd: 0.50
+    max_interventions_per_run: 2
     max_cost_per_success_usd: 0.63
     max_baseline_drop: 0.2
     max_regression_drop: 0.2

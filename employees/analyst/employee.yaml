@@ -73,3 +73,10 @@ limits:
   max_steps: 16
   max_cost_usd: 1.00
   max_wall_time_seconds: 300
+
+# The hand-off terms (Phase 11). A computed answer is findings, often a file;
+# an answer with no tool call behind it was estimated, which is what its first
+# goal forbids.
+contract:
+  produces: [FINDINGS, FILE]
+  evidence: [TOOL_RESULT]

@@ -334,3 +334,41 @@ def test_a_scenario_that_says_nothing_is_a_run_nobody_was_there_for(tmp_path: Pa
     """The default is unattended, which is what a machine nobody asked should be."""
     write(tmp_path, "alone", "name: alone\nrequest: do it\n")
     assert YamlScenarioRegistry(tmp_path).get("alone").approve == ()
+
+
+def test_work_routed_to_the_wrong_people_fails_however_good_the_file_is() -> None:
+    """Phase 11: the choice of employee is checked, not just the count of them."""
+    results = check(
+        Expectations(files_exist=("r.md",), employees_involved=("analyst", "writer")),
+        evidence(files_present=("r.md",), employee_names=("analyst", "researcher")),
+    )
+
+    assert [result.passed for result in results] == [True, True, True, False]
+    assert "researcher" in results[-1].detail
+
+
+def test_every_result_accepted_needs_verdicts_and_no_refusal() -> None:
+    wanted = Expectations(results_accepted=True)
+    two_results = Metrics(steps=3, tasks=2)
+
+    assert all(result.passed for result in check(wanted, evidence(judged=2, metrics=two_results)))
+    unjudged = check(wanted, evidence(judged=0, metrics=two_results))[-1]
+    assert not unjudged.passed and unjudged.detail == "only 0 of 2 result(s) were judged"
+    partial = check(wanted, evidence(judged=1, metrics=two_results))[-1]
+    assert not partial.passed and partial.detail == "only 1 of 2 result(s) were judged"
+    refused = check(
+        wanted,
+        evidence(
+            judged=2,
+            metrics=two_results,
+            unaccepted=("Write it (EVIDENCE_MISSING)",),
+        ),
+    )[-1]
+    assert not refused.passed and "EVIDENCE_MISSING" in refused.detail
+
+
+def test_the_phase_11_scenario_declares_who_must_do_the_work() -> None:
+    scenario = YamlScenarioRegistry().get("delegation-handoff-evidence")
+
+    assert scenario.expect.employees_involved == ("analyst", "writer")
+    assert scenario.expect.results_accepted is True

@@ -53,6 +53,9 @@ class ValidationRun:
     #: The models it was measured on (Phase 10). None for a run recorded
     #: before profiles were, which no profile-scoped gate counts.
     profile: RoutingProfile | None = None
+    #: The employees whose tasks the run was made of, by id. Empty for a run
+    #: recorded before Phase 11, which no employee's pass rate counts.
+    employee_ids: tuple[str, ...] = ()
 
     @classmethod
     def create(cls, scenario: str, status: RunStatus, **extra: Any) -> ValidationRun:
@@ -77,6 +80,7 @@ class ValidationRun:
             "checks": [result.to_dict() for result in self.checks],
             "metrics": self.metrics.to_dict(),
             **({"profile": self.profile.to_dict()} if self.profile else {}),
+            **({"employee_ids": list(self.employee_ids)} if self.employee_ids else {}),
         }
 
     @staticmethod
@@ -113,6 +117,7 @@ def outcome_of(
         workspace_id=workspace_id,
         started_at=started_at or datetime.now(UTC),
         finished_at=datetime.now(UTC),
+        employee_ids=evidence.employee_ids,
     )
 
 

@@ -41,6 +41,17 @@ export interface WorkTask {
   employee: string;
   employee_title: string;
   assignment_reason: string;
+  /** Why this employee and who else was considered, off the stored assignment. */
+  decision?: {
+    code: string;
+    reason: string;
+    alternatives: Array<{ employee: string; code: string; reason: string }>;
+    indistinguishable: string[];
+  };
+  /** The manager's verdict on the evidence; null until judged or on old records. */
+  acceptance?: { accepted: boolean; reason: string; refused: boolean; code: string } | null;
+  /** The same classification the workforce record counts. */
+  outcome?: string | null;
   depends_on: string[];
   current_step: number;
   cost_usd: number;

@@ -48,7 +48,7 @@ engine and the same work. `npm run dev` serves this UI at `localhost:1420`
 against a runtime you start yourself.
 
 ```bash
-npm test                 # 32 tests, no runtime needed
+npm test                 # frontend tests, no runtime needed
 npm run build            # type-check and bundle
 npm run tauri build      # a packaged application
 ```
@@ -62,8 +62,8 @@ violation, the same way `import-linter` does for the Python layers.
 ```
 src/
 ├── app/          the application: one provider, one screen
-├── pages/        workspace: the screen, and the only place holding state
-├── widgets/      conversation, workforce - composition, no fetching
+├── pages/        task, Workforce, settings - screens and their state
+├── widgets/      conversation and reusable page composition, no fetching
 ├── features/     send-request, decide-approval, stop-run - one action each
 ├── entities/     conversation, activity, approval, employee - what things are
 └── shared/       api (the ONLY file that knows the transport), lib

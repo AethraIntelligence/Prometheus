@@ -13,6 +13,19 @@ from collections.abc import Iterable
 from domain.tools.telemetry import ToolCallRecord
 
 
+def written_path(output: dict | None) -> str | None:
+    """The file one successful call reports having written, by the same shape rule.
+
+    Also kept on the observation (Phase 11), because a contract that requires
+    an artifact is judged off the task record, and the record keeps summaries
+    of what tools returned rather than the outputs themselves.
+    """
+    written = (output or {}).get("path")
+    if isinstance(written, str) and "bytes_written" in (output or {}):
+        return written
+    return None
+
+
 def produced_files(calls: Iterable[ToolCallRecord]) -> list[str]:
     """Relative paths, in the order they were first written, as they stand now.
 

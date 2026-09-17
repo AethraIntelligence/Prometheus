@@ -971,6 +971,21 @@ class Container:
 
         return SqlAssignmentRepository(self.session_factory)
 
+    @cached_property
+    def workflow_suggestions(self):
+        """Recurring processes noticed in successful plans (migration 041)."""
+        if self._in_memory:
+            from infrastructure.persistence.workflow_suggestion_repository import (
+                InMemorySuggestionRepository,
+            )
+
+            return InMemorySuggestionRepository()
+        from infrastructure.persistence.workflow_suggestion_repository import (
+            SqlSuggestionRepository,
+        )
+
+        return SqlSuggestionRepository(self.session_factory)
+
     # --- The manager's own record ---------------------------------------------
 
     @cached_property

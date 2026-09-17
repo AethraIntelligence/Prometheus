@@ -636,7 +636,13 @@ memory_scope: EMPLOYEE_PRIVATE
 limits:
   max_steps: 12
   max_cost_usd: 0.50
-  max_wall_time_seconds: 600`)}
+  max_wall_time_seconds: 600
+
+contract:               # what can be handed in and what must be handed back
+  accepts: []            # empty means any upstream product
+  produces: [ANSWER, FINDINGS]
+  evidence: [TOOL_RESULT]
+  failure_kinds: [REFUSED, NOT_ACCEPTED, BUDGET, TRANSIENT, EXECUTION, CANCELLED]`)}
   <div class="prose"><p>An employee may also declare <code>integrations: [gmail]</code> — a grant to a whole connected service. See <a onclick="go('integrations')">Plugins &amp; MCP</a>.</p></div>
 
   <h2 class="section-title" id="lists">Two lists, two questions</h2>
@@ -645,6 +651,9 @@ limits:
     <tr><td><code>capabilities</code></td><td><em>Can</em> it? Discovery.</td><td>Left out: work never arrives. Claimed with no tool behind it: work arrives and cannot start.</td></tr>
   </tbody></table>
   ${why("A single list would silently answer one of these two questions wrong. What an employee is trusted with and what work it should be offered are different facts.")}
+
+  <h2 class="section-title" id="readiness">A declaration is not a readiness claim</h2>
+  <div class="prose"><p>The <strong>Workforce</strong> screen combines the file with live facts from this machine: required tools and integrations, policy effects, the sandbox and a suitable model. Core returns <code>READY</code>, <code>DEGRADED</code> or <code>UNAVAILABLE</code>, plus a reason and recovery action. An unavailable role is never delegated work. The same screen shows the role's hand-off contract, why it received recent assignments, distinct outcomes and metrics with their workspace, time window and sample size.</p><p>The contract uses closed vocabularies: products are <code>ANSWER</code>, <code>FINDINGS</code>, <code>FILE</code> and <code>CHANGES</code>; evidence is <code>TOOL_RESULT</code> or <code>ARTIFACT</code>. A declaration without a contract remains compatible, but the screen marks the safe defaults as undeclared.</p></div>
 
   <h2 class="section-title" id="validation">Checked at load</h2>
   <div class="prose"><p>The registry is strict about shape — an unknown field, a temperature outside 0–2, a zero budget, a goal with no text — and names the file. Then the declaration is checked against the tools that exist on this machine. The line between an <strong>error</strong> and a <strong>warning</strong> is who can fix it: a capability nothing backs is wrong everywhere; a tool switched off here may just be a different configuration.</p></div>
@@ -664,7 +673,11 @@ allowed_tools: [fs.read, fs.write]
 capabilities: [FILE_ACCESS]
 model_profile:
   capabilities: [TEXT_REASONING, LONG_CONTEXT]
-limits: { max_steps: 8, max_cost_usd: 0.50 }`)}
+limits: { max_steps: 8, max_cost_usd: 0.50 }
+contract:
+  accepts: [FINDINGS]
+  produces: [ANSWER, FILE]
+  evidence: [ARTIFACT]`)}
   <div class="prose"><p>That is the entire change: no class, no registration, no edit to <code>application/</code> or <code>infrastructure/</code>. The registry discovers it and the manager can route to it on the next request.</p></div>
 
   <h2 class="section-title" id="quiz">Quick check</h2>

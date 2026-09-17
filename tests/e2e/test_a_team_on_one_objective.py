@@ -80,10 +80,27 @@ class TimedExecution(RecordingExecution):
         self.peak = max(self.peak, self._running)
         await asyncio.sleep(0)
         self._running -= 1
+        # What a real run leaves behind: a tool call that reached the world, and
+        # the file it wrote. The shipped roles' contracts are judged on exactly
+        # this, so a fake that reported success with nothing behind it would be
+        # (correctly) not accepted.
+        written = f"notes/{len(self.started)}.md"
         return replace(
             task,
             status=TaskStatus.COMPLETED,
-            result=TaskResult(summary=f"Result of: {task.goal}"),
+            result=TaskResult(
+                summary=f"Result of: {task.goal}",
+                output={
+                    "observations": [
+                        {
+                            "step": 1,
+                            "summary": f"fs.write wrote {written}",
+                            "succeeded": True,
+                            "details": {"tool": "fs.write", "wrote": written},
+                        }
+                    ]
+                },
+            ),
             cost_usd=0.01,
         )
 

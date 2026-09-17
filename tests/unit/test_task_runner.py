@@ -230,3 +230,61 @@ async def test_a_task_runs_under_its_escalation_and_bills_its_own_calls(registry
         for state, billed in seen
     )
     assert escalation.current().level == 0, "the escalation belongs to that run only"
+
+
+# --- Phase 11: what an assignment records ---------------------------------------
+
+
+async def test_a_run_by_name_records_that_a_person_chose_and_the_verdict_on_the_evidence(
+    registry,
+) -> None:
+    from domain.workforce.decision import SelectionCode
+
+    runner, _, assignments, _ = build(registry, [PLAN, reply("An answer."), PASS])
+
+    task = await runner.submit_and_run("Explain WAL mode", "researcher")
+
+    [closed] = await assignments.for_task(task.id)
+    assert closed.decision.code is SelectionCode.CHOSEN_BY_PERSON
+    # No contract, no tools: judgement is real work, and it is accepted.
+    assert closed.acceptance is not None and closed.acceptance.accepted
+
+
+async def test_a_cancelled_task_is_not_recorded_as_the_employees_failure(registry) -> None:
+    from domain.tasks.task import TaskStatus as Status
+
+    runner, tasks, assignments, _ = build(registry, [])
+    task, assignment = await runner.submit("Explain WAL mode", "researcher")
+    cancelled, event = task.transition_to(Status.CANCELLED)
+    await tasks.save(cancelled, event)
+
+    await runner._close(assignment, cancelled)
+
+    [closed] = await assignments.for_task(task.id)
+    assert closed.outcome is AssignmentOutcome.CANCELLED
+    assert closed.acceptance is None, "nothing completed, so nothing was judged"
+
+
+async def test_a_task_that_lost_its_assignment_to_a_crash_gets_exactly_one_on_resume(
+    registry,
+) -> None:
+    from dataclasses import replace as replaced
+
+    from domain.tasks.task import Task
+    from domain.workforce.decision import SelectionCode
+
+    runner, tasks, assignments, _ = build(
+        registry, [PLAN, reply("An answer."), PASS]
+    )
+    # Written with its employee, and the process stopped before the assignment was.
+    orphan = replaced(
+        Task.create("Explain WAL mode"), assigned_employee_id=registry.get("researcher").id
+    )
+    await tasks.save(orphan)
+
+    finished = await runner.resume(orphan)
+
+    assert finished.status is TaskStatus.COMPLETED
+    [recovered] = await assignments.for_task(orphan.id)
+    assert recovered.decision.code is SelectionCode.UNRECORDED
+    assert recovered.outcome is AssignmentOutcome.COMPLETED

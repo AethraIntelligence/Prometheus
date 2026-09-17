@@ -68,3 +68,31 @@ export interface WorkflowDryRun {
     max_attempts: number;
   }>;
 }
+
+/** A recurring process the runtime noticed, offered as a draft. Structure only. */
+export interface WorkflowSuggestion {
+  id: string;
+  status: string;
+  occurrences: number;
+  first_seen: string;
+  last_seen: string;
+  /** The objectives it was seen in, by id. */
+  sources: string[];
+  proposed_name: string;
+  description: string;
+  inputs: Array<{ name: string; kind: string; required: boolean }>;
+  steps: Array<{
+    name: string;
+    employee: string;
+    needs: string[];
+    depends_on: string[];
+    instruction: string;
+    effects: string[];
+    readiness: string;
+  }>;
+}
+
+export interface WorkflowSuggestionList {
+  available: boolean;
+  suggestions: WorkflowSuggestion[];
+}

@@ -44,3 +44,10 @@ limits:
   max_steps: 40
   max_cost_usd: 1.00
   max_wall_time_seconds: 900
+
+# The hand-off terms (Phase 11). Its product is a folder in a different shape,
+# and a report of having sorted one with no tool call behind it is the failure
+# the first validation run found.
+contract:
+  produces: [CHANGES, FILE]
+  evidence: [TOOL_RESULT]

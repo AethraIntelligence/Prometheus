@@ -204,3 +204,84 @@ def test_model_contract_migration_marks_served_entries_local(tmp_path: Path) -> 
             connection.execute(text("SELECT name, privacy FROM model_entries")).all()
         )
     assert rows == {"here": "LOCAL", "there": "REMOTE"}
+
+
+def test_workforce_migration_keeps_old_assignments_unrecorded_and_downgrades(
+    tmp_path: Path,
+) -> None:
+    from alembic import command
+
+    database = tmp_path / "legacy-assignments.db"
+    config = _alembic_config(f"sqlite+aiosqlite:///{database}")
+    command.upgrade(config, "040")
+    engine = create_engine(f"sqlite:///{database}")
+    employee, task, assignment = (
+        "00000000-0000-0000-0000-0000000000e1",
+        "00000000-0000-0000-0000-0000000000a1",
+        "00000000-0000-0000-0000-0000000000b1",
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO employees (id, workspace_id, name, role, role_description, goals, "
+                "policies, allowed_tools, model_profile, memory_scope, enabled, "
+                "definition_hash, created_at) VALUES (:id, 'default', 'writer', 'Writer', '', "
+                "'[]', '[]', '[]', '{}', 'EMPLOYEE_PRIVATE', 1, 'h', '2026-09-01')"
+            ),
+            {"id": employee},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO tasks (id, workspace_id, created_by, goal, status, priority, "
+                "assignment_reason, state, attempts, cost_usd, created_at, updated_at, "
+                "assigned_employee_id) VALUES (:id, 'default', 'user', 'Write', 'COMPLETED', "
+                "5, '', '{}', 0, 0.0, '2026-09-01', '2026-09-01', :employee)"
+            ),
+            {"id": task, "employee": employee},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO task_assignments (id, workspace_id, task_id, employee_id, "
+                "assigned_by, context, assigned_at, outcome) VALUES (:id, 'default', :task, "
+                ":employee, 'PROMETHEUS', '{}', '2026-09-01', 'COMPLETED')"
+            ),
+            {"id": assignment, "task": task, "employee": employee},
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        decision, acceptance = connection.execute(
+            text("SELECT decision, acceptance FROM task_assignments")
+        ).one()
+        assert "workflow_suggestions" in inspect(connection).get_table_names()
+    assert decision == "{}"
+    assert acceptance is None
+
+    import asyncio
+
+    from infrastructure.persistence.assignment_repository import SqlAssignmentRepository
+    from infrastructure.persistence.session import create_engine as create_async_engine
+    from infrastructure.persistence.session import create_session_factory
+
+    async def read():
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+        try:
+            from uuid import UUID
+
+            return await SqlAssignmentRepository(create_session_factory(async_engine)).for_task(
+                UUID(task)
+            )
+        finally:
+            await async_engine.dispose()
+
+    [loaded] = asyncio.run(read())
+    assert loaded.decision is None and loaded.acceptance is None
+
+    command.downgrade(config, "040")
+
+    with engine.connect() as connection:
+        columns = {column["name"] for column in inspect(connection).get_columns("task_assignments")}
+        assert "decision" not in columns
+        assert "workflow_suggestions" not in inspect(connection).get_table_names()
+        assert connection.execute(text("SELECT COUNT(*) FROM task_assignments")).scalar() == 1

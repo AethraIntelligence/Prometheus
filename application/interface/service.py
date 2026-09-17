@@ -46,6 +46,8 @@ from application.knowledge.service import KnowledgeService
 from application.memory.revision import MemoryReviser
 from application.providers.service import ProviderService
 from application.workflows.engine import WorkflowEngine
+from application.workflows.suggestions import WorkflowSuggestions
+from application.workforce.profiles import WorkforceProfiles
 from application.workspaces import folders
 from application.workspaces.service import WorkspaceService
 from domain.approvals.models import (
@@ -115,7 +117,11 @@ from domain.workflows.protocols import WorkflowRegistry
 from domain.workflows.run import WorkflowRunRepository
 from domain.workforce.directions import ApprovalChoice, Directions
 from domain.workforce.protocols import Objective, ObjectiveStatus
-from domain.workforce.repository import ObjectiveRepository, PlanRepository
+from domain.workforce.repository import (
+    AssignmentRepository,
+    ObjectiveRepository,
+    PlanRepository,
+)
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 log = structlog.get_logger(__name__)
@@ -245,6 +251,15 @@ class ServiceDependencies:
     #: the one lie this screen must not tell.
     scheduler_running: bool = False
     history_limit: int = DEFAULT_LIMIT
+    #: Who was assigned what, and why. None where a surface was built without
+    #: it; a task then shows its one-line reason and no alternatives.
+    assignments: AssignmentRepository | None = None
+    #: Profiles, readiness and records of the workforce (Phase 11). None where
+    #: a surface was built without them - the screen then says so.
+    workforce: WorkforceProfiles | None = None
+    #: Recurring processes offered as workflow drafts. None where workflows
+    #: are off; the screen then says suggestions are unavailable.
+    workflow_suggestions: WorkflowSuggestions | None = None
 
 
 class PrometheusService:
@@ -1039,9 +1054,15 @@ class PrometheusService:
                 if hasattr(self._d.llm_calls, "list_for_task")
                 else []
             )
+            made = (
+                await self._d.assignments.for_task(task.id)
+                if self._d.assignments is not None
+                else []
+            )
             task_views.append(
                 views.work_task(
                     task,
+                    assignment=made[0] if made else None,
                     employee=employees.get(task.assigned_employee_id),
                     calls=await self._d.tool_calls.list_for_task(task.id),
                     model_calls=model_calls,
@@ -2406,6 +2427,88 @@ class PrometheusService:
         directory, and one added while the interface is open should appear in it.
         """
         return [views.employee(d) for d in self._d.employees.list()]
+
+    async def workforce(self) -> dict[str, Any]:
+        """Every role here, with the core's verdict on whether it can work now.
+
+        Unavailable is an answer, not a missing one: a surface built without
+        profiles says `available: false` rather than listing nobody, which would
+        read as a workforce of zero.
+        """
+        if self._d.workforce is None:
+            return {"available": False, "employees": [], "overlaps": []}
+        workspace = await self._here()
+        return {
+            "available": True,
+            "employees": [
+                views.employee_card(profile) for profile in self._d.workforce.profiles(workspace)
+            ],
+            "overlaps": [list(group) for group in self._d.workforce.overlaps(workspace)],
+        }
+
+    async def employee_profile(
+        self, name: str, *, window_days: int = 30
+    ) -> dict[str, Any] | None:
+        if self._d.workforce is None:
+            raise ConfigurationError("This interface was built without workforce profiles.")
+        if not 1 <= window_days <= 365:
+            raise PrometheusError("The window is between 1 and 365 days.")
+        record = await self._d.workforce.record(
+            name, await self._here(), window=timedelta(days=window_days)
+        )
+        return views.employee_profile(record) if record is not None else None
+
+    async def list_workflow_suggestions(self) -> dict[str, Any]:
+        if self._d.workflow_suggestions is None:
+            return {"available": False, "suggestions": []}
+        workspace = await self._here()
+        shown = await self._d.workflow_suggestions.refresh(workspace)
+        effects: dict[str, list[str]] = {}
+        ready: dict[str, str] = {}
+        if self._d.workforce is not None:
+            for profile in self._d.workforce.profiles(workspace):
+                effects[profile.name] = sorted(
+                    {tool.effect.value for tool in profile.tools if tool.effect is not None}
+                )
+                ready[profile.name] = profile.readiness.state.value
+        return {
+            "available": True,
+            "suggestions": [
+                views.workflow_suggestion(item, effects=effects, ready=ready) for item in shown
+            ],
+        }
+
+    def _suggestions(self) -> WorkflowSuggestions:
+        if self._d.workflow_suggestions is None:
+            raise ConfigurationError("This interface was built without workflow suggestions.")
+        return self._d.workflow_suggestions
+
+    async def dismiss_workflow_suggestion(self, suggestion_id: UUID) -> dict[str, Any]:
+        item = await self._suggestions().dismiss(suggestion_id, await self._here())
+        return {"id": str(item.id), "status": item.status.value}
+
+    async def snooze_workflow_suggestion(self, suggestion_id: UUID, days: int) -> dict[str, Any]:
+        item = await self._suggestions().snooze(suggestion_id, await self._here(), days=days)
+        return {
+            "id": str(item.id),
+            "status": item.status.value,
+            "snoozed_until": item.snoozed_until.isoformat() if item.snoozed_until else None,
+        }
+
+    async def save_workflow_suggestion(
+        self, suggestion_id: UUID, *, name: str, description: str = ""
+    ) -> dict[str, Any]:
+        item, where = await self._suggestions().save(
+            suggestion_id, await self._here(), name=name, description=description
+        )
+        return {
+            "id": str(item.id),
+            "status": item.status.value,
+            "workflow": item.workflow_name,
+            # The file name only: the directory is this machine's, and nothing
+            # an interface does with it needs the rest of the path.
+            "file": Path(where).name,
+        }
 
     def list_tools(self) -> list[dict[str, Any]]:
         """Everything this machine can do, and which employees may ask for it.

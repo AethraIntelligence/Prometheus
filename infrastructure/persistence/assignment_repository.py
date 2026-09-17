@@ -15,7 +15,9 @@ from domain.employees.definition import EmployeeId
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.policies.models import ActorKind
 from domain.tasks.task import TaskResult
+from domain.workforce.acceptance import Acceptance
 from domain.workforce.assignment import AssignmentOutcome, SharedContext, TaskAssignment
+from domain.workforce.decision import Decision
 from domain.workspace.models import WorkspaceId
 from infrastructure.persistence.dialect import upsert
 from infrastructure.persistence.models import TaskAssignmentRow
@@ -55,6 +57,8 @@ def _to_values(assignment: TaskAssignment) -> dict:
             if assignment.result
             else None
         ),
+        "decision": assignment.decision.to_dict() if assignment.decision else {},
+        "acceptance": assignment.acceptance.to_dict() if assignment.acceptance else None,
     }
 
 
@@ -87,6 +91,11 @@ def _to_assignment(row: TaskAssignmentRow) -> TaskAssignment:
             if result
             else None
         ),
+        # Both read leniently: an old row has neither, and a row written by a
+        # newer build in a format this one does not know is unrecorded here
+        # rather than misread.
+        decision=Decision.from_dict(row.decision),
+        acceptance=Acceptance.from_dict(row.acceptance),
     )
 
 
@@ -132,13 +141,26 @@ class SqlAssignmentRepository:
             )
             return [_to_assignment(row) for row in rows]
 
-    async def for_employee(self, employee_id: EmployeeId) -> list[TaskAssignment]:
+    async def for_employee(
+        self,
+        employee_id: EmployeeId,
+        *,
+        workspace_id: WorkspaceId | None = None,
+        since: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[TaskAssignment]:
+        statement = select(TaskAssignmentRow).where(
+            TaskAssignmentRow.employee_id == str(employee_id)
+        )
+        if since is not None:
+            statement = statement.where(TaskAssignmentRow.assigned_at >= since)
+        if workspace_id is not None:
+            statement = statement.where(TaskAssignmentRow.workspace_id == str(workspace_id))
+        statement = statement.order_by(TaskAssignmentRow.assigned_at.desc())
+        if limit is not None:
+            statement = statement.limit(limit)
         async with self._session() as session:
-            rows = await session.scalars(
-                select(TaskAssignmentRow)
-                .where(TaskAssignmentRow.employee_id == str(employee_id))
-                .order_by(TaskAssignmentRow.assigned_at.desc())
-            )
+            rows = await session.scalars(statement)
             return [_to_assignment(row) for row in rows]
 
 
@@ -161,9 +183,23 @@ class InMemoryAssignmentRepository:
             reverse=True,
         )
 
-    async def for_employee(self, employee_id: EmployeeId) -> list[TaskAssignment]:
-        return sorted(
-            (a for a in self._assignments.values() if a.employee_id == employee_id),
+    async def for_employee(
+        self,
+        employee_id: EmployeeId,
+        *,
+        workspace_id: WorkspaceId | None = None,
+        since: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[TaskAssignment]:
+        found = sorted(
+            (
+                a
+                for a in self._assignments.values()
+                if a.employee_id == employee_id
+                and (workspace_id is None or a.workspace_id == workspace_id)
+                and (since is None or a.assigned_at >= since)
+            ),
             key=lambda a: a.assigned_at,
             reverse=True,
         )
+        return found[:limit] if limit is not None else found

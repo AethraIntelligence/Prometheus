@@ -71,6 +71,7 @@ from application.interface.contracts import (
 from application.interface.service import ApprovalsDisabledError, PrometheusService
 from application.scheduling.scheduler import Scheduler
 from domain.errors import (
+    ConfigurationError,
     DuplicateIntegrationError,
     DuplicateWorkspaceError,
     FolderError,
@@ -376,6 +377,15 @@ class Cancellation(BaseModel):
     reason: str = ""
 
 
+class Snooze(BaseModel):
+    days: int = Field(ge=1, le=90)
+
+
+class SaveSuggestion(BaseModel):
+    name: str = Field(min_length=2, max_length=63, pattern=r"^[a-z0-9][a-z0-9-]+$")
+    description: str = Field(default="", max_length=500)
+
+
 class Handoff(BaseModel):
     employee: str = Field(min_length=1, max_length=120)
 
@@ -520,6 +530,47 @@ def _routes(app: FastAPI) -> None:
     @app.get("/api/employees")
     async def employees(request: Request) -> dict[str, Any]:
         return {"employees": _service(request).list_employees()}
+
+    @app.get("/api/workforce")
+    async def workforce(request: Request) -> dict[str, Any]:
+        """Every role with the core's readiness verdict. Nothing here is decided by a window."""
+        return await _workforce(_service(request).workforce())
+
+    @app.get("/api/workforce/{name}")
+    async def employee_profile(
+        request: Request, name: str, window_days: int = 30
+    ) -> dict[str, Any]:
+        found = await _workforce(
+            _service(request).employee_profile(name, window_days=window_days)
+        )
+        return _found(found, f"Unknown employee: {name}")
+
+    @app.get("/api/workflow-suggestions")
+    async def workflow_suggestions(request: Request) -> dict[str, Any]:
+        return await _workforce(_service(request).list_workflow_suggestions())
+
+    @app.post("/api/workflow-suggestions/{suggestion_id}/dismiss")
+    async def dismiss_workflow_suggestion(request: Request, suggestion_id: UUID) -> dict[str, Any]:
+        return await _workforce(_service(request).dismiss_workflow_suggestion(suggestion_id))
+
+    @app.post("/api/workflow-suggestions/{suggestion_id}/snooze")
+    async def snooze_workflow_suggestion(
+        request: Request, suggestion_id: UUID, body: Snooze
+    ) -> dict[str, Any]:
+        return await _workforce(
+            _service(request).snooze_workflow_suggestion(suggestion_id, body.days)
+        )
+
+    @app.post("/api/workflow-suggestions/{suggestion_id}/save", status_code=201)
+    async def save_workflow_suggestion(
+        request: Request, suggestion_id: UUID, body: SaveSuggestion
+    ) -> dict[str, Any]:
+        """The person's separate confirmation. Writes a manual workflow and nothing else."""
+        return await _workforce(
+            _service(request).save_workflow_suggestion(
+                suggestion_id, name=body.name, description=body.description
+            )
+        )
 
     @app.get("/api/tools")
     async def tools(request: Request) -> dict[str, Any]:
@@ -1278,6 +1329,23 @@ async def _ask(
                 )
             )
         )
+    except PrometheusError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+async def _workforce(awaitable):
+    """A workforce or suggestion operation, with its refusals turned into answers.
+
+    Built without the feature is a 409 like every other capability a machine is
+    configured without; an unknown suggestion is a 404; a name already taken or
+    a suggestion no longer open is a 400 with the reason said.
+    """
+    try:
+        return await _guarded(awaitable)
+    except NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ConfigurationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except PrometheusError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

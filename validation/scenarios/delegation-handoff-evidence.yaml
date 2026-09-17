@@ -1,0 +1,56 @@
+# Phase 11's Definition of Done as a request somebody would make: work that has
+# to go to the right person, be handed on, and be accepted on what the record
+# shows rather than on what the reports say.
+#
+# Three things are measured that no check on the file alone can see.
+#
+# * **Who was chosen.** The document has to come from the role declared for
+#   writing documents, and the finding from a role that can compute - the
+#   Phase 18 failure was the analyst writing the document it had just analysed.
+#   `employees_involved` fails a run that routed the work anywhere else, however
+#   good the file is.
+# * **The hand-off.** The writer starts from what the analyst delivered. The
+#   writer's contract accepts FINDINGS or FILE only, so a plan that put it after
+#   work that delivered neither is refused before it starts.
+# * **The evidence.** `results_accepted` requires every task's stored verdict to
+#   be "accepted": a run whose objective verifier was generous about a step
+#   whose record showed nothing does not pass.
+#
+# The release gate holds this at no interventions beyond the one write the
+# person approves up front, and at the same pass-rate floor as the team scenario.
+
+name: delegation-handoff-evidence
+description: >
+  A computed figure handed from one role to another and written up, with the
+  choice of each employee, the hand-off and every result's evidence checked.
+phase: 11
+tags: [manager, workforce, handoff, evidence]
+requires: [CODE_EXECUTION]
+
+request: >
+  "data/orders.csv" has one row per order with quantity and unit_price. Work out
+  the total revenue by running code, then have it written up for me as
+  "reports/revenue.md": a short Markdown note stating the total with two decimal
+  places and one sentence on how it was computed. Do not change the CSV.
+
+reset: [reports]
+
+approve: [code.run, fs.write]
+
+setup:
+  data/orders.csv: |
+    order,quantity,unit_price
+    1001,3,19.90
+    1002,1,249.00
+    1003,12,4.25
+    1004,2,89.50
+
+expect:
+  files_exist: [reports/revenue.md]
+  file_contains:
+    reports/revenue.md: "538.70"
+  employees_involved: [analyst, writer]
+  min_employees: 2
+  results_accepted: true
+  tools_forbidden: [fs.move]
+  max_steps: 60

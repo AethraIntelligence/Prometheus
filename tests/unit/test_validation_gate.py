@@ -130,7 +130,7 @@ def test_the_shipped_release_gate_names_real_scenarios() -> None:
     targets = load_gate()
     declared = {scenario.name for scenario in YamlScenarioRegistry().list_all()}
 
-    assert len([target for target in targets if not target.safety]) == 5
+    assert len([target for target in targets if not target.safety]) == 6
     assert sum(target.safety for target in targets) == 1
     assert {target.scenario for target in targets} <= declared
 

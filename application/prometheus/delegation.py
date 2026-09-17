@@ -36,10 +36,20 @@ deliberately *narrow* - `SharedContext.granted_tools` records what the manager
 meant to allow - and the runtime intersects that with the declaration, so the
 narrowing is real and the widening is impossible. `effective_tools` in
 `domain/policies` is exactly that intersection, and this is its caller.
+
+**Nobody unavailable is offered, and the decision is kept** (Phase 11). Before
+anybody is narrowed by what the task needs, the field loses whoever cannot work
+here right now - an integration not connected, no model able to run them, a
+capability whose tool this machine lacks - and, for a task that depends on
+earlier work, whoever cannot start from what that work actually delivered. Each
+one passed over is recorded with a code, on the assignment, next to the reason
+the chosen one was chosen. A hand-off nobody can take is not forced onto the
+least bad candidate: the task is not started, and the plan hears why.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 import structlog
@@ -57,6 +67,9 @@ from domain.policies.models import Actor, ActorKind, SimpleActor, effective_tool
 from domain.secrets.models import is_sensitive
 from domain.tasks.task import Task
 from domain.workforce.assignment import SharedContext, TaskAssignment
+from domain.workforce.decision import Alternative, Decision, RejectionCode, SelectionCode
+from domain.workforce.handoff import Delivery, compatible, explain
+from domain.workforce.readiness import WorkforceReadiness
 from domain.workforce.routing import MIN_DELEGATION_QUALITY, Requirement, holders
 
 log = structlog.get_logger(__name__)
@@ -78,6 +91,19 @@ def manager_actor(workforce: list[EmployeeDefinition]) -> Actor:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Delegation:
+    """Who takes the task - or nobody - what they are told, and the recorded decision."""
+
+    chosen: EmployeeDefinition | None
+    context: SharedContext
+    decision: Decision
+
+    @property
+    def reason(self) -> str:
+        return self.decision.reason
+
+
 class CapabilityDelegator:
     """Implements `domain.workforce.protocols.Delegator`."""
 
@@ -87,10 +113,19 @@ class CapabilityDelegator:
         registry: EmployeeRegistry,
         *,
         requirement: Requirement | None = None,
+        readiness: WorkforceReadiness | None = None,
     ) -> None:
         self._llm = llm
         self._registry = registry
         self._requirement = requirement
+        # None where nothing can tell - a test's workforce, a surface built
+        # without tools. Everybody is then taken as able, which is how
+        # delegation behaved before readiness existed.
+        self._readiness = readiness
+
+    def definition(self, name: str, workspace_id) -> EmployeeDefinition | None:
+        """A declared employee by name, without deciding anything."""
+        return next((d for d in self._registry.list(workspace_id) if d.name == name), None)
 
     async def choose(
         self,
@@ -107,21 +142,114 @@ class CapabilityDelegator:
         them leaves nobody, the task goes back to the best of a bad field rather
         than failing for want of a second option.
         """
-        candidates = self._candidates(task, requirement)
-        if not candidates:
+        delegation = await self.decide(
+            task, context=context, avoid=avoid, requirement=requirement
+        )
+        if delegation.chosen is None:
+            raise DelegationError(delegation.reason)
+        return delegation.chosen, delegation.context, delegation.reason
+
+    async def decide(
+        self,
+        task: Task,
+        *,
+        context: SharedContext | None = None,
+        avoid: set[str] | None = None,
+        requirement: Requirement | None = None,
+        upstream: tuple[Delivery, ...] = (),
+    ) -> Delegation:
+        """The whole decision, including who was passed over and why.
+
+        Raises `DelegationError` only when nobody is declared, or nobody
+        declared can work here at all - facts about the workforce. A hand-off
+        nobody can take is a fact about this plan, and comes back as a
+        delegation with nobody chosen.
+        """
+        everyone = self._registry.list(task.workspace_id)
+        if not everyone:
             raise DelegationError(
                 "No declared employee can take this task. Add one under employees/."
             )
+        wanted = requirement or self._requirement
+        rejected: dict[str, Alternative] = {}
+
+        able = self._able(everyone, wanted, rejected)
+        if not able:
+            raise DelegationError(
+                "No declared employee can work here right now: "
+                + "; ".join(f"{item.employee} - {item.reason}" for item in rejected.values())
+            )
+
+        narrowed = self._candidates(task, wanted, able, rejected)
+        candidates = [d for d in narrowed if compatible(d.contract, upstream)]
+        if upstream and not candidates:
+            # The narrowing was a hint about the work; the hand-off is a fact
+            # about what exists to work from. Widen before giving up.
+            candidates = [d for d in able if compatible(d.contract, upstream)]
+        for definition in able:
+            if upstream and not compatible(definition.contract, upstream):
+                rejected[definition.name] = Alternative(
+                    definition.name,
+                    RejectionCode.HANDOFF_INCOMPATIBLE,
+                    explain(definition.contract, upstream),
+                )
+            elif definition not in candidates:
+                rejected.setdefault(
+                    definition.name,
+                    Alternative(definition.name, RejectionCode.LACKS_CAPABILITY, ""),
+                )
+            else:
+                rejected.pop(definition.name, None)
+        if not candidates:
+            decision = Decision(
+                code=SelectionCode.NO_COMPATIBLE_EMPLOYEE,
+                reason=(
+                    "Nobody can start from what the earlier work delivered: "
+                    + "; ".join(item.reason for item in rejected.values() if item.reason)
+                ),
+                alternatives=tuple(rejected.values()),
+            )
+            log.info("prometheus.handoff_refused", task_id=str(task.id), reason=decision.reason)
+            return Delegation(chosen=None, context=context or SharedContext(), decision=decision)
+
         remaining = [d for d in candidates if d.name not in (avoid or set())]
         if remaining:
+            for definition in candidates:
+                if definition not in remaining:
+                    rejected[definition.name] = Alternative(
+                        definition.name,
+                        RejectionCode.AVOIDED_AFTER_FAILURE,
+                        "an earlier attempt showed it could not reach what this task needs",
+                    )
             candidates = remaining
 
+        indistinguishable: tuple[str, ...] = ()
         if len(candidates) == 1:
             chosen = candidates[0]
-            reason = _why_only(requirement)
+            reason = _why_only(wanted)
+            code = (
+                SelectionCode.ONLY_QUALIFIED
+                if rejected or (wanted is not None and wanted.narrows)
+                else SelectionCode.ONLY_EMPLOYEE
+            )
             extra = SharedContext()
         else:
-            chosen, reason, extra = await self._ask(task, candidates)
+            chosen, reason, extra, fell_back = await self._ask(task, candidates)
+            twins = tuple(sorted(d.name for d in candidates if _signature(d) == _signature(chosen)))
+            code = SelectionCode.FALLBACK if fell_back else SelectionCode.MODEL_CHOSE
+            if len(twins) > 1:
+                indistinguishable = twins
+                if not fell_back:
+                    code = SelectionCode.MODEL_CHOSE_AMONG_EQUALS
+            for definition in candidates:
+                if definition is not chosen:
+                    rejected[definition.name] = Alternative(
+                        definition.name,
+                        RejectionCode.NOT_CHOSEN,
+                        "declared the same work with nothing to tell them apart"
+                        if definition.name in indistinguishable
+                        else "qualified, and ranked below the chosen employee",
+                    )
 
         passed = _merge(context, extra)
         granted = effective_tools(manager_actor(candidates), chosen)
@@ -133,15 +261,24 @@ class CapabilityDelegator:
             # to allow is then answerable from the row, not from a log line.
             data={**passed.data, "granted_tools": sorted(granted)},
         )
+        rejected.pop(chosen.name, None)
+        decision = Decision(
+            code=code,
+            reason=reason,
+            alternatives=tuple(sorted(rejected.values(), key=lambda item: item.employee)),
+            indistinguishable=indistinguishable,
+        )
         log.info(
             "prometheus.delegated",
             task_id=str(task.id),
             employee=chosen.name,
             reason=reason,
+            code=code.value,
             candidates=[d.name for d in candidates],
+            passed_over={item.employee: item.code.value for item in decision.alternatives},
             granted_tools=sorted(granted),
         )
-        return chosen, passed, reason
+        return Delegation(chosen=chosen, context=passed, decision=decision)
 
     @staticmethod
     def routing() -> tuple[TaskKind, CapabilityRequirement, RoutingHints]:
@@ -160,14 +297,17 @@ class CapabilityDelegator:
 
     async def delegate(self, task: Task) -> TaskAssignment:
         """The `Delegator` contract: an assignment, not yet persisted."""
-        chosen, context, _ = await self.choose(task)
+        delegation = await self.decide(task)
+        if delegation.chosen is None:
+            raise DelegationError(delegation.reason)
         return TaskAssignment.create(
             task_id=task.id,
-            employee_id=chosen.id,
+            employee_id=delegation.chosen.id,
             assigned_by=ActorKind.PROMETHEUS,
             assigned_by_id="prometheus",
-            context=context,
+            context=delegation.context,
             workspace_id=task.workspace_id,
+            decision=delegation.decision,
         )
 
     def employee_name(self, employee_id: UUID | None, workspace_id) -> str:
@@ -179,8 +319,47 @@ class CapabilityDelegator:
 
     # --- Internals ------------------------------------------------------------
 
+    def _able(
+        self,
+        everyone: list[EmployeeDefinition],
+        wanted: Requirement | None,
+        rejected: dict[str, Alternative],
+    ) -> list[EmployeeDefinition]:
+        """Everybody who can work here now - and, for this task, still can do what it needs."""
+        if self._readiness is None:
+            return list(everyone)
+        able: list[EmployeeDefinition] = []
+        needed = wanted.capabilities.required if wanted is not None else frozenset()
+        for definition in everyone:
+            try:
+                readiness = self._readiness.readiness(definition)
+            except Exception as error:  # an unanswerable check must not stop the work
+                log.warning(
+                    "prometheus.readiness_unknown", employee=definition.name, error=str(error)
+                )
+                able.append(definition)
+                continue
+            if not readiness.assignable:
+                rejected[definition.name] = Alternative(
+                    definition.name, RejectionCode.UNAVAILABLE, readiness.explain()
+                )
+            elif needed & readiness.lost_capabilities:
+                lost = ", ".join(sorted(c.value for c in needed & readiness.lost_capabilities))
+                rejected[definition.name] = Alternative(
+                    definition.name,
+                    RejectionCode.CAPABILITY_LOST_HERE,
+                    f"declares {lost}, which nothing it may use provides on this machine",
+                )
+            else:
+                able.append(definition)
+        return able
+
     def _candidates(
-        self, task: Task, requirement: Requirement | None
+        self,
+        task: Task,
+        wanted: Requirement | None,
+        everyone: list[EmployeeDefinition],
+        rejected: dict[str, Alternative],
     ) -> list[EmployeeDefinition]:
         """Who could take this, narrowed by what it needs where that is known.
 
@@ -189,20 +368,41 @@ class CapabilityDelegator:
         than a missing employee - and is answered by widening back to the
         previous field rather than by failing the task.
         """
-        wanted = requirement or self._requirement
-        everyone = self._registry.list(task.workspace_id)
         if wanted is None or not wanted.narrows:
             return everyone
 
         found = everyone
         if wanted.capabilities.required:
-            found = self._registry.find_by_capability(wanted.capabilities) or self._said(
-                task, sorted(c.value for c in wanted.capabilities.required), everyone
-            )
+            names = {d.name for d in self._registry.find_by_capability(wanted.capabilities)}
+            declaring = [d for d in everyone if d.name in names]
+            needed = ", ".join(sorted(c.value for c in wanted.capabilities.required))
+            if declaring:
+                for definition in everyone:
+                    if definition not in declaring:
+                        rejected[definition.name] = Alternative(
+                            definition.name,
+                            RejectionCode.LACKS_CAPABILITY,
+                            f"does not declare {needed}",
+                        )
+                found = declaring
+            else:
+                found = self._said(
+                    task, sorted(c.value for c in wanted.capabilities.required), everyone
+                )
         if wanted.services:
-            found = holders(found, wanted.services) or self._said(
-                task, sorted(wanted.services), found
-            )
+            holding = holders(found, wanted.services)
+            if holding:
+                services = ", ".join(sorted(wanted.services))
+                for definition in found:
+                    if definition not in holding:
+                        rejected[definition.name] = Alternative(
+                            definition.name,
+                            RejectionCode.LACKS_SERVICE,
+                            f"does not hold {services}",
+                        )
+                found = holding
+            else:
+                found = self._said(task, sorted(wanted.services), found)
         return found
 
     @staticmethod
@@ -214,7 +414,7 @@ class CapabilityDelegator:
 
     async def _ask(
         self, task: Task, candidates: list[EmployeeDefinition]
-    ) -> tuple[EmployeeDefinition, str, SharedContext]:
+    ) -> tuple[EmployeeDefinition, str, SharedContext, bool]:
         prompt = render("prometheus_delegation", goal=task.goal, candidates=describe(candidates))
         response = await self._llm.generate(
             LLMRequest(
@@ -237,17 +437,21 @@ class CapabilityDelegator:
                 offered=str(parsed.get("employee", ""))[:64],
                 employee=chosen.name,
             )
-            return chosen, "the model did not name a declared employee; chosen by tools", (
-                SharedContext()
+            return (
+                chosen,
+                "the model did not name a declared employee; chosen by tools",
+                SharedContext(),
+                True,
             )
 
         return (
             chosen,
-            str(parsed.get("reason", "")).strip() or "chosen by the manager",
+            _reason(parsed.get("reason")),
             SharedContext(
                 facts=_lines(parsed.get("facts")),
                 constraints=_lines(parsed.get("constraints")),
             ),
+            False,
         )
 
 
@@ -256,6 +460,16 @@ def _why_only(requirement: Requirement | None) -> str:
     if requirement is not None and requirement.narrows:
         return "the only employee that declares " + requirement.describe()
     return "the only employee available for this task"
+
+
+def _signature(definition: EmployeeDefinition) -> tuple:
+    """What routing can tell two employees apart by. Equal means indistinguishable."""
+    return (
+        frozenset(definition.capabilities),
+        frozenset(definition.integrations),
+        frozenset(definition.allowed_tools),
+        definition.contract.produces,
+    )
 
 
 def _best_by_tools(task: Task, candidates: list[EmployeeDefinition]) -> EmployeeDefinition:
@@ -290,6 +504,22 @@ def _merge(base: SharedContext | None, extra: SharedContext) -> SharedContext:
         artifacts=base.artifacts,
         data=base.data,
     )
+
+
+def _reason(raw: object) -> str:
+    """The model's reason for its choice, as it will be stored and shown.
+
+    Since Phase 11 this sentence is kept on the assignment and rendered in the
+    Work Center, so it gets the same treatment as a line of passed-down context:
+    one that mentions a credential is not kept at all, and a runaway one is cut.
+    """
+    text = " ".join(str(raw or "").split())[:500]
+    if not text:
+        return "chosen by the manager"
+    if is_sensitive(text):
+        log.warning("prometheus.reason_withheld", reason="looks like a credential")
+        return "chosen by the manager (its stated reason was withheld)"
+    return text
 
 
 def _lines(raw: object) -> tuple[str, ...]:

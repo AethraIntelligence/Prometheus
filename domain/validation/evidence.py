@@ -99,6 +99,16 @@ class Evidence:
     #: rather than names: the question a scenario asks is whether the work was
     #: shared, and the names are on the task rows for anybody reading one run.
     employees: int = 0
+    #: Which employees, by id (Phase 11). Ids rather than names because an id is
+    #: what a task row holds and it survives a rename of nothing; a profile
+    #: matches its own id to count the scenario runs its work was part of.
+    employee_ids: tuple[str, ...] = ()
+    #: The same employees by name, where the harness could resolve them.
+    employee_names: tuple[str, ...] = ()
+    #: Tasks whose stored verdict was "not accepted", by goal; and how many
+    #: verdicts there were at all, so "none refused" is not read off "none judged".
+    unaccepted: tuple[str, ...] = ()
+    judged: int = 0
     error_type: str = ""
     error_message: str = ""
 
@@ -206,6 +216,33 @@ def check(expect: Expectations, evidence: Evidence) -> tuple[CheckResult, ...]:
                 f"at least {expect.min_employees} employee(s)",
                 involved >= expect.min_employees,
                 "" if involved >= expect.min_employees else f"the work reached {involved}",
+            )
+        )
+
+    involved_names = set(evidence.employee_names)
+    for name in expect.employees_involved:
+        results.append(
+            _result(
+                f"{name} took part",
+                name in involved_names,
+                ""
+                if name in involved_names
+                else f"the work went to {', '.join(sorted(involved_names)) or 'nobody'}",
+            )
+        )
+
+    if expect.results_accepted:
+        expected = evidence.metrics.tasks
+        accepted = expected > 0 and evidence.judged == expected and not evidence.unaccepted
+        results.append(
+            _result(
+                "every result accepted on the evidence",
+                accepted,
+                ""
+                if accepted
+                else f"only {evidence.judged} of {expected} result(s) were judged"
+                if evidence.judged != expected
+                else f"not accepted: {'; '.join(evidence.unaccepted)}",
             )
         )
 

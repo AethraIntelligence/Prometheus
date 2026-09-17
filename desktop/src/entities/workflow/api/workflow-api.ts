@@ -1,7 +1,15 @@
 import type { RuntimeClient } from "../../../shared/api";
-import type { WorkflowDryRun, WorkflowList, WorkflowRun } from "../model/types";
+import type {
+  WorkflowDryRun,
+  WorkflowList,
+  WorkflowRun,
+  WorkflowSuggestionList,
+} from "../model/types";
 
 export const workflowApi = {
+  suggestions(client: RuntimeClient): Promise<WorkflowSuggestionList> {
+    return client.get<WorkflowSuggestionList>("/api/workflow-suggestions");
+  },
   all(client: RuntimeClient): Promise<WorkflowList> {
     return client.get<WorkflowList>("/api/workflows");
   },

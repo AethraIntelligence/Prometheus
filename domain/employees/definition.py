@@ -13,6 +13,7 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 from domain.capabilities.models import Capability, CapabilityRequirement
+from domain.employees.contract import UNDECLARED, WorkContract
 from domain.employees.limits import ExecutionLimits
 from domain.llm.models import ModelProfile
 from domain.memory.models import MemoryScope
@@ -76,6 +77,10 @@ class EmployeeDefinition:
     limits: ExecutionLimits = field(default_factory=ExecutionLimits)
     #: The employee's own voice, shipped alongside its YAML.
     system_prompt: str = ""
+    #: What it needs handed to it and what it hands back (Phase 11). A
+    #: declaration without one gets `UNDECLARED`, whose defaults route exactly
+    #: as before and say that they are defaults.
+    contract: WorkContract = UNDECLARED
     workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
     enabled: bool = True
 
@@ -123,6 +128,13 @@ class EmployeeDefinition:
                     self.limits.max_cost_usd,
                     self.limits.max_wall_time_seconds,
                 ],
+                "contract": {
+                    "accepts": sorted(self.contract.accepts),
+                    "produces": sorted(self.contract.produces),
+                    "evidence": sorted(self.contract.evidence),
+                    "failure_kinds": sorted(self.contract.failure_kinds),
+                    "declared": self.contract.declared,
+                },
                 "model_profile": {
                     "capabilities": sorted(str(c) for c in self.model_profile.capabilities),
                     "min_context_tokens": self.model_profile.min_context_tokens,

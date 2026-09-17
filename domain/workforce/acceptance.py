@@ -29,8 +29,22 @@ answer can settle.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
+from domain.employees.contract import EvidenceKind, WorkContract
 from domain.tasks.task import Task, TaskStatus
+
+
+class AcceptanceCode(StrEnum):
+    """Why a result was or was not taken, in a word a statistic can count."""
+
+    ACCEPTED = "ACCEPTED"
+    #: Not this check's question: the task did not complete.
+    NOT_COMPLETED = "NOT_COMPLETED"
+    ALL_REFUSED = "ALL_REFUSED"
+    ALL_FAILED = "ALL_FAILED"
+    #: The role's contract names evidence the record does not show.
+    EVIDENCE_MISSING = "EVIDENCE_MISSING"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,18 +57,51 @@ class Acceptance:
     #: allowed to do it. Somebody else may be, so it is worth reassigning rather
     #: than replanning - the same distinction `supervisor.classify` makes.
     refused: bool = False
+    code: AcceptanceCode = AcceptanceCode.ACCEPTED
 
     @classmethod
     def taken(cls) -> Acceptance:
         return cls(accepted=True)
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "accepted": self.accepted,
+            "reason": self.reason,
+            "refused": self.refused,
+            "code": self.code.value,
+        }
 
-def accept(task: Task) -> Acceptance:
-    """Judge one finished task on what it did, not on what it said."""
+    @classmethod
+    def from_dict(cls, raw: object) -> Acceptance | None:
+        """A stored verdict, or None where there is none this build can read."""
+        if not isinstance(raw, dict) or not isinstance(raw.get("accepted"), bool):
+            return None
+        try:
+            code = AcceptanceCode(str(raw.get("code", "")))
+        except ValueError:
+            code = (
+                AcceptanceCode.ACCEPTED if raw["accepted"] else AcceptanceCode.ALL_FAILED
+            )
+        return cls(
+            accepted=raw["accepted"],
+            reason=str(raw.get("reason", "")),
+            refused=bool(raw.get("refused", False)),
+            code=code,
+        )
+
+
+def accept(task: Task, contract: WorkContract | None = None) -> Acceptance:
+    """Judge one finished task on what it did, not on what it said.
+
+    `contract` adds what this role promised to leave behind (Phase 11). It is
+    the one way a task that used no tools can be refused: not because tools are
+    required of everybody, but because this role declared that its work shows
+    in the record, and a declaration nothing checks is prose.
+    """
     if task.status is not TaskStatus.COMPLETED:
         # Not this function's question. A task that failed already says so, and
         # the supervisor decides what a failure calls for.
-        return Acceptance.taken()
+        return Acceptance(accepted=True, code=AcceptanceCode.NOT_COMPLETED)
 
     attempted = 0
     succeeded = 0
@@ -67,7 +114,7 @@ def accept(task: Task) -> Acceptance:
             refused += 1
 
     if attempted == 0 or succeeded > 0:
-        return Acceptance.taken()
+        return _promised(task, contract, succeeded)
 
     if refused:
         return Acceptance(
@@ -78,6 +125,7 @@ def accept(task: Task) -> Acceptance:
                 "the world."
             ),
             refused=True,
+            code=AcceptanceCode.ALL_REFUSED,
         )
     return Acceptance(
         accepted=False,
@@ -85,7 +133,42 @@ def accept(task: Task) -> Acceptance:
             f"It reported success, but all {attempted} of its tool calls failed and "
             "nothing it tried to do actually happened."
         ),
+        code=AcceptanceCode.ALL_FAILED,
     )
+
+
+def written(task: Task) -> tuple[str, ...]:
+    """Files the record shows this task writing, in order, without repeats."""
+    paths: list[str] = []
+    for raw in _observations(task):
+        path = (raw.get("details") or {}).get("wrote")
+        if raw.get("succeeded", True) and isinstance(path, str) and path not in paths:
+            paths.append(path)
+    return tuple(paths)
+
+
+def _promised(task: Task, contract: WorkContract | None, succeeded: int) -> Acceptance:
+    if contract is None:
+        return Acceptance.taken()
+    if EvidenceKind.TOOL_RESULT in contract.evidence and succeeded == 0:
+        return Acceptance(
+            accepted=False,
+            reason=(
+                "It reported success, but its role promises a result reached through "
+                "a tool and no tool call succeeded."
+            ),
+            code=AcceptanceCode.EVIDENCE_MISSING,
+        )
+    if EvidenceKind.ARTIFACT in contract.evidence and not written(task):
+        return Acceptance(
+            accepted=False,
+            reason=(
+                "It reported success, but its role promises a file and the record "
+                "shows none written."
+            ),
+            code=AcceptanceCode.EVIDENCE_MISSING,
+        )
+    return Acceptance.taken()
 
 
 def _observations(task: Task) -> tuple[dict, ...]:

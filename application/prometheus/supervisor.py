@@ -42,6 +42,17 @@ succeeded because something unrelated did not is a cost with nothing behind it.
 what the task actually did off its own record. An employee that reported success
 having had every tool call refused has not done the work, and the manager is the
 one who has to say so: the employee's own verifier is the same run asked twice.
+
+Phase 11 adds the role's contract to both ends of that. What a finished task
+*delivered* - its declared products, less a file the record does not show - is
+what the next task's employee is chosen against, so a hand-off nobody can start
+from stops the plan before a downstream run is spent discovering it. And a task
+whose role promised evidence is accepted only when the record has it.
+
+**A task already given to somebody is never given again.** A process that died
+after a task was written with its employee, and before it ran, left a CREATED
+row that used to be delegated afresh on restart - a second assignment for one
+piece of work. A task that names its employee is resumed, whatever its status.
 """
 
 from __future__ import annotations
@@ -55,6 +66,7 @@ import structlog
 
 from application.prometheus.delegation import CapabilityDelegator
 from application.workforce.coordinator import WorkforceCoordinator
+from domain.employees.contract import UNDECLARED, WorkContract
 from domain.llm import escalation as escalations
 from domain.llm.escalation import Escalation, EscalationAdvisor
 from domain.llm.models import TaskKind
@@ -64,6 +76,7 @@ from domain.tasks.task import Task, TaskStatus
 from domain.tools.refusals import REFUSED
 from domain.workforce.acceptance import Acceptance, accept
 from domain.workforce.assignment import SharedContext, TaskAssignment
+from domain.workforce.handoff import Delivery, delivered
 from domain.workforce.protocols import Plan, PlanProgress, TaskExecution
 from domain.workforce.routing import Requirement
 
@@ -100,6 +113,10 @@ class TaskOutcome:
     #: from `task.status`. The row keeps saying what the runtime concluded -
     #: rewriting it would lose the disagreement, which is the interesting part.
     acceptance: Acceptance = field(default_factory=Acceptance.taken)
+    #: Nobody could take it - a hand-off nobody can start from - so it was
+    #: never given to anybody. Not retried, not reassigned, not escalated: the
+    #: plan is what has to change.
+    never_started: bool = False
 
     @property
     def succeeded(self) -> bool:
@@ -256,6 +273,8 @@ class Supervisor:
         # §86 as a structure rather than a rule people remember.
         coordinator = WorkforceCoordinator(plan, baseline=context or SharedContext())
         limit = asyncio.Semaphore(self._max_parallel)
+        # What each accepted task actually handed on, for the tasks that wait on it.
+        deliveries: dict[UUID, Delivery] = {}
 
         while True:
             ready = plan.ready(done)
@@ -269,6 +288,11 @@ class Supervisor:
                         coordinator.context_for(planned),
                         objective_id,
                         plan.requirements.get(planned.id),
+                        tuple(
+                            deliveries[other]
+                            for other in sorted(plan.depends_on(planned.id), key=str)
+                            if other in deliveries
+                        ),
                     )
 
             # Said out loud because Phase 18 could not answer "did anybody
@@ -294,6 +318,7 @@ class Supervisor:
                 if outcome.succeeded:
                     done.add(planned.id)
                     coordinator.record(planned.id, outcome.task)
+                    deliveries[planned.id] = self._delivery(outcome)
                     continue
 
                 # A failed task stops the plan: whatever depended on it would be
@@ -332,17 +357,31 @@ class Supervisor:
 
     # --- One task -------------------------------------------------------------
 
+    def _delivery(self, outcome: TaskOutcome) -> Delivery:
+        definition = self._delegator.definition(outcome.employee, outcome.task.workspace_id)
+        contract = definition.contract if definition is not None else UNDECLARED
+        return delivered(outcome.task, outcome.employee, contract)
+
+    def _contract_of(self, employee: str, workspace_id) -> WorkContract | None:
+        definition = self._delegator.definition(employee, workspace_id)
+        return definition.contract if definition is not None else None
+
     async def _carry(
         self,
         planned: Task,
         context: SharedContext,
         objective_id: UUID | None,
         requirement: Requirement | None = None,
+        upstream: tuple[Delivery, ...] = (),
     ) -> TaskOutcome:
         """Give one task to somebody, and try again if that is what the failure wants."""
         attempt = 1
         avoid: set[str] = set()
-        outcome = await self._attempt(planned, context, objective_id, avoid, requirement)
+        outcome = await self._attempt(
+            planned, context, objective_id, avoid, requirement, upstream
+        )
+        if outcome.never_started:
+            return outcome
 
         while not outcome.succeeded and attempt < self._max_attempts:
             recovery = recovery_for(outcome)
@@ -362,8 +401,10 @@ class Supervisor:
             # first is already in a terminal state, and a row that says FAILED
             # and later says COMPLETED is a row that lost the first attempt.
             outcome = await self._attempt(
-                _next_attempt(planned, attempt), context, objective_id, avoid, requirement
+                _next_attempt(planned, attempt), context, objective_id, avoid, requirement, upstream
             )
+            if outcome.never_started:
+                return outcome
 
         cause = self._escalation_cause(outcome)
         if cause is not None:
@@ -392,12 +433,13 @@ class Supervisor:
                 objective_id,
                 avoid,
                 requirement,
+                upstream,
             )
 
         return outcome
 
     def _escalation_cause(self, outcome: TaskOutcome) -> escalations.EscalationCause | None:
-        if outcome.succeeded or self._escalation is None:
+        if outcome.succeeded or outcome.never_started or self._escalation is None:
             return None
         task = outcome.task
         cause = escalations.cause_of(
@@ -431,23 +473,49 @@ class Supervisor:
         objective_id: UUID | None,
         avoid: set[str],
         requirement: Requirement | None = None,
+        upstream: tuple[Delivery, ...] = (),
     ) -> TaskOutcome:
-        if planned.status is not TaskStatus.CREATED:
+        if planned.status is not TaskStatus.CREATED or planned.assigned_employee_id is not None:
+            # Either it ran, or it was given to somebody and written down before
+            # the process stopped. Both are resumed; delegating again would be
+            # a second assignment for work that already has one.
             return await self._resume(planned, objective_id)
 
         # `DelegationError` is deliberately not caught here. It means the machine
         # has no declared employee at all - a fact about the workforce, not
         # about this task - and every replanned attempt would end in the same
         # place. It belongs to whoever owns the objective.
-        chosen, passed, why = await self._delegator.choose(
-            planned, context=context, avoid=avoid, requirement=requirement
+        delegation = await self._delegator.decide(
+            planned, context=context, avoid=avoid, requirement=requirement, upstream=upstream
         )
+        decision = delegation.decision
+        if delegation.chosen is None:
+            reason = f"Not started. {decision.reason}"
+            await self._announce(
+                planned,
+                objective_id,
+                reason,
+                payload={"task_id": str(planned.id), "decision": decision.to_dict()},
+            )
+            return TaskOutcome(
+                task=planned,
+                employee="",
+                reason=reason,
+                acceptance=Acceptance(accepted=False, reason=reason),
+                never_started=True,
+            )
+        chosen, passed, why = delegation.chosen, delegation.context, decision.reason
 
         await self._announce(
             planned,
             objective_id,
             f"{chosen.name}: {planned.goal}",
-            payload={"employee": chosen.name, "why": why, "task_id": str(planned.id)},
+            payload={
+                "employee": chosen.name,
+                "why": why,
+                "task_id": str(planned.id),
+                "decision": decision.to_dict(),
+            },
         )
 
         assignment = TaskAssignment.create(
@@ -457,6 +525,7 @@ class Supervisor:
             assigned_by_id="prometheus",
             context=passed,
             workspace_id=planned.workspace_id,
+            decision=decision,
         )
         finished = await self._execution.start(
             replace(
@@ -469,7 +538,7 @@ class Supervisor:
         # §88: the manager checks before accepting. Read off what the run did,
         # not asked of a second model - a claim of success with nothing behind
         # it is a fact about the record, and facts are cheaper than opinions.
-        taken = accept(finished)
+        taken = accept(finished, chosen.contract)
         if not taken.accepted:
             log.info(
                 "prometheus.result_not_accepted",
@@ -512,7 +581,7 @@ class Supervisor:
                 acceptance=Acceptance(accepted=False, reason=reason),
             )
 
-        taken = accept(finished)
+        taken = accept(finished, self._contract_of(employee, task.workspace_id))
         return TaskOutcome(
             task=finished,
             employee=employee,

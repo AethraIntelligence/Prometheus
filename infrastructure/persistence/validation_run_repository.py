@@ -57,6 +57,7 @@ def _to_run(row: ValidationRunRow) -> ValidationRun:
         checks=ValidationRun.checks_from(result.get("checks", [])),
         metrics=Metrics.from_dict(result.get("metrics", {})),
         profile=RoutingProfile.from_dict(result.get("profile")),
+        employee_ids=tuple(str(item) for item in result.get("employee_ids") or ()),
         workspace_id=WorkspaceId(row.workspace_id),
         started_at=_aware(row.started_at),  # type: ignore[arg-type]
         finished_at=_aware(row.finished_at),

@@ -82,3 +82,9 @@ limits:
   max_steps: 40
   max_cost_usd: 2.00
   max_wall_time_seconds: 900
+
+# The hand-off terms (Phase 11). What it reads off a page is findings; what it
+# does on one is a change. Either way something was reached.
+contract:
+  produces: [FINDINGS, CHANGES, FILE]
+  evidence: [TOOL_RESULT]

@@ -102,3 +102,37 @@ def transient(message: str = "rate limited") -> ProviderError:
     from domain.errors import RateLimitError
 
     return RateLimitError(message)
+
+
+class AnyModelRouter:
+    """Implements `domain.llm.protocols.ModelRouter`: every piece of work has a model.
+
+    For a test that scripts the model itself (`container.llm_for = ...`) and
+    so has no catalog behind it. Readiness asks the router whether a run could
+    be placed; without this it would answer, truthfully, that nothing can.
+    """
+
+    def select(self, task_kind, required, hints=None):
+        from domain.llm.models import ModelChoice
+
+        return ModelChoice(provider="fake", model="fake/model", reason="scripted by the test")
+
+    def stronger_available(self, task_kind, required=None) -> bool:
+        return False
+
+
+def scripted_models(container, llm) -> None:
+    """Every model call answered by `llm`, and every piece of work routable.
+
+    The router is re-applied after the container swaps its catalog at start-up,
+    which drops whatever router it held.
+    """
+    container.llm_for = lambda *args, **kwargs: llm
+    container.model_router = AnyModelRouter()
+    replace = container.use_catalog
+
+    def use_catalog(catalog) -> None:
+        replace(catalog)
+        container.model_router = AnyModelRouter()
+
+    container.use_catalog = use_catalog

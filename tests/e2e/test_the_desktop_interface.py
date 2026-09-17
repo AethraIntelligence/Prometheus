@@ -28,7 +28,7 @@ from app.ui.server import create_app
 from domain.llm.models import ToolCallRequest
 from infrastructure.persistence.models import Base
 from infrastructure.persistence.session import create_engine
-from tests.fakes.llm import FakeLLM, reply, tool_reply
+from tests.fakes.llm import FakeLLM, reply, scripted_models, tool_reply
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEADLINE_SECONDS = 10.0
@@ -64,7 +64,7 @@ def script(*answers) -> FakeLLM:
 def client_for(settings: Settings, llm: FakeLLM) -> TestClient:
     def build(resolved: Settings):
         container = build_container(resolved)
-        container.llm_for = lambda *args, **kwargs: llm  # type: ignore[method-assign]
+        scripted_models(container, llm)
         return container
 
     return TestClient(create_app(settings, build=build))

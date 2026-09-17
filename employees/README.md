@@ -6,7 +6,7 @@ An employee is a **declaration**, not code. Adding `Prometheus Legal` or
 
 All employees share one runtime (`application/employee_runtime/`). They differ
 only in role, goals, allowed tools, declared capabilities, policies, model
-profile and memory scope.
+profile, memory scope and hand-off contract.
 
 ```
 employees/<name>/
@@ -35,7 +35,37 @@ this machine actually has.
 The distinction matters because the two answer different questions - *may it?*
 and *can it?* - and a single list would silently answer one of them wrong.
 
-## The four that ship
+## Hand-off contract and readiness
+
+An optional `contract` says what earlier work this employee can start from,
+what it promises to deliver, which evidence must exist before that result can
+be accepted, and which failures are expected for the role:
+
+```yaml
+contract:
+  accepts: [FINDINGS]
+  produces: [ANSWER, FILE]
+  evidence: [ARTIFACT]
+  failure_kinds: [REFUSED, NOT_ACCEPTED, BUDGET, TRANSIENT, EXECUTION, CANCELLED]
+```
+
+The closed vocabularies are:
+
+- products: `ANSWER`, `FINDINGS`, `FILE`, `CHANGES`;
+- evidence: `TOOL_RESULT`, `ARTIFACT`;
+- failures: `REFUSED`, `NOT_ACCEPTED`, `BUDGET`, `TRANSIENT`, `EXECUTION`,
+  `CANCELLED`.
+
+Declarations without `contract` remain valid for compatibility. They accept any
+upstream product, produce `ANSWER`, require no evidence and allow every failure
+kind; the Workforce screen labels this contract as undeclared.
+
+Readiness is not stored in this file. Prometheus computes `READY`, `DEGRADED` or
+`UNAVAILABLE` from the declaration and the current machine: tools, integrations,
+policies, sandbox and model availability. An unavailable employee is excluded
+from delegation, and its profile states both the reason and the recovery action.
+
+## The five that ship
 
 | | does | reaches the world through |
 |---|---|---|
@@ -43,7 +73,8 @@ and *can it?* - and a single list would silently answer one of them wrong.
 | `organizer` | puts a folder of documents in order | files |
 | `operator` | works interfaces that have no API and no usable DOM | browser, then the screen |
 | `analyst` | computes answers from data on this machine | files, and code it runs |
+| `writer` | turns findings into the requested document | files and PDF |
 
-Four, not thirty. Each is one file plus a prompt, and none of them has a line of
+Five, not thirty. Each is one file plus a prompt, and none of them has a line of
 Python behind it - `tests/e2e/test_a_new_employee.py` proves that by declaring a
-fifth in a temporary directory and having Prometheus use it.
+new one in a temporary directory and having Prometheus use it.

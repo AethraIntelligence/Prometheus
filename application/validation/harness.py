@@ -43,11 +43,12 @@ from application.workspaces.service import WorkspaceService
 from domain.approvals.models import ApprovalState
 from domain.approvals.protocols import ApprovalRepository
 from domain.audit.protocols import AuditRecord, AuditTrail
+from domain.employees.protocols import EmployeeRegistry
 from domain.errors import ConfigurationError
 from domain.memory.models import MemoryQuery
 from domain.memory.protocols import Memory
 from domain.tasks.repository import TaskRepository
-from domain.tasks.task import TaskCreatedBy, TaskStatus
+from domain.tasks.task import Task, TaskCreatedBy, TaskStatus
 from domain.tools.telemetry import ToolCallLog
 from domain.validation.evidence import Evidence, Metrics, check
 from domain.validation.failures import classify
@@ -61,6 +62,7 @@ from domain.validation.protocols import (
 from domain.validation.run import RunStatus, ValidationRun, ValidationRunRepository, outcome_of
 from domain.validation.scenario import Entry, Requirement, Scenario
 from domain.workflows.protocols import StepExecution
+from domain.workforce.repository import AssignmentRepository
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 log = structlog.get_logger(__name__)
@@ -91,7 +93,13 @@ class ValidationHarness:
         workspaces: WorkspaceService | None = None,
         approver: Approver | None = None,
         profile: Callable[[], RoutingProfile] | None = None,
+        registry: EmployeeRegistry | None = None,
+        assignments: AssignmentRepository | None = None,
     ) -> None:
+        # Both only read, after the run: who the work went to by name, and what
+        # the manager concluded about each result. Neither can do work.
+        self._registry = registry
+        self._assignments = assignments
         self._scenarios = scenarios
         self._runs = runs
         self._tasks = tasks
@@ -416,7 +424,11 @@ class ValidationHarness:
         asked, answered = await self._approval_evidence(task_ids)
 
         present, text = self._files(scenario, before)
+        names, unaccepted, judged = await self._workforce_evidence(tasks)
         return Evidence(
+            employee_names=names,
+            unaccepted=unaccepted,
+            judged=judged,
             succeeded=succeeded,
             summary=summary,
             missing=missing,
@@ -437,6 +449,11 @@ class ValidationHarness:
             employees=len(
                 {task.assigned_employee_id for task in tasks if task.assigned_employee_id}
             ),
+            employee_ids=tuple(
+                sorted(
+                    {str(task.assigned_employee_id) for task in tasks if task.assigned_employee_id}
+                )
+            ),
             tools_used=used,
             tools_failed=failed,
             tools_denied=denied,
@@ -445,6 +462,36 @@ class ValidationHarness:
             error_type=type(error).__name__ if error else "",
             error_message=str(error) if error else "",
         )
+
+    async def _workforce_evidence(
+        self, tasks: list[Task]
+    ) -> tuple[tuple[str, ...], tuple[str, ...], int]:
+        known = (
+            {d.id: d.name for d in self._registry.list(tasks[0].workspace_id)}
+            if self._registry is not None and tasks
+            else {}
+        )
+        names = tuple(
+            sorted(
+                {
+                    known[task.assigned_employee_id]
+                    for task in tasks
+                    if task.assigned_employee_id in known
+                }
+            )
+        )
+        unaccepted: list[str] = []
+        judged = 0
+        if self._assignments is not None:
+            for task in tasks:
+                made = await self._assignments.for_task(task.id)
+                verdict = made[0].acceptance if made else None
+                if verdict is None:
+                    continue
+                judged += 1
+                if not verdict.accepted:
+                    unaccepted.append(f"{task.goal[:80]} ({verdict.code.value})")
+        return names, tuple(unaccepted), judged
 
     async def _tool_evidence(
         self, task_ids: tuple[UUID, ...]

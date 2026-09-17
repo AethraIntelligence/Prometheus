@@ -6,4 +6,6 @@ export type {
   WorkflowInputKind,
   WorkflowList,
   WorkflowRun,
+  WorkflowSuggestion,
+  WorkflowSuggestionList,
 } from "./model/types";

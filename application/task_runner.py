@@ -23,7 +23,9 @@ from domain.policies.models import ActorKind
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Task, TaskCreatedBy, TaskError, TaskResult, TaskStatus
+from domain.workforce.acceptance import accept
 from domain.workforce.assignment import AssignmentOutcome, SharedContext, TaskAssignment
+from domain.workforce.decision import Decision, SelectionCode
 from domain.workforce.repository import AssignmentRepository
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from domain.workspace.protocols import WorkspaceContext
@@ -104,6 +106,16 @@ class TaskRunner:
             assigned_by=assigned_by,
             context=context or SharedContext(),
             workspace_id=workspace_id,
+            # Nobody chose among candidates here: the employee was named, by a
+            # person or by a workflow step, and the record says which.
+            decision=Decision(
+                code=(
+                    SelectionCode.DECLARED_BY_WORKFLOW
+                    if created_by is TaskCreatedBy.WORKFLOW
+                    else SelectionCode.CHOSEN_BY_PERSON
+                ),
+                reason=assignment_reason,
+            ),
         ).accept()
         await self._assignments.save(assignment)
         log.info(
@@ -227,9 +239,25 @@ class TaskRunner:
             status=task.status.value,
             step=task.execution.step,
         )
-        return await asyncio.shield(
-            self.run(task, assignments[0] if assignments else None)
-        )
+        assignment = assignments[0] if assignments else None
+        if assignment is None and task.assigned_employee_id is not None:
+            # The process stopped between writing the task and writing who it
+            # went to. One assignment is recorded now, saying so, rather than
+            # none - a run nobody can attribute is missing from every count.
+            assignment = TaskAssignment.create(
+                task_id=task.id,
+                employee_id=task.assigned_employee_id,
+                assigned_by=ActorKind.PROMETHEUS
+                if task.created_by is TaskCreatedBy.PROMETHEUS
+                else ActorKind.USER,
+                workspace_id=task.workspace_id,
+                decision=Decision(
+                    code=SelectionCode.UNRECORDED,
+                    reason="recovered after a restart; the original decision was not saved",
+                ),
+            ).accept()
+            await self._assignments.save(assignment)
+        return await asyncio.shield(self.run(task, assignment))
 
     async def resume_all(
         self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
@@ -292,11 +320,31 @@ class TaskRunner:
             log.warning("progress.emit_failed", kind=kind.value, error=str(error))
 
     async def _close(self, assignment: TaskAssignment, task: Task) -> None:
-        outcome = (
-            AssignmentOutcome.COMPLETED
-            if task.status is TaskStatus.COMPLETED
-            else AssignmentOutcome.FAILED
-        )
-        await self._assignments.save(
-            assignment.close(outcome, task.result or TaskResult(summary=""))
-        )
+        """Close the assignment with how the run ended and what the evidence supports.
+
+        The verdict is the manager's rule (`domain.workforce.acceptance`) applied
+        with the role's contract, recorded here because every way work is run
+        passes through this method - a plan, a workflow step, a person naming
+        an employee - and a statistic that counted only one of them would be a
+        statistic about how work was started. It is a pure function of the
+        record, so the manager reading the same task reaches the same verdict.
+        A task that did not complete gets none: there was no result to judge.
+        """
+        outcome = {
+            TaskStatus.COMPLETED: AssignmentOutcome.COMPLETED,
+            # A person stopped it. Recorded as FAILED until Phase 11, which
+            # charged every change of mind to the employee's record.
+            TaskStatus.CANCELLED: AssignmentOutcome.CANCELLED,
+        }.get(task.status, AssignmentOutcome.FAILED)
+        closed = assignment.close(outcome, task.result or TaskResult(summary=""))
+        if task.status is TaskStatus.COMPLETED:
+            contract = next(
+                (
+                    definition.contract
+                    for definition in self._registry.list(task.workspace_id)
+                    if definition.id == assignment.employee_id
+                ),
+                None,
+            )
+            closed = closed.judged(accept(task, contract))
+        await self._assignments.save(closed)

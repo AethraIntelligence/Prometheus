@@ -69,6 +69,7 @@ from domain.tasks.cancellation import CancellationSignal, NeverCancelled
 from domain.tasks.plan import Observation, TaskPlan
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.task import Task, TaskStatus
+from domain.tools.artifacts import written_path
 from domain.tools.models import ToolResult
 from domain.tools.protocols import Tool, ToolRegistry
 from domain.tools.refusals import REFUSAL_LIMIT, REFUSED, refusal_counts, withheld
@@ -588,6 +589,13 @@ class Executor:
                 "provenance": contextual.provenance.to_dict(),
                 "result_truncated": contextual.truncated,
                 **({REFUSED: True} if refused else {}),
+                # What a contract requiring an artifact is judged by. The path
+                # only, relative to the workspace, never the content.
+                **(
+                    {"wrote": written}
+                    if result.success and (written := written_path(result.output))
+                    else {}
+                ),
             },
         )
         log.info(

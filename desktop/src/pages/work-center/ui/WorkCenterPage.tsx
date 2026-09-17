@@ -52,6 +52,25 @@ function TaskDetail({
         <strong>{task.employee_title || task.employee}</strong>
       </div>
       <p className="work-why">Why this employee: {task.assignment_reason}</p>
+      {task.decision && task.decision.alternatives.length > 0 && (
+        <details>
+          <summary>Also considered ({task.decision.alternatives.length})</summary>
+          {task.decision.alternatives.map((item) => (
+            <p key={item.employee} className="work-evidence">
+              {item.employee} · {item.code.replaceAll("_", " ").toLowerCase()}
+              {item.reason ? ` · ${item.reason}` : ""}
+            </p>
+          ))}
+        </details>
+      )}
+      {task.decision && task.decision.indistinguishable.length > 1 && (
+        <p className="work-muted">
+          {task.decision.indistinguishable.join(" and ")} declare the same work; nothing told them apart.
+        </p>
+      )}
+      {task.acceptance && !task.acceptance.accepted && (
+        <p className="problem">Not accepted on the evidence: {task.acceptance.reason}</p>
+      )}
       {task.depends_on.length > 0 && <p className="work-muted">Starts after {task.depends_on.length} earlier step(s).</p>}
       <div className="work-budgets">
         <Budget label="Actions" value={task.budgets.steps} />

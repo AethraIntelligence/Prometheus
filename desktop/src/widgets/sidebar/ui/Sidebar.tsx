@@ -35,6 +35,7 @@ import {
   GearIcon,
   InboxIcon,
   PanelIcon,
+  PeopleIcon,
   PlugIcon,
   SearchIcon,
   SparkIcon,
@@ -50,6 +51,7 @@ interface Props {
   schedulesOpen?: boolean;
   workCenterOpen?: boolean;
   approvalsOpen?: boolean;
+  workforceOpen?: boolean;
   /** Changes when the page did something the list should show at once. */
   refresh: number;
   onSelect: (conversationId: string) => void;
@@ -59,6 +61,7 @@ interface Props {
   onSchedules?: () => void;
   onWorkCenter?: () => void;
   onApprovals?: () => void;
+  onWorkforce?: () => void;
   /** Make a schedule out of this thread's request. */
   onRepeat?: (conversationId: string) => void;
   onClose: () => void;
@@ -72,6 +75,7 @@ export function Sidebar({
   schedulesOpen = false,
   workCenterOpen = false,
   approvalsOpen = false,
+  workforceOpen = false,
   refresh,
   onSelect,
   onNew,
@@ -80,6 +84,7 @@ export function Sidebar({
   onSchedules,
   onWorkCenter,
   onApprovals,
+  onWorkforce,
   onRepeat,
   onClose,
   onThreadChanged,
@@ -185,6 +190,17 @@ export function Sidebar({
             Approval Inbox
             {approvalBadge.count > 0 && <span className="nav-count">{approvalBadge.count}</span>}
             {approvalBadge.fresh > 0 && <span className="sr-only" role="status">{approvalBadge.fresh} new approval request(s)</span>}
+          </button>
+        )}
+        {onWorkforce && (
+          <button
+            type="button"
+            className={workforceOpen ? "navrow on" : "navrow"}
+            aria-current={workforceOpen ? "page" : undefined}
+            onClick={onWorkforce}
+          >
+            <PeopleIcon />
+            Workforce
           </button>
         )}
         {onSchedules && (

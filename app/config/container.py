@@ -46,6 +46,9 @@ from application.providers.service import ProviderService
 from application.task_runner import TaskRunner
 from application.validation.harness import ValidationHarness
 from application.workflows.engine import WorkflowEngine
+from application.workflows.suggestions import WorkflowSuggestions
+from application.workforce.profiles import WorkforceProfiles
+from application.workforce.readiness import ReadinessService
 from application.workspaces.service import WorkspaceService
 from domain.approvals.protocols import ApprovalWaiter
 from domain.employees.definition import EmployeeDefinition
@@ -309,7 +312,9 @@ def build_manager(container: Container) -> PrometheusManager:
         supervisor=Supervisor(
             execution=build_task_runner(container),
             delegator=CapabilityDelegator(
-                container.llm_for(*CapabilityDelegator.routing()), registry
+                container.llm_for(*CapabilityDelegator.routing()),
+                registry,
+                readiness=build_readiness(container),
             ),
             progress=container.progress,
             escalation=_RoutedEscalation(container),
@@ -359,6 +364,63 @@ class _RoutedEscalation:
 
     def stronger_available(self, task_kind, required=None) -> bool:
         return self._container.model_router.stronger_available(task_kind, required)
+
+
+def build_readiness(container: Container) -> ReadinessService:
+    """Whether each employee can work here now, asked of the live machine.
+
+    Every source is a lambda over the container, because the router, the tool
+    registry and the integration snapshot are all replaced when a person
+    changes something, and readiness must follow without a restart. The stages
+    are the ones a run actually routes - planning, execution with the
+    employee's own model profile, verification - read off the runtime's own
+    components so the check and the run cannot disagree about what is needed.
+    """
+    def integrations():
+        return tuple(getattr(container.employee_registry, "integrations", ()) or ())
+
+    def declared(name: str) -> frozenset[str] | None:
+        reader = getattr(container.employee_registry, "declared_integrations", None)
+        return reader(name) if reader is not None else None
+
+    return ReadinessService(
+        tools=lambda: container.tool_registry,
+        integrations=integrations,
+        router=lambda: container.model_router,
+        stages=lambda definition: (
+            Planner.routing(),
+            Executor.routing(definition),
+            Verifier.routing(),
+        ),
+        declared_integrations=declared,
+    )
+
+
+def build_workforce(container: Container) -> WorkforceProfiles:
+    return WorkforceProfiles(
+        registry=container.employee_registry,
+        readiness=build_readiness(container),
+        assignments=container.assignment_repository,
+        tasks=container.task_repository,
+        approvals=container.approval_repository,
+        validation_runs=container.validation_runs,
+    )
+
+
+def build_workflow_suggestions(container: Container) -> WorkflowSuggestions:
+    from infrastructure.workflows.yaml_writer import YamlWorkflowWriter
+
+    registry = container.workflow_registry
+    return WorkflowSuggestions(
+        suggestions=container.workflow_suggestions,
+        objectives=container.objective_repository,
+        plans=container.plan_repository,
+        tasks=container.task_repository,
+        assignments=container.assignment_repository,
+        registry=container.employee_registry,
+        writer=YamlWorkflowWriter(getattr(registry, "directory", None)),
+        reload=getattr(registry, "reload", lambda: None),
+    )
 
 
 def build_task_runner(container: Container) -> TaskRunner:
@@ -482,6 +544,13 @@ def build_service(
             ),
             scheduler_running=scheduler_running,
             history_limit=history_limit,
+            assignments=container.assignment_repository,
+            workforce=build_workforce(container),
+            workflow_suggestions=(
+                build_workflow_suggestions(container)
+                if container.settings.workflows_enabled
+                else None
+            ),
         )
     )
 
@@ -571,6 +640,8 @@ def build_harness(container: Container, *, baseline: bool = False) -> Validation
         workspaces=build_workspaces(container),
         approver=approver,
         profile=lambda: current_routing_profile(container, baseline=baseline),
+        registry=container.employee_registry,
+        assignments=container.assignment_repository,
     )
 
 

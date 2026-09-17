@@ -48,6 +48,17 @@ class GrantingEmployeeRegistry:
     def integrations(self) -> tuple[Integration, ...]:
         return self._integrations
 
+    def declared_integrations(self, name: str) -> frozenset[str] | None:
+        """What the employee's own file names, before any grant from the window.
+
+        Readiness needs the difference: a service the file requires makes the
+        employee unavailable without it, a service granted later only adds.
+        """
+        try:
+            return self._inner.get(name).integrations
+        except Exception:
+            return None
+
     def _granted(self, definition: EmployeeDefinition) -> EmployeeDefinition:
         return granted(definition, self._integrations)
 

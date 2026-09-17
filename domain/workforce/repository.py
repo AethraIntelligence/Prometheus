@@ -6,6 +6,7 @@ what. No SQL crosses this boundary.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -28,7 +29,16 @@ class AssignmentRepository(Protocol):
         """
         ...
 
-    async def for_employee(self, employee_id: EmployeeId) -> list[TaskAssignment]: ...
+    async def for_employee(
+        self,
+        employee_id: EmployeeId,
+        *,
+        workspace_id: WorkspaceId | None = None,
+        since: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[TaskAssignment]:
+        """Newest first, filtered before the optional limit is applied."""
+        ...
 
 
 class ObjectiveRepository(Protocol):

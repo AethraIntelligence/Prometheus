@@ -20,13 +20,14 @@ second consumer of the resume cursor's shape.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from domain.approvals.models import Approval, ApprovalRequest, CapabilityLease
 from domain.configuration.models import Setting
 from domain.conversations.models import Conversation
 from domain.conversations.session import SessionBrief, SessionNote
+from domain.employees.contract import WorkContract
 from domain.employees.definition import EmployeeDefinition
 from domain.integrations.catalog import FieldKind, Plugin
 from domain.integrations.models import Integration
@@ -46,8 +47,18 @@ from domain.tools.models import ToolSpec
 from domain.tools.telemetry import ToolCallRecord
 from domain.workflows.definition import WorkflowDefinition
 from domain.workflows.run import WorkflowRun
+from domain.workforce.acceptance import Acceptance
+from domain.workforce.assignment import TaskAssignment
+from domain.workforce.decision import Decision
+from domain.workforce.performance import AssignmentFact, Performance, classify
+from domain.workforce.profile import EmployeeProfile
 from domain.workforce.protocols import Objective, Plan
+from domain.workforce.readiness import Readiness
 from domain.workspace.models import Workspace
+
+if TYPE_CHECKING:
+    from application.workflows.suggestions import Shown
+    from application.workforce.profiles import EmployeeRecord, RecentAssignment
 
 
 def task_summary(task: Task, *, running: bool = False) -> dict[str, Any]:
@@ -292,6 +303,199 @@ def employee(definition: EmployeeDefinition) -> dict[str, Any]:
     }
 
 
+def readiness(value: Readiness) -> dict[str, Any]:
+    """The core's verdict on whether a role can work now, carried as is."""
+    return {
+        "state": value.state.value,
+        "assignable": value.assignable,
+        "summary": value.explain(),
+        "lost_capabilities": sorted(item.value for item in value.lost_capabilities),
+        "reasons": [
+            {
+                "code": reason.code.value,
+                "state": reason.state.value,
+                "message": reason.message,
+                "recovery": reason.recovery.value if reason.recovery else None,
+                "recovery_hint": reason.recovery_hint,
+            }
+            for reason in value.reasons
+        ],
+    }
+
+
+def contract(value: WorkContract) -> dict[str, Any]:
+    return {
+        "declared": value.declared,
+        "accepts": sorted(item.value for item in value.accepts),
+        "accepts_anything": not value.accepts,
+        "produces": sorted(item.value for item in value.produces),
+        "evidence": sorted(item.value for item in value.evidence),
+        "failure_kinds": sorted(item.value for item in value.failure_kinds),
+    }
+
+
+def employee_card(profile: EmployeeProfile) -> dict[str, Any]:
+    """One role in the workforce list: who, what for, and whether it can work now."""
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "title": profile.title,
+        "description": profile.description,
+        "version": profile.version,
+        "capabilities": sorted(item.value for item in profile.capabilities),
+        "readiness": readiness(profile.readiness),
+    }
+
+
+def employee_profile(record: EmployeeRecord) -> dict[str, Any]:
+    profile = record.profile
+    return {
+        **employee_card(profile),
+        "enabled": profile.enabled,
+        "goals": list(profile.goals),
+        "tools": [
+            {
+                "name": tool.name,
+                "effect": tool.effect.value if tool.effect else None,
+                "available": tool.available,
+                "capabilities": sorted(item.value for item in tool.capabilities),
+                "denied_by_policy": tool.denied_by_policy,
+                "asks_first": tool.asks_first,
+            }
+            for tool in profile.tools
+        ],
+        "integrations": [
+            {"name": item.name, "declared": item.declared, "connected": item.connected}
+            for item in profile.integrations
+        ],
+        "policies": [
+            {
+                "name": item.name,
+                "description": item.description,
+                "denies": sorted(effect.value for effect in item.denies),
+            }
+            for item in profile.policies
+        ],
+        "model": {
+            "capabilities": sorted(item.value for item in profile.model.capabilities),
+            "min_context_tokens": profile.model.min_context_tokens,
+            "max_cost_per_1k_usd": profile.model.max_cost_per_1k_usd,
+            "temperature": profile.model.temperature,
+        },
+        "memory_scope": profile.memory_scope.value,
+        "limits": {
+            "max_steps": profile.limits.max_steps,
+            "max_cost_usd": profile.limits.max_cost_usd,
+            "max_wall_time_seconds": profile.limits.max_wall_time_seconds,
+        },
+        "contract": contract(profile.contract),
+        "performance": performance(record.performance),
+        "recent_assignments": [recent_assignment(item) for item in record.recent],
+    }
+
+
+def performance(value: Performance) -> dict[str, Any]:
+    return {
+        "window": {
+            "start": value.window_start.isoformat(),
+            "end": value.window_end.isoformat(),
+            "days": round((value.window_end - value.window_start).total_seconds() / 86400),
+        },
+        "scope": "workspace",
+        "has_history": value.has_history,
+        "assignments": value.assignments,
+        "outcomes": {outcome.value: count for outcome, count in value.outcomes.items()},
+        "failures": {kind.value: count for kind, count in value.failures.items()},
+        "derived_verdicts": value.derived_verdicts,
+        "accepted_rate": value.accepted_rate.to_dict(),
+        "cost_per_accepted_usd": value.cost_per_accepted_usd.to_dict(),
+        "median_latency_seconds": value.median_latency_seconds.to_dict(),
+        "p95_latency_seconds": value.p95_latency_seconds.to_dict(),
+        "interventions_per_assignment": value.interventions_per_assignment.to_dict(),
+        "scenario_pass_rate": value.scenario_pass_rate.to_dict(),
+        "total_cost_usd": value.total_cost_usd,
+    }
+
+
+def outcome_of(task: Task | None, assignment: TaskAssignment) -> str:
+    """The same classification the statistics count, for one row."""
+    if task is None:
+        return "UNKNOWN"
+    return classify(
+        AssignmentFact(
+            task=task,
+            assigned_at=assignment.assigned_at,
+            closed_at=assignment.completed_at,
+            acceptance=assignment.acceptance,
+        )
+    ).outcome.value
+
+
+def decision(value: Decision | None) -> dict[str, Any]:
+    if value is None:
+        return {
+            "code": "UNRECORDED",
+            "reason": "This assignment was made before decisions were recorded.",
+            "alternatives": [],
+            "indistinguishable": [],
+        }
+    return value.to_dict()
+
+
+def acceptance(value: Acceptance | None) -> dict[str, Any] | None:
+    return value.to_dict() if value is not None else None
+
+
+def recent_assignment(item: RecentAssignment) -> dict[str, Any]:
+    assignment, task = item.assignment, item.task
+    return {
+        "id": str(assignment.id),
+        "task_id": str(assignment.task_id),
+        "goal": task.goal if task else "",
+        "plan_id": str(task.plan_id) if task and task.plan_id else None,
+        "status": task.status.value if task else None,
+        "outcome": outcome_of(task, assignment),
+        "cost_usd": round(task.cost_usd, 6) if task else 0.0,
+        "assigned_at": assignment.assigned_at.isoformat(),
+        "completed_at": assignment.completed_at.isoformat() if assignment.completed_at else None,
+        "decision": decision(assignment.decision),
+        "acceptance": acceptance(assignment.acceptance),
+    }
+
+
+def workflow_suggestion(
+    shown: Shown, *, effects: dict[str, list[str]], ready: dict[str, str]
+) -> dict[str, Any]:
+    """A draft a person decides on. Structure and provenance - no request text."""
+    item, draft = shown.suggestion, shown.draft
+    return {
+        "id": str(item.id),
+        "status": item.status.value,
+        "occurrences": item.occurrences,
+        "first_seen": item.first_seen.isoformat(),
+        "last_seen": item.last_seen.isoformat(),
+        "sources": [str(source) for source in item.sources],
+        "proposed_name": draft.name,
+        "description": draft.description,
+        "inputs": [
+            {"name": name, "kind": spec.kind.value, "required": spec.required}
+            for name, spec in draft.input_schema.items()
+        ],
+        "steps": [
+            {
+                "name": step.name,
+                "employee": step.employee,
+                "needs": list(shape.needs),
+                "depends_on": list(step.depends_on),
+                "instruction": step.instruction,
+                "effects": effects.get(step.employee, []),
+                "readiness": ready.get(step.employee, "UNAVAILABLE"),
+            }
+            for step, shape in zip(draft.steps, item.steps, strict=True)
+        ],
+    }
+
+
 # --- Integrations -------------------------------------------------------------
 
 
@@ -526,6 +730,7 @@ def work_task(
     model_calls: list[LLMCallRecord],
     depends_on: tuple[UUID, ...] = (),
     objective_terminal: bool = False,
+    assignment: TaskAssignment | None = None,
 ) -> dict[str, Any]:
     """One delegated unit, with enough evidence to operate rather than debug it."""
     limits = employee.limits if employee else None
@@ -564,6 +769,10 @@ def work_task(
         "employee": employee.name if employee else "Unassigned",
         "employee_title": employee.role.title if employee else "",
         "assignment_reason": task.assignment_reason or "No assignment explanation was recorded.",
+        # Why this employee and who else was considered, off the assignment row.
+        "decision": decision(assignment.decision if assignment else None),
+        "acceptance": acceptance(assignment.acceptance if assignment else None),
+        "outcome": outcome_of(task, assignment) if assignment else None,
         "depends_on": [str(item) for item in depends_on],
         "current_step": task.execution.step,
         "budgets": {

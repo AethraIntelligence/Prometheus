@@ -109,6 +109,15 @@ class Expectations:
     #: involved is not visible in an output, and a claim nothing can falsify is
     #: not a measurement.
     min_employees: int | None = None
+    #: Employees, by name, whose work the run must include (Phase 11). The one
+    #: check on *which* people were chosen rather than how many: a document
+    #: request that never reached the role declared for writing documents was
+    #: routed wrongly however good the file is.
+    employees_involved: tuple[str, ...] = ()
+    #: Every task's result was accepted by the manager on the evidence. A run
+    #: whose answer passed while a step was taken on its report alone passed on
+    #: the verifier's generosity, not on the hand-offs.
+    results_accepted: bool = False
     #: Ceilings, not targets. A run that answers correctly and costs ten times
     #: what it should is a failure of a kind no output check can see.
     max_cost_usd: float | None = None
@@ -133,6 +142,8 @@ class Expectations:
             or self.tools_denied
             or self.tools_forbidden
             or self.min_employees is not None
+            or bool(self.employees_involved)
+            or self.results_accepted
             or self.max_cost_usd is not None
             or self.max_steps is not None
         )
