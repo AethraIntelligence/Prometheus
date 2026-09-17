@@ -321,6 +321,8 @@ class ConversationRow(Base):
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     folder: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    approvals: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 

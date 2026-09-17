@@ -187,6 +187,50 @@ def test_a_thread_reopens_with_how_its_last_request_was_asked(client: TestClient
     assert reopened["messages"][0]["directions"]["approvals"] == "DENY"
 
 
+def test_a_thread_keeps_an_approval_change_made_between_requests(client: TestClient) -> None:
+    thread = client.post("/api/conversations", json={"title": "Plain"}).json()
+    client.post(
+        f"/api/conversations/{thread['id']}/messages",
+        json={"request": "Say hello", "approvals": "ASK", "source": "desktop"},
+    )
+
+    changed = client.put(
+        f"/api/conversations/{thread['id']}/approvals", json={"approvals": "AUTO"}
+    )
+
+    assert changed.status_code == 200
+    assert changed.json()["directions"]["approvals"] == "AUTO"
+    reopened = client.get(f"/api/conversations/{thread['id']}").json()
+    assert reopened["directions"]["approvals"] == "AUTO"
+    assert reopened["messages"][0]["directions"]["approvals"] == "ASK"
+
+    refused = client.put(
+        f"/api/conversations/{thread['id']}/approvals", json={"approvals": "MAYBE"}
+    )
+    assert refused.status_code == 422
+
+
+def test_a_thread_keeps_a_model_change_made_between_requests(client: TestClient) -> None:
+    thread = client.post("/api/conversations", json={"title": "Plain"}).json()
+    client.post(
+        f"/api/conversations/{thread['id']}/messages",
+        json={"request": "Say hello", "model": "first-model", "source": "desktop"},
+    )
+
+    changed = client.put(
+        f"/api/conversations/{thread['id']}/model", json={"model": "next-model"}
+    )
+
+    assert changed.status_code == 200
+    assert changed.json()["directions"]["model"] == "next-model"
+    reopened = client.get(f"/api/conversations/{thread['id']}").json()
+    assert reopened["directions"]["model"] == "next-model"
+    assert reopened["messages"][0]["directions"]["model"] == "first-model"
+
+    reset = client.put(f"/api/conversations/{thread['id']}/model", json={"model": ""})
+    assert reset.json()["directions"]["model"] == ""
+
+
 def _how(directions: dict) -> dict:
     """Approvals and model only: the folder is the thread's, and checked where folders are."""
     return {key: directions[key] for key in ("approvals", "model")}

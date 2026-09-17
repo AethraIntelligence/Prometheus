@@ -44,4 +44,26 @@ describe("conversationApi", () => {
     expect(body.approvals).toBe("AUTO");
     expect(body.model).toBe("balanced");
   });
+
+  it("persists a changed approval mode on the thread", async () => {
+    const fetchMock = answering({ id: "thread-1" });
+
+    await conversationApi.setApprovals(new RuntimeClient(BASE), "thread-1", "AUTO");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${BASE}/api/conversations/thread-1/approvals`);
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body)).toEqual({ approvals: "AUTO" });
+  });
+
+  it("persists a changed model on the thread", async () => {
+    const fetchMock = answering({ id: "thread-1" });
+
+    await conversationApi.setModel(new RuntimeClient(BASE), "thread-1", "balanced");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${BASE}/api/conversations/thread-1/model`);
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body)).toEqual({ model: "balanced" });
+  });
 });

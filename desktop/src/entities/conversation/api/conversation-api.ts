@@ -49,4 +49,18 @@ export const conversationApi = {
   setFolder(client: RuntimeClient, conversationId: string, folder: string): Promise<Thread> {
     return client.put<Thread>(`/api/conversations/${conversationId}/folder`, { folder });
   },
+
+  /** Keep the approval mode on the thread, including before another request is sent. */
+  setApprovals(
+    client: RuntimeClient,
+    conversationId: string,
+    approvals: Directions["approvals"],
+  ): Promise<Thread> {
+    return client.put<Thread>(`/api/conversations/${conversationId}/approvals`, { approvals });
+  },
+
+  /** Keep the preferred model on the thread, including before another request is sent. */
+  setModel(client: RuntimeClient, conversationId: string, model: string): Promise<Thread> {
+    return client.put<Thread>(`/api/conversations/${conversationId}/model`, { model });
+  },
 };

@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.conversations.models import Conversation
+from domain.workforce.directions import ApprovalChoice
 from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
 from infrastructure.persistence.conversation_repository import (
     InMemoryConversationRepository,
@@ -35,13 +36,19 @@ def objectives(session_factory: async_sessionmaker[AsyncSession]):
 
 
 async def test_a_thread_survives_the_process_that_opened_it(repository) -> None:
-    thread = Conversation.create("Weekly research")
+    thread = (
+        Conversation.create("Weekly research")
+        .with_approvals(ApprovalChoice.AUTO)
+        .with_model("balanced")
+    )
     await repository.save(thread)
 
     read = await repository.get(thread.id)
 
     assert read is not None
     assert read.title == "Weekly research"
+    assert read.approvals is ApprovalChoice.AUTO
+    assert read.model == "balanced"
     assert read.created_at == thread.created_at
 
 

@@ -84,7 +84,7 @@ from domain.secrets.protocols import CredentialStore
 from domain.tasks.repository import TaskRepository
 from domain.tools.protocols import ToolRegistry
 from domain.tools.telemetry import ToolCallLog
-from domain.workforce.directions import ApprovalChoice
+from domain.workforce.directions import ApprovalChoice, Directions
 from domain.workforce.protocols import Objective
 from domain.workforce.repository import ObjectiveRepository, PlanRepository
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
@@ -275,6 +275,21 @@ class PrometheusService:
             chosen = thread[-1].directions
         else:
             chosen = None
+        # Approval mode belongs to a normal interactive thread. Older rows have
+        # no value and continue to open on the latest request, as they did
+        # before the setting was persisted on conversations.
+        if schedule is None and conversation.approvals is not None:
+            chosen = (
+                replace(chosen, approvals=conversation.approvals)
+                if chosen is not None
+                else Directions(approvals=conversation.approvals)
+            )
+        if schedule is None and conversation.model is not None:
+            chosen = (
+                replace(chosen, model=conversation.model)
+                if chosen is not None
+                else Directions(model=conversation.model)
+            )
         # The folder is the thread's, whatever the last request carried: a
         # person may have pointed it elsewhere since.
         if chosen is not None:
@@ -660,7 +675,12 @@ class PrometheusService:
                 "interface.unknown_conversation", conversation_id=str(request.conversation_id)
             )
             return None
-        updated = conversation.titled_from(request.text).touched(request.received_at)
+        updated = (
+            conversation.titled_from(request.text)
+            .touched(request.received_at)
+            .with_approvals(request.directions.approvals)
+            .with_model(request.directions.model)
+        )
         await self._d.conversations.save(updated)
         return updated
 
@@ -704,6 +724,26 @@ class PrometheusService:
             conversation = conversation.in_folder("")
             await self._d.conversations.save(conversation)
         await self._folder_for(conversation, folder)
+        return await self.get_conversation(conversation_id)
+
+    async def set_conversation_approvals(
+        self, conversation_id: UUID, approvals: ApprovalChoice
+    ) -> dict[str, Any] | None:
+        """Set how future requests in this thread handle approval gates."""
+        conversation = await self._d.conversations.get(conversation_id)
+        if conversation is None:
+            return None
+        await self._d.conversations.save(conversation.with_approvals(approvals))
+        return await self.get_conversation(conversation_id)
+
+    async def set_conversation_model(
+        self, conversation_id: UUID, model: str
+    ) -> dict[str, Any] | None:
+        """Set the model future requests in this thread prefer."""
+        conversation = await self._d.conversations.get(conversation_id)
+        if conversation is None:
+            return None
+        await self._d.conversations.save(conversation.with_model(model))
         return await self.get_conversation(conversation_id)
 
     async def start_task(self, goal: str, employee: str) -> dict[str, Any]:

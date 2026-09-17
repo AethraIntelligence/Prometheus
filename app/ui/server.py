@@ -190,6 +190,14 @@ class ConversationFolder(BaseModel):
     folder: str = Field(default="", max_length=1024)
 
 
+class ConversationApprovals(BaseModel):
+    approvals: ApprovalChoice
+
+
+class ConversationModel(BaseModel):
+    model: str = Field(default="", max_length=120)
+
+
 class NewConversation(BaseModel):
     title: str = ""
 
@@ -538,6 +546,24 @@ def _routes(app: FastAPI) -> None:
             )
         except FolderError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+        return _found(found, f"Unknown conversation: {conversation_id}")
+
+    @app.put("/api/conversations/{conversation_id}/approvals")
+    async def thread_approvals(
+        request: Request, conversation_id: UUID, body: ConversationApprovals
+    ) -> dict[str, Any]:
+        found = await _guarded(
+            _service(request).set_conversation_approvals(conversation_id, body.approvals)
+        )
+        return _found(found, f"Unknown conversation: {conversation_id}")
+
+    @app.put("/api/conversations/{conversation_id}/model")
+    async def thread_model(
+        request: Request, conversation_id: UUID, body: ConversationModel
+    ) -> dict[str, Any]:
+        found = await _guarded(
+            _service(request).set_conversation_model(conversation_id, body.model)
+        )
         return _found(found, f"Unknown conversation: {conversation_id}")
 
     @app.delete("/api/conversations/{conversation_id}")

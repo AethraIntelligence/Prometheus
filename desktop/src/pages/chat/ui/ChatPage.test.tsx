@@ -28,6 +28,8 @@ function scriptedRuntime() {
     approvals: [] as unknown[],
     asked: [] as string[],
     directions: [] as { approvals: string; model: string }[],
+    threadApprovals: "ASK",
+    threadModel: "",
   };
 
   const respond = (path: string, init?: RequestInit) => {
@@ -47,7 +49,9 @@ function scriptedRuntime() {
     }
     if (path.endsWith("/api/approvals")) return { approvals: state.approvals };
     if (path.endsWith("/api/workspaces")) {
-      return { workspaces: [workspace("default", "Default", true)] };
+      return {
+        workspaces: [workspace("default", "Default", true), workspace("work", "Work", false)],
+      };
     }
     if (path.endsWith("/api/conversations") && init?.method === "POST") {
       return {
@@ -122,6 +126,7 @@ function scriptedRuntime() {
         title: "News",
         created_at: "2026-09-08T09:00:00+00:00",
         updated_at: "2026-09-08T09:00:00+00:00",
+        directions: { approvals: state.threadApprovals, model: state.threadModel },
         messages: [
           {
             ...message(true),
@@ -139,6 +144,24 @@ function scriptedRuntime() {
             ],
           },
         ],
+      };
+    }
+    if (path.endsWith("/api/conversations/c5/approvals") && init?.method === "PUT") {
+      state.threadApprovals = JSON.parse(String(init.body)).approvals;
+      return {
+        id: "c5",
+        title: "News",
+        directions: { approvals: state.threadApprovals, model: "" },
+        messages: [message(true)],
+      };
+    }
+    if (path.endsWith("/api/conversations/c5/model") && init?.method === "PUT") {
+      state.threadModel = JSON.parse(String(init.body)).model;
+      return {
+        id: "c5",
+        title: "News",
+        directions: { approvals: state.threadApprovals, model: state.threadModel },
+        messages: [message(true)],
       };
     }
     if (path.includes("/api/conversations/c1")) {
@@ -363,6 +386,64 @@ describe("the desktop window", () => {
     await waitFor(() =>
       expect(runtime.state.directions).toEqual([{ approvals: "AUTO", model: "balanced" }]),
     );
+  });
+
+  it("only offers workspace before a session exists", async () => {
+    const user = userEvent.setup();
+    render(<App client={new RuntimeClient(BASE)} />);
+
+    expect(await screen.findByLabelText("Workspace")).toBeInTheDocument();
+    await user.type(
+      screen.getByLabelText("Tell Prometheus what you need"),
+      "Sort these files{Enter}",
+    );
+
+    await waitFor(() => expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument());
+  });
+
+  it("persists an approval change made inside a session", async () => {
+    const user = userEvent.setup();
+    const first = render(
+      <RuntimeProvider client={new RuntimeClient(BASE)}>
+        <ChatPage conversationId="c5" />
+      </RuntimeProvider>,
+    );
+
+    await screen.findByLabelText("Approvals");
+    await waitFor(() => expect(screen.getByLabelText("Approvals")).toBeEnabled());
+    await user.selectOptions(screen.getByLabelText("Approvals"), "AUTO");
+    await waitFor(() => expect(runtime.state.threadApprovals).toBe("AUTO"));
+    first.unmount();
+
+    render(
+      <RuntimeProvider client={new RuntimeClient(BASE)}>
+        <ChatPage conversationId="c5" />
+      </RuntimeProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Approvals")).toHaveValue("AUTO"));
+    expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
+  });
+
+  it("persists a model change made inside a session", async () => {
+    const user = userEvent.setup();
+    const first = render(
+      <RuntimeProvider client={new RuntimeClient(BASE)}>
+        <ChatPage conversationId="c5" />
+      </RuntimeProvider>,
+    );
+
+    await screen.findByLabelText("Model");
+    await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
+    await user.selectOptions(screen.getByLabelText("Model"), "balanced");
+    await waitFor(() => expect(runtime.state.threadModel).toBe("balanced"));
+    first.unmount();
+
+    render(
+      <RuntimeProvider client={new RuntimeClient(BASE)}>
+        <ChatPage conversationId="c5" />
+      </RuntimeProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("balanced"));
   });
 
   it("opens a thread on what it is set to, not on the defaults", async () => {

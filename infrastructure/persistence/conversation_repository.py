@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.conversations.models import Conversation
 from domain.errors import StorageError, StorageNotInitializedError
+from domain.workforce.directions import ApprovalChoice
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.persistence.dialect import upsert
 from infrastructure.persistence.models import ConversationRow
@@ -31,6 +32,8 @@ def _to_row(conversation: Conversation) -> dict[str, object]:
         "workspace_id": str(conversation.workspace_id),
         "title": conversation.title,
         "folder": conversation.folder,
+        "approvals": conversation.approvals.value if conversation.approvals is not None else None,
+        "model": conversation.model,
         "created_at": conversation.created_at,
         "updated_at": conversation.updated_at,
     }
@@ -41,6 +44,8 @@ def _to_conversation(row: ConversationRow) -> Conversation:
         id=UUID(row.id),
         title=row.title,
         folder=row.folder or "",
+        approvals=ApprovalChoice(row.approvals) if row.approvals else None,
+        model=row.model,
         workspace_id=WorkspaceId(row.workspace_id),
         created_at=_aware(row.created_at),
         updated_at=_aware(row.updated_at),

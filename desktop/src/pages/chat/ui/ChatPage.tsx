@@ -143,8 +143,13 @@ export function ChatPage({
         extras={
           <>
             <ComposerMenu {...folderChoice} />
-            <WorkspaceBar onSwitched={onSwitched} />
-            <DirectionChips directions={directions} models={models} onChange={setDirections} />
+            {!thread && <WorkspaceBar onSwitched={onSwitched} />}
+            <DirectionChips
+              directions={directions}
+              models={models}
+              onChange={setDirections}
+              disabled={!!conversationId && !thread}
+            />
           </>
         }
         stop={busy ? <StopButton onStop={stop} /> : undefined}

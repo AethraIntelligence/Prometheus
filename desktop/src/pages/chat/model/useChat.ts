@@ -298,6 +298,40 @@ export function useChat(
     [client, thread, fail],
   );
 
+  const changeDirections = useCallback(
+    (next: Directions) => {
+      const previousApprovals = directions.approvals;
+      const previousModel = directions.model;
+      setDirections(next);
+      if (!thread) return;
+
+      const threadId = thread.id;
+      if (next.approvals !== previousApprovals) {
+        void conversationApi.setApprovals(client, threadId, next.approvals).catch((error) => {
+          if (shown.current === threadId) {
+            setDirections((current) =>
+              current.approvals === next.approvals
+                ? { ...current, approvals: previousApprovals }
+                : current,
+            );
+          }
+          fail(error);
+        });
+      }
+      if (next.model !== previousModel) {
+        void conversationApi.setModel(client, threadId, next.model).catch((error) => {
+          if (shown.current === threadId) {
+            setDirections((current) =>
+              current.model === next.model ? { ...current, model: previousModel } : current,
+            );
+          }
+          fail(error);
+        });
+      }
+    },
+    [client, directions.approvals, directions.model, thread, fail],
+  );
+
   const stop = useCallback(async () => {
     if (!running || !thread) return;
     try {
@@ -341,7 +375,7 @@ export function useChat(
     approvals: asked,
     employees,
     directions,
-    setDirections,
+    setDirections: changeDirections,
     models,
     busy,
     send,

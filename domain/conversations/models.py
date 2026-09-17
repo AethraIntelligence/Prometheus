@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from domain.workforce.directions import ApprovalChoice
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 #: How much of the first request becomes the thread's name when nobody titled
@@ -48,6 +49,14 @@ class Conversation:
     #: elsewhere. Kept on the thread rather than chosen per request, because the
     #: second request in a thread is usually about the first one's files.
     folder: str = ""
+    #: How this thread handles actions that need approval. None marks a thread
+    #: created before this setting belonged to the thread; its latest request
+    #: remains the backwards-compatible source in that case.
+    approvals: ApprovalChoice | None = None
+    #: Preferred model for future requests. None means this thread predates
+    #: session-level directions and falls back to its latest request; an empty
+    #: string is the explicit "Auto" choice.
+    model: str | None = None
 
     @classmethod
     def create(cls, title: str = "", **extra: Any) -> Conversation:
@@ -77,3 +86,9 @@ class Conversation:
 
     def in_folder(self, folder: str) -> Conversation:
         return replace(self, folder=folder)
+
+    def with_approvals(self, approvals: ApprovalChoice) -> Conversation:
+        return replace(self, approvals=approvals)
+
+    def with_model(self, model: str) -> Conversation:
+        return replace(self, model=model.strip())
