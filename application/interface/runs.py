@@ -114,21 +114,39 @@ class Runs:
             objective = await self._manager.receive(
                 request, workspace_id=workspace_id, conversation_id=conversation_id
             )
+        self._schedule(objective, directions, resume=False)
+        return objective
+
+    async def recover(self) -> int:
+        """Resume every durable objective left incomplete by an earlier process."""
+        recovered = 0
+        for objective in await self._objectives_store.list_incomplete():
+            if objective.id in self._objectives:
+                continue
+            self._schedule(objective, objective.directions, resume=True)
+            recovered += 1
+        if recovered:
+            log.info("objectives.recovered", count=recovered)
+        return recovered
+
+    def _schedule(self, objective: Objective, directions: Directions, *, resume: bool) -> None:
         work = asyncio.create_task(
-            self._carry(objective, directions), name=f"prometheus-objective-{objective.id}"
+            self._carry(objective, directions, resume=resume),
+            name=f"prometheus-objective-{objective.id}",
         )
         self._objectives[objective.id] = work
         work.add_done_callback(lambda _: self._objectives.pop(objective.id, None))
-        return objective
 
     async def _carry(
-        self, objective: Objective, directions: Directions
+        self, objective: Objective, directions: Directions, *, resume: bool = False
     ) -> ObjectiveResult | None:
         # Set inside the coroutine rather than around `create_task`, so the
         # directions belong to this objective's context and to every task it
         # starts - and never to the request handler that happened to submit it.
         with carried.given(directions):
             try:
+                if resume:
+                    return await self._manager.resume_objective(objective)
                 return await self._manager.handle_objective(objective)
             except Exception as error:
                 # Nobody awaits this coroutine, so an error raised out of it is
@@ -242,17 +260,12 @@ class Runs:
         log.info("objective.cancelled", objective_id=str(objective_id))
 
     async def aclose(self) -> None:
-        """Stop carrying anything, without leaving a run half-written.
+        """Stop carrying work while leaving durable objectives recoverable.
 
-        Every live run is asked to stop the cooperative way first, so it writes
-        its own terminal state; only a run that ignores that is cancelled
-        outright, and a run interrupted that way is resumable by construction.
+        Objective coroutines are interrupted without closing their records.
+        The next process reads those records and resumes their persisted plans.
+        Direct employee runs retain their cooperative shutdown behaviour.
         """
-        # Remembered before cancelling: a finished coroutine takes itself out of
-        # the map. An objective is not resumable the way a task is, so one this
-        # process was carrying is closed rather than left looking busy in every
-        # window opened after the next start.
-        carried_objectives = list(self._objectives)
         for work in self._objectives.values():
             work.cancel()
         for task_id in list(self._running):
@@ -265,13 +278,6 @@ class Runs:
             for run in still_running:
                 run.cancel()
             await asyncio.gather(*still_running, return_exceptions=True)
-        for objective_id in carried_objectives:
-            try:
-                await self._close(objective_id)
-            except Exception as error:  # a store already closing must not stop the shutdown
-                log.warning(
-                    "objective.not_closed", objective_id=str(objective_id), error=str(error)
-                )
 
     # --- Approvals ------------------------------------------------------------
 

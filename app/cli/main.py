@@ -40,6 +40,7 @@ from domain.policies.models import ActorKind, SimpleActor
 from domain.policies.risk import at_least
 from domain.policies.rules import APPROVAL_THRESHOLD
 from domain.validation.failures import FailureKind
+from domain.validation.gate import evaluate_gate
 from domain.validation.reliability import Verdict, build_report, reliability_of
 from domain.validation.run import RunStatus
 from domain.workspace.models import WorkspaceId
@@ -910,6 +911,17 @@ def validate(
     ),
     tag: str = typer.Option("", "--tag", "-t", help="Only scenarios carrying this tag."),
     phase: int = typer.Option(0, "--phase", "-p", help="Only scenarios for this phase."),
+    repeat: int = typer.Option(
+        1,
+        "--repeat",
+        help="How many fresh attempts to record for every selected scenario.",
+        min=1,
+    ),
+    release: bool = typer.Option(
+        False,
+        "--release",
+        help="Run the declared release set enough times, then evaluate its gate.",
+    ),
 ) -> None:
     """Give the platform real work and record what happened.
 
@@ -923,7 +935,27 @@ def validate(
         container = build_container()
         try:
             await prepare(container)
-            chosen = await _chosen(container, name, regression=regression, tag=tag, phase=phase)
+            if release and (name or regression or tag or phase or repeat != 1):
+                typer.secho(
+                    "--release selects its own scenarios and repetitions; do not combine it "
+                    "with other selectors.",
+                    fg="red",
+                    err=True,
+                )
+                raise typer.Exit(code=2)
+            gate_targets = ()
+            if release:
+                from infrastructure.validation.gate import load_gate
+
+                gate_targets = load_gate()
+            chosen = await _chosen(
+                container,
+                name,
+                regression=regression,
+                tag=tag,
+                phase=phase,
+                release=gate_targets,
+            )
             if not chosen:
                 typer.echo("Nothing matched. `prometheus scenarios` lists what is declared.")
                 raise typer.Exit(code=1)
@@ -931,18 +963,24 @@ def validate(
             harness = build_harness(container)
             failures = 0
             skipped = 0
+            total = 0
+            target_attempts = {target.scenario: target.attempts for target in gate_targets}
             for scenario in chosen:
-                typer.secho(f"\n> {scenario.name}", fg="cyan")
-                # A workflow scenario has no request of its own - the process
-                # is the request - so there is not always a first line to show.
-                first = next(iter(scenario.request.splitlines()), scenario.target)
-                typer.echo(f"  {first[:96]}")
-                run = await harness.run_scenario(scenario)
-                _report_validation(run)
-                if run.status is RunStatus.FAILED:
-                    failures += 1
-                elif run.status is RunStatus.SKIPPED:
-                    skipped += 1
+                repetitions = target_attempts.get(scenario.name, repeat)
+                for attempt in range(1, repetitions + 1):
+                    total += 1
+                    suffix = f" ({attempt}/{repetitions})" if repetitions > 1 else ""
+                    typer.secho(f"\n> {scenario.name}{suffix}", fg="cyan")
+                    # A workflow scenario has no request of its own - the process
+                    # is the request - so there is not always a first line to show.
+                    first = next(iter(scenario.request.splitlines()), scenario.target)
+                    typer.echo(f"  {first[:96]}")
+                    run = await harness.run_scenario(scenario)
+                    _report_validation(run)
+                    if run.status is RunStatus.FAILED:
+                        failures += 1
+                    elif run.status is RunStatus.SKIPPED:
+                        skipped += 1
 
             typer.echo("")
             # Counted, not inferred from the failures: everything that did not
@@ -951,11 +989,18 @@ def validate(
             # "5/13 passed" off a run with four passes, which is the one number
             # a person takes away from this command.
             typer.secho(
-                f"{len(chosen) - failures - skipped}/{len(chosen)} passed"
+                f"{total - failures - skipped}/{total} passed"
                 + (f", {skipped} not available here." if skipped else "."),
                 fg="green" if not failures else "yellow",
             )
-            if failures:
+            gate_failed = False
+            if release:
+                from application.validation.gate_report import render_gate
+
+                gate = evaluate_gate(gate_targets, await _history(container))
+                typer.echo("\n" + render_gate(gate))
+                gate_failed = not gate.passed
+            if failures or gate_failed:
                 raise typer.Exit(code=1)
         except StorageNotInitializedError as error:
             typer.secho(f"{error} Run: uv run alembic upgrade head", fg="red", err=True)
@@ -1002,13 +1047,68 @@ def validation_report(
     asyncio.run(_run())
 
 
+@app.command(name="validation-gate")
+def validation_gate(
+    check_config: bool = typer.Option(
+        False,
+        "--check-config",
+        help="Validate declarations without a database or model provider.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print a machine-readable result.",
+    ),
+) -> None:
+    """Evaluate the recorded release window against declared product thresholds."""
+    from infrastructure.validation.gate import load_gate
+    from infrastructure.validation.yaml_registry import YamlScenarioRegistry
+
+    targets = load_gate()
+    declared = {scenario.name for scenario in YamlScenarioRegistry().list_all()}
+    missing = sorted(target.scenario for target in targets if target.scenario not in declared)
+    if missing:
+        typer.secho(
+            "Release gate names undeclared scenarios: " + ", ".join(missing),
+            fg="red",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if check_config:
+        typer.echo(f"Release gate is valid: {len(targets)} scenario(s).")
+        return
+
+    from application.validation.gate_report import gate_json, render_gate
+
+    async def _run() -> None:
+        container = build_container()
+        try:
+            report = evaluate_gate(targets, await _history(container))
+            typer.echo(gate_json(report) if json_output else render_gate(report))
+            if not report.passed:
+                raise typer.Exit(code=1)
+        except StorageNotInitializedError as error:
+            typer.secho(f"{error} Run: uv run alembic upgrade head", fg="red", err=True)
+            raise typer.Exit(code=1) from error
+        finally:
+            await container.aclose()
+
+    asyncio.run(_run())
+
+
 async def _history(container) -> list:
     """Every recorded validation run on this machine, newest first."""
     return await container.validation_runs.recent(limit=500)
 
 
 async def _chosen(
-    container, name: str, *, regression: bool, tag: str, phase: int
+    container,
+    name: str,
+    *,
+    regression: bool,
+    tag: str,
+    phase: int,
+    release=(),
 ) -> list:
     """Which scenarios this invocation is about.
 
@@ -1018,6 +1118,8 @@ async def _chosen(
     flag is the exception, for a fresh clone where nothing has passed yet.
     """
     registry = container.scenario_registry
+    if release:
+        return [registry.get(target.scenario) for target in release]
     if name:
         return [registry.get(name)]
 

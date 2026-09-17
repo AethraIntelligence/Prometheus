@@ -185,6 +185,110 @@ class PrometheusManager:
             await self._fail(objective, error)
             raise
 
+    async def resume_objective(self, objective: Objective) -> ObjectiveResult:
+        """Continue durable manager work left by a previous process."""
+        if objective.is_terminal:
+            if objective.result is None:
+                raise ValueError(f"Terminal objective {objective.id} has no result.")
+            return objective.result
+
+        plans = await self._plans.for_objective(objective.id)
+        active = next(
+            (
+                plan
+                for plan in plans
+                if plan.status in {PlanStatus.DRAFT, PlanStatus.RUNNING}
+            ),
+            None,
+        )
+        if active is None:
+            # RECEIVED and PLANNING have made no external effects without a
+            # plan. Reading and planning them again is therefore safe.
+            return await self.handle_objective(objective)
+
+        try:
+            return await self._resume_plan(objective, active)
+        except Exception as error:
+            await self._fail(objective, error)
+            raise
+
+    async def _resume_plan(self, objective: Objective, plan: Plan) -> ObjectiveResult:
+        await self._announce(
+            objective,
+            "Resuming work saved before the previous process stopped.",
+            payload={"plan_id": str(plan.id), "revision": plan.revision, "resumed": True},
+        )
+        objective = objective.to(ObjectiveStatus.RUNNING)
+        await self._objectives.save(objective)
+        plan = plan.to(PlanStatus.RUNNING)
+        await self._plans.save(plan)
+        remembered, documents = await self._remembered(objective)
+        context = (*remembered, *documents)
+        supervision = await self._supervisor.run(
+            plan,
+            context=SharedContext(
+                facts=context, constraints=objective.acceptance_criteria
+            ),
+            objective_id=objective.id,
+        )
+        cost = supervision.cost_usd
+
+        if not supervision.all_succeeded:
+            await self._plans.save(plan.to(PlanStatus.FAILED))
+            feedback = supervision.shortfall or ("The saved plan did not finish.",)
+            if plan.revision < self._max_revisions and supervision.recovery is not Recovery.GIVE_UP:
+                await self._plans.save(plan.superseded())
+                return await self._work(
+                    objective,
+                    self._recovered_intent(objective),
+                    context,
+                    feedback=feedback,
+                    start_revision=plan.revision + 1,
+                    cost=cost,
+                )
+            return await self._escalate(objective, supervision, feedback, cost=cost)
+
+        agreement = await self._reconcile(objective, supervision)
+        if agreement.escalate:
+            await self._plans.save(plan.to(PlanStatus.FAILED))
+            return await self._escalate(
+                objective, supervision, agreement.conflicts, cost=cost
+            )
+        verdict = await self._verifier.verify(
+            objective,
+            describe(supervision.outcomes),
+            actions=actions(supervision.outcomes),
+        )
+        await self._plans.save(
+            plan.to(PlanStatus.DONE if verdict.passed else PlanStatus.FAILED)
+        )
+        if verdict.passed:
+            return await self._deliver(
+                objective, supervision, cost=cost, resolution=agreement.resolution
+            )
+
+        feedback = verdict.missing or (verdict.reason,)
+        if plan.revision < self._max_revisions and supervision.recovery is not Recovery.GIVE_UP:
+            await self._plans.save(plan.superseded())
+            return await self._work(
+                objective,
+                self._recovered_intent(objective),
+                context,
+                feedback=feedback,
+                start_revision=plan.revision + 1,
+                cost=cost,
+            )
+        return await self._escalate(objective, supervision, feedback, cost=cost)
+
+    @staticmethod
+    def _recovered_intent(objective: Objective) -> Intent:
+        return Intent(
+            restatement=objective.text,
+            constraints=objective.constraints,
+            acceptance_criteria=objective.acceptance_criteria,
+            needs_work=True,
+        )
+
     async def _fail(self, objective: Objective, error: Exception) -> None:
         log.warning(
             "prometheus.objective_failed",
@@ -311,6 +415,8 @@ class PrometheusManager:
         remembered: tuple[str, ...] = (),
         *,
         feedback: tuple[str, ...] = (),
+        start_revision: int = 1,
+        cost: float = 0.0,
     ) -> ObjectiveResult:
         """`feedback` is non-empty when a direct answer was tried and rejected:
         the first plan is then told what the sentence failed to cover, rather
@@ -321,9 +427,8 @@ class PrometheusManager:
 
         supervision: Supervision | None = None
         plan: Plan | None = None
-        cost = 0.0
 
-        for revision in range(1, self._max_revisions + 1):
+        for revision in range(start_revision, self._max_revisions + 1):
             plan = await self._planner.plan(
                 objective,
                 workforce,

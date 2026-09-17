@@ -216,6 +216,18 @@ class PrometheusService:
         #: not collected mid-way, and awaited when the interface closes.
         self._background: set[asyncio.Task[None]] = set()
 
+    async def recover(self) -> dict[str, int]:
+        """Reconcile state owned by the previous process and resume its work."""
+        expired = await self._d.approvals.expire_abandoned()
+        objectives = await self._d.runs.recover()
+        if expired or objectives:
+            log.info(
+                "interface.recovered",
+                expired_approvals=expired,
+                objectives=objectives,
+            )
+        return {"expired_approvals": expired, "objectives": objectives}
+
     # --- Conversations --------------------------------------------------------
 
     async def _here(self) -> WorkspaceId:

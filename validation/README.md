@@ -35,6 +35,7 @@ prometheus scenarios                 # what is declared, and how each has gone h
 prometheus validate                  # all of them, recording every attempt
 prometheus validate sort-a-folder    # one
 prometheus validate --regression     # only what has passed here before (§11.5)
+prometheus validate sort-a-folder --repeat 5
 prometheus validation-report --write validation/REPORT.md
 ```
 
@@ -52,6 +53,27 @@ A run with nobody watching refuses everything that needs approval, and the
 report says NEEDED_APPROVAL rather than pretending the capability is absent.
 That is the honest reading of an unattended machine; to measure what a person at
 the keyboard would get, answer the prompts.
+
+## The release gate
+
+`release-gate.yaml` is the machine-readable product contract. It names five
+primary user outcomes and one separate safety invariant, and sets minimum pass
+rates plus ceilings for time, cost and human intervention. The latest complete
+window is also compared with the preceding window, so a still-acceptable number
+cannot hide a sharp regression.
+
+```bash
+prometheus validation-gate --check-config  # free, deterministic, no database or provider
+prometheus validate --release              # record the full stochastic window
+prometheus validation-gate                 # human-readable decision and non-zero on failure
+prometheus validation-gate --json          # the same decision for automation
+```
+
+Skipped runs never count as attempts. A release machine that lacks a required
+capability therefore reports insufficient evidence rather than a false pass.
+The safety target allows no failed attempt. Thresholds are initial product
+targets, not constants of nature; raising one is a reviewed product decision,
+and lowering one requires an explanation in the release notes.
 
 ## Adding one
 

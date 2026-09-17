@@ -1,9 +1,4 @@
-"""The manager's record survives a restart, on both implementations.
-
-An objective interrupted halfway is not resumable yet - that is Phase 12's
-concern - but it must still be *readable*: what was asked, what Prometheus made of it,
-which plans it tried and which tasks each one held.
-"""
+"""The manager's executable record survives a restart on both implementations."""
 
 from __future__ import annotations
 
@@ -11,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.tasks.task import Task, TaskCreatedBy, TaskStatus
 from domain.workforce.protocols import (
     Objective,
@@ -19,6 +15,7 @@ from domain.workforce.protocols import (
     Plan,
     PlanStatus,
 )
+from domain.workforce.routing import Requirement
 from domain.workspace.models import WorkspaceId
 from infrastructure.persistence.in_memory_task_repository import InMemoryTaskRepository
 from infrastructure.persistence.objective_repository import (
@@ -122,6 +119,22 @@ async def test_recent_objectives_are_newest_first_and_scoped(objectives) -> None
     assert len(await objectives.list_recent(limit=2)) == 2
 
 
+async def test_incomplete_objectives_are_recovered_across_workspaces(objectives) -> None:
+    first = Objective.create("First")
+    second = Objective.create("Second", workspace_id=WorkspaceId(uuid4()))
+    done = Objective.create("Done")
+    done = done.to(
+        ObjectiveStatus.DONE,
+        ObjectiveResult(objective_id=done.id, summary="done", status=ObjectiveStatus.DONE),
+    )
+    for objective in (second, done, first):
+        await objectives.save(objective)
+
+    recovered = await objectives.list_incomplete()
+
+    assert {item.id for item in recovered} == {first.id, second.id}
+
+
 # --- Plans --------------------------------------------------------------------
 
 
@@ -155,6 +168,39 @@ async def test_a_plan_round_trips_with_its_tasks_and_edges(plans, objectives) ->
     assert loaded.ready(set()) == (loaded.tasks[0],), "the second waits on the first"
     assert loaded.status is PlanStatus.RUNNING
     assert loaded.rationale == "Fetch, then write."
+
+
+async def test_an_unstarted_plan_survives_with_tasks_and_routing_needs(
+    plans, objectives
+) -> None:
+    """A crash may land after planning and before the first delegation."""
+    plan_repository, task_repository = plans
+    objective = Objective.create("Research and report")
+    await objectives.save(objective)
+    plan_id = uuid4()
+    first = _planned("Research", objective, plan_id, priority=5)
+    second = _planned("Report", objective, plan_id, priority=4)
+    needed = Requirement(
+        capabilities=CapabilityRequirement(required=frozenset({Capability.WEB_BROWSING})),
+        services=frozenset({"notes"}),
+    )
+    plan = Plan(
+        id=plan_id,
+        objective_id=objective.id,
+        tasks=(first, second),
+        dependencies=((second.id, first.id),),
+        requirements={first.id: needed},
+        status=PlanStatus.RUNNING,
+    )
+
+    await plan_repository.save(plan)
+
+    assert await task_repository.get(first.id) is None, "planning is not execution"
+    recovered = await plan_repository.get(plan.id)
+    assert recovered is not None
+    assert [task.id for task in recovered.tasks] == [first.id, second.id]
+    assert recovered.dependencies == ((second.id, first.id),)
+    assert recovered.requirements[first.id] == needed
 
 
 async def test_a_task_status_is_read_back_from_the_tasks_table(plans, objectives) -> None:
@@ -240,12 +286,7 @@ def _planned(goal: str, objective: Objective, plan_id, *, priority: int = 5) -> 
 async def test_a_plan_holds_its_edges_before_any_of_its_tasks_have_started(
     plans, objectives
 ) -> None:
-    """A plan is recorded when Prometheus proposes it, and tasks become rows when given.
-
-    So the edges legally precede both ends they point at, and a plan read back
-    at that moment has its shape and no tasks. What Prometheus intends is on the
-    progress stream by then; what it did is here afterwards.
-    """
+    """Planning is durable before delegation creates live task rows."""
     plan_repository, _ = plans
     objective = Objective.create("Do two things")
     await objectives.save(objective)
@@ -264,5 +305,6 @@ async def test_a_plan_holds_its_edges_before_any_of_its_tasks_have_started(
 
     loaded = await plan_repository.get(plan_id)
     assert loaded is not None
-    assert loaded.tasks == (), "nothing has been given to anybody yet"
+    assert [task.id for task in loaded.tasks] == [first.id, second.id]
+    assert all(task.status is TaskStatus.CREATED for task in loaded.tasks)
     assert loaded.dependencies == ((second.id, first.id),), "the shape is recorded"

@@ -5,18 +5,11 @@ is which tasks it contains and which of them wait for which - so `save` writes
 the edges in the same transaction, and `get` refuses to hand back a plan whose
 tasks it could not read.
 
-The tasks themselves live in `tasks` and are written when somebody is given
-one. This does not duplicate them: a plan holds their ids through its dependency
-edges and through `tasks.plan_id`, and reads them back from the one place they
-are stored. Two copies of a task's status would eventually disagree, and the
-copy inside the plan would be the stale one - which is exactly what a plan
-saved again at the end of a run would write back, since the tasks in a `Plan`
-value are the ones the planner proposed and never moved on.
-
-So a plan read back mid-run holds the tasks that have started, in plan order,
-with their current state. Before any of them has, it holds its edges and no
-tasks; what Prometheus intends is on the progress stream by then, and what it did is
-here afterwards.
+The immutable task definitions also live on the plan row. That is not a second
+copy of live task state: it is the recovery manifest needed when a process dies
+after planning but before delegation creates the first task row. On reads,
+persisted task rows replace their definitions, so status, execution cursor and
+result still have one authority. Unstarted definitions fill only the gaps.
 """
 
 from __future__ import annotations
@@ -25,20 +18,102 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import replace
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.tasks.repository import TaskRepository
+from domain.tasks.task import Task, TaskCreatedBy
 from domain.workforce.protocols import Plan, PlanStatus
+from domain.workforce.routing import Requirement
 from domain.workspace.models import WorkspaceId
 from infrastructure.persistence.dialect import upsert
 from infrastructure.persistence.mappers import row_to_task
 from infrastructure.persistence.models import PlanRow, PlanTaskDependencyRow, TaskRow
 from infrastructure.persistence.session import session_scope
+
+
+def _definition(plan: Plan) -> dict[str, object]:
+    """The immutable part of a plan needed before task rows exist."""
+    return {
+        "tasks": [
+            {
+                "id": str(task.id),
+                "workspace_id": str(task.workspace_id),
+                "goal": task.goal,
+                "created_by": task.created_by.value,
+                "priority": task.priority,
+                "parent_id": str(task.parent_id) if task.parent_id else None,
+                "plan_id": str(task.plan_id) if task.plan_id else None,
+                "created_at": task.created_at.isoformat(),
+            }
+            for task in plan.tasks
+        ],
+        "requirements": {
+            str(task_id): {
+                "required": sorted(item.value for item in requirement.capabilities.required),
+                "preferred": sorted(item.value for item in requirement.capabilities.preferred),
+                "min_context_tokens": requirement.capabilities.min_context_tokens,
+                "min_quality": requirement.capabilities.min_quality,
+                "services": sorted(requirement.services),
+            }
+            for task_id, requirement in plan.requirements.items()
+        },
+    }
+
+
+def _from_definition(raw: dict) -> tuple[tuple[Task, ...], dict[UUID, Requirement]]:
+    tasks: list[Task] = []
+    for item in raw.get("tasks", ()):
+        if not isinstance(item, dict):
+            continue
+        try:
+            tasks.append(
+                Task(
+                    id=UUID(str(item["id"])),
+                    workspace_id=WorkspaceId(str(item["workspace_id"])),
+                    goal=str(item["goal"]),
+                    created_by=TaskCreatedBy(str(item.get("created_by", "prometheus"))),
+                    priority=int(item.get("priority", 5)),
+                    parent_id=UUID(str(item["parent_id"])) if item.get("parent_id") else None,
+                    plan_id=UUID(str(item["plan_id"])) if item.get("plan_id") else None,
+                    created_at=datetime.fromisoformat(str(item["created_at"])),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    requirements: dict[UUID, Requirement] = {}
+    known = {item.value: item for item in Capability}
+    for task_id, item in (raw.get("requirements", {}) or {}).items():
+        if not isinstance(item, dict):
+            continue
+        try:
+            requirements[UUID(str(task_id))] = Requirement(
+                capabilities=CapabilityRequirement(
+                    required=frozenset(
+                        known[value] for value in item.get("required", ()) if value in known
+                    ),
+                    preferred=frozenset(
+                        known[value] for value in item.get("preferred", ()) if value in known
+                    ),
+                    min_context_tokens=(
+                        int(item["min_context_tokens"])
+                        if item.get("min_context_tokens") is not None
+                        else None
+                    ),
+                    min_quality=float(item.get("min_quality", 0.0)),
+                ),
+                services=frozenset(str(value) for value in item.get("services", ())),
+            )
+        except (TypeError, ValueError):
+            continue
+    return tuple(tasks), requirements
 
 
 class SqlPlanRepository:
@@ -68,6 +143,7 @@ class SqlPlanRepository:
             "revision": plan.revision,
             "status": plan.status.value,
             "rationale": plan.rationale,
+            "definition": _definition(plan),
         }
         async with self._session() as session:
             statement = upsert(session, PlanRow).values(**values)
@@ -115,7 +191,7 @@ class SqlPlanRepository:
             return [await self._hydrate(session, row) for row in rows]
 
     async def _hydrate(self, session: AsyncSession, row: PlanRow) -> Plan:
-        tasks = await session.scalars(
+        rows = await session.scalars(
             select(TaskRow)
             .where(TaskRow.plan_id == row.id)
             # Plan order, not creation order: the planner sets a descending
@@ -125,10 +201,17 @@ class SqlPlanRepository:
         edges = await session.scalars(
             select(PlanTaskDependencyRow).where(PlanTaskDependencyRow.plan_id == row.id)
         )
+        started = {task.id: task for task in (row_to_task(item) for item in rows)}
+        planned, requirements = _from_definition(row.definition or {})
+        tasks = tuple(started.get(task.id, task) for task in planned)
+        if not tasks:
+            # Plans written before definitions were durable still retain every
+            # task that reached the task store.
+            tasks = tuple(started.values())
         return Plan(
             id=UUID(row.id),
             objective_id=UUID(row.objective_id),
-            tasks=tuple(row_to_task(task) for task in tasks),
+            tasks=tasks,
             dependencies=tuple(
                 (UUID(edge.task_id), UUID(edge.depends_on)) for edge in edges
             ),
@@ -136,20 +219,18 @@ class SqlPlanRepository:
             status=PlanStatus(row.status),
             rationale=row.rationale,
             workspace_id=WorkspaceId(row.workspace_id),
+            requirements=requirements,
         )
 
 
 class InMemoryPlanRepository:
     """Implements `domain.workforce.repository.PlanRepository`.
 
-    Give it the task repository and it behaves like the SQLite one: a plan holds
-    ids, each task's current state is read back from where tasks are stored, and
-    a task with no row yet is not in the plan at all - which is the state of
-    every plan between being proposed and being started. Without it, the tasks
-    are whatever was saved: fine for a test that only cares about revisions,
-    wrong for one that expects a status to have moved on. The argument exists so
-    the fake can be held to the same contract, which is the only thing that
-    makes a paired test worth writing.
+    Give it the task repository and it behaves like the SQLite one: current
+    task rows replace their immutable definitions while tasks not started yet
+    remain available for recovery. Without it, the tasks are whatever was
+    saved. The argument exists so the fake can be held to the same contract,
+    which is the only thing that makes a paired test worth writing.
     """
 
     def __init__(self, tasks: TaskRepository | None = None) -> None:
@@ -169,8 +250,7 @@ class InMemoryPlanRepository:
         tasks = []
         for task in plan.tasks:
             stored = await self._tasks.get(task.id)
-            if stored is not None:
-                tasks.append(stored)
+            tasks.append(stored or task)
         return replace(deepcopy(plan), tasks=tuple(tasks))
 
     async def for_objective(self, objective_id: UUID) -> list[Plan]:

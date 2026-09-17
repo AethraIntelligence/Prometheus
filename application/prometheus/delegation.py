@@ -40,6 +40,8 @@ narrowing is real and the widening is impossible. `effective_tools` in
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import structlog
 
 from application.prometheus.workforce import describe
@@ -167,6 +169,13 @@ class CapabilityDelegator:
             context=context,
             workspace_id=task.workspace_id,
         )
+
+    def employee_name(self, employee_id: UUID | None, workspace_id) -> str:
+        """Resolve a persisted assignment without making a new decision."""
+        for definition in self._registry.list(workspace_id):
+            if definition.id == employee_id:
+                return definition.name
+        return str(employee_id) if employee_id is not None else "unassigned"
 
     # --- Internals ------------------------------------------------------------
 

@@ -32,6 +32,9 @@ jobs:
       - name: Tests
         run: uv run pytest
 
+      - name: Validation release contract
+        run: uv run prometheus validation-gate --check-config
+
   # The window, checked without building it. `npm test` needs no runtime and no
   # Rust toolchain: it renders the interface against a scripted one, and it
   # fails on a broken Feature-Sliced layer boundary the same way `lint-imports`

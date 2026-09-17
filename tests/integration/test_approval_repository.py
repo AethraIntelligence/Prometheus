@@ -91,3 +91,28 @@ async def test_the_in_memory_repository_answers_the_same_way() -> None:
 
     await memory.save(approval.resolve(ApprovalState.APPROVED))
     assert await memory.list_pending() == []
+
+
+async def test_restart_expires_every_pending_question(repository, sqlite_repository) -> None:
+    task = await stored_task(sqlite_repository)
+    first = pending(task, "fs.write(path='one.txt')")
+    second = pending(task, "fs.delete(path='two.txt')")
+    await repository.save(first)
+    await repository.save(second)
+
+    assert await repository.expire_abandoned() == 2
+
+    stored = [await repository.get(first.id), await repository.get(second.id)]
+    assert all(item is not None and item.state is ApprovalState.EXPIRED for item in stored)
+    assert all(item is not None and item.resolved_by == "restart" for item in stored)
+
+
+async def test_in_memory_restart_expires_pending_questions() -> None:
+    repository = InMemoryApprovalRepository()
+    approval = pending(Task.create("Tidy up"))
+    await repository.save(approval)
+
+    assert await repository.expire_abandoned() == 1
+    stored = await repository.get(approval.id)
+    assert stored is not None and stored.state is ApprovalState.EXPIRED
+    assert stored.resolved_by == "restart"

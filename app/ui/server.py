@@ -384,6 +384,7 @@ def create_app(
             history_limit=resolved.ui_history_limit,
             scheduler_running=resolved.scheduler_enabled,
         )
+        await app.state.service.recover()
         # Started on the same loop that serves the requests, for the same
         # reason a task is: one process, one database, and a proactive
         # objective that is watched in the trace exactly like one somebody

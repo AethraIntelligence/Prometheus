@@ -56,6 +56,8 @@ class RecordingManager:
         self.received: list[tuple[str, UUID | None]] = []
         self.workspaces: list[str | None] = []
         self.directions: list = []
+        self.resumed: list[UUID] = []
+        self.pause: asyncio.Event | None = None
 
     async def receive(self, request: str, workspace_id=None, conversation_id=None) -> Objective:
         self.received.append((request, conversation_id))
@@ -72,6 +74,8 @@ class RecordingManager:
         from domain.workforce import directions
 
         self.directions.append(directions.current())
+        if self.pause is not None:
+            await self.pause.wait()
         finished = objective.to(
             ObjectiveStatus.DONE,
             ObjectiveResult(
@@ -80,6 +84,10 @@ class RecordingManager:
         )
         await self._objectives.save(finished)
         return finished.result
+
+    async def resume_objective(self, objective: Objective) -> ObjectiveResult:
+        self.resumed.append(objective.id)
+        return await self.handle_objective(objective)
 
 
 class NoWaiter:
@@ -147,12 +155,14 @@ def build(
     conversations = InMemoryConversationRepository()
     tasks = InMemoryTaskRepository()
     manager = RecordingManager(objectives)
+    approvals = _NoApprovals()
     parts = {
         "objectives": objectives,
         "conversations": conversations,
         "tasks": tasks,
         "manager": manager,
         "waiter": waiter or NoWaiter(),
+        "approvals": approvals,
     }
     service = PrometheusService(
         ServiceDependencies(
@@ -172,7 +182,7 @@ def build(
             plans=NoPlans(),
             tasks=tasks,
             employees=FakeRegistry(),
-            approvals=_NoApprovals(),
+            approvals=approvals,
             waiter=parts["waiter"],
             tool_calls=EmptyLog(),
             llm_calls=EmptyLog(),
@@ -197,6 +207,9 @@ class _NoCancellations:
 
 
 class _NoApprovals:
+    def __init__(self) -> None:
+        self.abandoned = 0
+
     async def save(self, approval):
         return None
 
@@ -211,6 +224,9 @@ class _NoApprovals:
 
     async def expire_overdue(self, now=None):
         return 0
+
+    async def expire_abandoned(self):
+        return self.abandoned
 
 
 # --- What crosses the boundary -------------------------------------------------
@@ -535,6 +551,39 @@ async def test_what_a_request_says_about_how_reaches_the_run_that_does_it() -> N
 
     assert parts["manager"].directions == [chosen]
     assert directions.current() == directions.NONE, "carried by the run, not left behind"
+
+
+async def test_startup_expires_abandoned_approvals_and_resumes_incomplete_objectives() -> None:
+    from domain.workforce.directions import ApprovalChoice, Directions
+
+    service, parts = build()
+    directions = Directions(approvals=ApprovalChoice.AUTO, model="careful")
+    left_behind = Objective.create("Finish the report", directions=directions)
+    await parts["objectives"].save(left_behind)
+    parts["approvals"].abandoned = 2
+
+    recovered = await service.recover()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert recovered == {"expired_approvals": 2, "objectives": 1}
+    assert parts["manager"].resumed == [left_behind.id]
+    assert parts["manager"].directions == [directions]
+
+
+async def test_shutdown_leaves_an_objective_for_the_next_process() -> None:
+    service, parts = build()
+    objective = Objective.create("Finish the report")
+    await parts["objectives"].save(objective)
+    parts["manager"].pause = asyncio.Event()
+
+    await service.recover()
+    await asyncio.sleep(0)
+    await service.aclose()
+
+    stored = await parts["objectives"].get(objective.id)
+    assert stored is not None
+    assert stored.status is ObjectiveStatus.RECEIVED
 
 
 async def test_stopping_an_objective_nobody_is_carrying_closes_it() -> None:

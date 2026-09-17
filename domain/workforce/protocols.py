@@ -128,11 +128,8 @@ class Plan:
     tasks: tuple[Task, ...] = ()
     dependencies: tuple[tuple[UUID, UUID], ...] = ()  # (task_id, depends_on)
     #: What each task needs from whoever takes it, by task id - what they must
-    #: be able to do, and which connected service they must hold. A routing
-    #: hint, and deliberately not persisted: the plan's shape is a record, but
-    #: what it took to choose an employee is an input to a decision already
-    #: recorded on the assignment. A plan read back from storage has none, which
-    #: is correct - nothing re-delegates a plan that has already run.
+    #: be able to do, and which connected service they must hold. Persisted with
+    #: the plan because a process may stop before the first assignment exists.
     requirements: dict[UUID, Requirement] = field(default_factory=dict)
     revision: int = 1
     status: PlanStatus = PlanStatus.DRAFT
@@ -234,6 +231,10 @@ class WorkforceManager(Protocol):
 
     async def handle_objective(self, objective: Objective) -> ObjectiveResult: ...
 
+    async def resume_objective(self, objective: Objective) -> ObjectiveResult:
+        """Continue a non-terminal objective recovered from durable storage."""
+        ...
+
     async def plan(self, objective: Objective) -> Plan: ...
 
     async def delegate(self, task: Task) -> TaskAssignment: ...
@@ -266,4 +267,8 @@ class TaskExecution(Protocol):
 
     async def start(self, task: Task, assignment: TaskAssignment) -> Task:
         """Persist both, carry the task to a terminal state, and return it."""
+        ...
+
+    async def resume(self, task: Task) -> Task:
+        """Continue a previously persisted task from its execution cursor."""
         ...

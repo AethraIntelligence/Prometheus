@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -221,6 +222,13 @@ def test_a_task_a_person_stopped_is_not_recovered_from() -> None:
     assert classify(cancelled) is Recovery.GIVE_UP
 
 
+def test_an_approval_wait_lost_to_a_restart_requires_a_person() -> None:
+    waiting = Task.create("Send the message").transition_to(TaskStatus.RUNNING)[0]
+    waiting = waiting.transition_to(TaskStatus.WAITING_FOR_APPROVAL)[0]
+
+    assert classify(waiting) is Recovery.GIVE_UP
+
+
 # --- Running a plan -----------------------------------------------------------
 
 
@@ -240,6 +248,33 @@ async def test_tasks_run_in_dependency_order_and_pass_results_forward() -> None:
     # The second task was told what the first produced, and nothing more.
     second_context = execution.started[1][1].context
     assert any("Collect the data" in fact for fact in second_context.facts)
+
+
+async def test_completed_work_is_reused_and_an_interrupted_dependency_is_resumed() -> None:
+    execution = RecordingExecution()
+    supervisor = Supervisor(
+        execution=execution,
+        delegator=CapabilityDelegator(FakeLLM(), FakeRegistry(READER)),
+    )
+    first = Task.create("Collect the data")
+    first = first.transition_to(TaskStatus.RUNNING)[0]
+    first = first.transition_to(
+        TaskStatus.COMPLETED, result=TaskResult(summary="collected")
+    )[0]
+    first = replace(first, assigned_employee_id=READER.id)
+    second = Task.create("Write it up")
+    second = second.transition_to(TaskStatus.RUNNING)[0]
+    second = replace(second, assigned_employee_id=READER.id)
+    plan = Plan.create(
+        first.id,
+        tasks=(first, second),
+        dependencies=((second.id, first.id),),
+    )
+
+    result = await supervisor.run(plan)
+
+    assert result.all_succeeded
+    assert execution.goals == ["Write it up"], "completed work was not started again"
 
 
 async def test_a_task_whose_dependency_failed_is_never_started() -> None:

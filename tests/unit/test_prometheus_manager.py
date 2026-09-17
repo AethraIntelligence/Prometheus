@@ -10,6 +10,7 @@ with a machine that has nobody to give work to.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -21,7 +22,8 @@ from application.prometheus.supervisor import Supervisor
 from application.prometheus.synthesis import NOTHING_WAS_DONE, Synthesizer, actions
 from application.prometheus.verification import ObjectiveVerifier
 from domain.errors import ProviderUnavailableError
-from domain.workforce.protocols import ObjectiveStatus
+from domain.tasks.task import Task, TaskCreatedBy, TaskResult, TaskStatus
+from domain.workforce.protocols import Objective, ObjectiveStatus, Plan, PlanStatus
 from infrastructure.persistence.objective_repository import InMemoryObjectiveRepository
 from infrastructure.persistence.plan_repository import InMemoryPlanRepository
 from infrastructure.progress.broadcaster import InMemoryProgressBroadcaster
@@ -147,6 +149,49 @@ async def test_one_sentence_becomes_a_verified_answer() -> None:
     revisions = await plans.for_objective(objective.id)
     assert [p.revision for p in revisions] == [1]
     assert revisions[0].status.value == "DONE"
+
+
+async def test_restart_reuses_completed_work_and_resumes_only_the_interrupted_task() -> None:
+    execution = RecordingExecution()
+    objectives = InMemoryObjectiveRepository()
+    plans = InMemoryPlanRepository()
+    manager, _, _, _ = build(
+        script=[verdict(True), "The recovered work is complete."],
+        execution=execution,
+        objectives=objectives,
+        plans=plans,
+    )
+    objective = replace(
+        Objective.create("Read and summarise the notes"),
+        status=ObjectiveStatus.RUNNING,
+        acceptance_criteria=("the notes are summarised",),
+    )
+    first = replace(
+        Task.create("Read the notes", created_by=TaskCreatedBy.PROMETHEUS),
+        status=TaskStatus.COMPLETED,
+        assigned_employee_id=READER.id,
+        result=TaskResult(summary="The notes contain three items."),
+    )
+    second = replace(
+        Task.create("Summarise the notes", created_by=TaskCreatedBy.PROMETHEUS),
+        status=TaskStatus.RUNNING,
+        assigned_employee_id=READER.id,
+    )
+    saved = Plan.create(
+        objective.id,
+        tasks=(first, second),
+        dependencies=((second.id, first.id),),
+        status=PlanStatus.RUNNING,
+    )
+    await objectives.save(objective)
+    await plans.save(saved)
+
+    result = await manager.resume_objective(objective)
+
+    assert result.status is ObjectiveStatus.DONE
+    assert result.summary == "The recovered work is complete."
+    assert [task.id for task, _ in execution.started] == [second.id]
+    assert execution.started[0][0].status is TaskStatus.RUNNING
 
 
 async def test_the_answer_carries_the_evidence_behind_it() -> None:

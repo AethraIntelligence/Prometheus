@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 from domain.capabilities.models import CapabilityRequirement
 from domain.employees.definition import EmployeeDefinition
 from domain.errors import EmployeeNotFoundError
+from domain.policies.models import ActorKind
 from domain.tasks.task import Task, TaskResult, TaskStatus
 from domain.tools.refusals import REFUSED
 from domain.workforce.assignment import TaskAssignment
@@ -69,6 +70,16 @@ class RecordingExecution:
         return [task.goal for task, _ in self.started]
 
     async def start(self, task: Task, assignment: TaskAssignment) -> Task:
+        self.started.append((task, assignment))
+        return self._outcome(task, assignment)
+
+    async def resume(self, task: Task) -> Task:
+        assignment = TaskAssignment.create(
+            task_id=task.id,
+            employee_id=task.assigned_employee_id or uuid4(),
+            assigned_by=ActorKind.PROMETHEUS,
+            workspace_id=task.workspace_id,
+        )
         self.started.append((task, assignment))
         return self._outcome(task, assignment)
 

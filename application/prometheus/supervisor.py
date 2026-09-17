@@ -146,6 +146,11 @@ def classify(task: Task) -> Recovery:
         return Recovery.RETRY  # never consulted; kept total for the caller's sake
     if task.status is TaskStatus.CANCELLED:
         return Recovery.GIVE_UP
+    if task.status is TaskStatus.WAITING_FOR_APPROVAL:
+        # The Future that held this question belonged to the previous process.
+        # Startup expires the row; only a person may decide what should happen
+        # next, so neither retrying nor silently replanning is safe.
+        return Recovery.GIVE_UP
 
     stopped_by = (task.result.output.get("stopped_by") if task.result else None) or None
     if stopped_by:
@@ -363,6 +368,9 @@ class Supervisor:
         avoid: set[str],
         requirement: Requirement | None = None,
     ) -> TaskOutcome:
+        if planned.status is not TaskStatus.CREATED:
+            return await self._resume(planned, objective_id)
+
         # `DelegationError` is deliberately not caught here. It means the machine
         # has no declared employee at all - a fact about the workforce, not
         # about this task - and every replanned attempt would end in the same
@@ -404,6 +412,41 @@ class Supervisor:
         return TaskOutcome(
             task=finished,
             employee=chosen.name,
+            reason=taken.reason or _why(finished),
+            acceptance=taken,
+        )
+
+    async def _resume(self, task: Task, objective_id: UUID | None) -> TaskOutcome:
+        """Use persisted work instead of delegating or starting it again."""
+        employee = self._delegator.employee_name(
+            task.assigned_employee_id, task.workspace_id
+        )
+        if task.is_terminal:
+            finished = task
+        elif task.is_resumable:
+            await self._announce(
+                task,
+                objective_id,
+                f"Resuming {employee}: {task.goal}",
+                payload={"employee": employee, "task_id": str(task.id), "resumed": True},
+            )
+            finished = await self._execution.resume(task)
+        else:
+            reason = (
+                "The task was waiting on an external decision when the process stopped; "
+                "the previous caller no longer exists."
+            )
+            return TaskOutcome(
+                task=task,
+                employee=employee,
+                reason=reason,
+                acceptance=Acceptance(accepted=False, reason=reason),
+            )
+
+        taken = accept(finished)
+        return TaskOutcome(
+            task=finished,
+            employee=employee,
             reason=taken.reason or _why(finished),
             acceptance=taken,
         )

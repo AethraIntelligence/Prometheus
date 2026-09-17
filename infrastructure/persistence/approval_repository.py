@@ -124,6 +124,21 @@ class SqlApprovalRepository:
             )
             return int(result.rowcount or 0)
 
+    async def expire_abandoned(self) -> int:
+        moment = datetime.now(UTC)
+        async with self._session() as session:
+            result = await session.execute(
+                update(ApprovalRow)
+                .where(ApprovalRow.state == ApprovalState.PENDING.value)
+                .values(
+                    state=ApprovalState.EXPIRED.value,
+                    resolved_at=moment,
+                    resolved_by="restart",
+                    comment="The process stopped before this decision was answered.",
+                )
+            )
+            return int(result.rowcount or 0)
+
     async def for_task(self, task_id: UUID) -> list[Approval]:
         async with self._session() as session:
             rows = await session.scalars(
@@ -167,6 +182,16 @@ class InMemoryApprovalRepository:
         for approval in overdue:
             self._approvals[approval.id] = approval.expire(moment)
         return len(overdue)
+
+    async def expire_abandoned(self) -> int:
+        pending = [approval for approval in self._approvals.values() if approval.is_pending]
+        for approval in pending:
+            self._approvals[approval.id] = approval.resolve(
+                ApprovalState.EXPIRED,
+                resolved_by="restart",
+                comment="The process stopped before this decision was answered.",
+            )
+        return len(pending)
 
     async def for_task(self, task_id: UUID) -> list[Approval]:
         return sorted(

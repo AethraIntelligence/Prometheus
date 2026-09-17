@@ -358,6 +358,10 @@ class PlanRow(Base):
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: The immutable tasks the manager proposed and their routing needs. Task
+    #: rows replace these values as work starts, but an unstarted task must
+    #: survive a crash between planning and delegation.
+    definition: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 
 

@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.workforce.directions import ApprovalChoice, Directions
-from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
+from domain.workforce.protocols import (
+    TERMINAL_OBJECTIVE_STATUSES,
+    Objective,
+    ObjectiveResult,
+    ObjectiveStatus,
+)
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.persistence.dialect import upsert
 from infrastructure.persistence.models import ObjectiveRow
@@ -155,6 +160,16 @@ class SqlObjectiveRepository:
             )
             return [_to_objective(row) for row in rows]
 
+    async def list_incomplete(self) -> list[Objective]:
+        terminal = [status.value for status in TERMINAL_OBJECTIVE_STATUSES]
+        async with self._session() as session:
+            rows = await session.scalars(
+                select(ObjectiveRow)
+                .where(ObjectiveRow.status.not_in(terminal))
+                .order_by(ObjectiveRow.created_at, ObjectiveRow.id)
+            )
+            return [_to_objective(row) for row in rows]
+
 
 class InMemoryObjectiveRepository:
     """Implements `domain.workforce.repository.ObjectiveRepository`."""
@@ -178,3 +193,7 @@ class InMemoryObjectiveRepository:
     async def for_conversation(self, conversation_id: UUID) -> list[Objective]:
         thread = [o for o in self._objectives.values() if o.conversation_id == conversation_id]
         return [deepcopy(o) for o in sorted(thread, key=lambda o: o.created_at)]
+
+    async def list_incomplete(self) -> list[Objective]:
+        found = [objective for objective in self._objectives.values() if not objective.is_terminal]
+        return [deepcopy(item) for item in sorted(found, key=lambda item: item.created_at)]

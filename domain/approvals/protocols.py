@@ -57,6 +57,16 @@ class ApprovalRepository(Protocol):
         """
         ...
 
+    async def expire_abandoned(self) -> int:
+        """Close pending questions whose in-process waiters were lost.
+
+        Called once while a new process starts, before it accepts work. At
+        that point every persisted PENDING row belongs to the previous process;
+        treating one as approved, or waiting on a Future that no longer
+        exists, would both be unsafe.
+        """
+        ...
+
 
 class ApprovalWaiter(Protocol):
     """The other side of a question: who is holding the call while it is asked.

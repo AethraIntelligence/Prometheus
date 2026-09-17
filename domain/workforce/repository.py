@@ -50,6 +50,10 @@ class ObjectiveRepository(Protocol):
         """
         ...
 
+    async def list_incomplete(self) -> list[Objective]:
+        """Work left by a previous process, oldest first across workspaces."""
+        ...
+
 
 class PlanRepository(Protocol):
     """Plans and their task dependencies, stored together.
