@@ -17,7 +17,9 @@ from pathlib import Path
 
 from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.errors import ConfigurationError
-from domain.llm.catalog import ModelEntry
+from domain.llm.catalog import ModelEntry, Privacy, default_privacy
+
+__all__ = ["DEFAULT_CATALOG_PATH", "ModelCatalog", "ModelEntry", "Privacy", "default_privacy"]
 from domain.llm.models import TaskKind
 
 DEFAULT_CATALOG_PATH = Path(__file__).parent / "models.toml"
@@ -56,6 +58,10 @@ class ModelCatalog:
                         output_cost_per_1k_usd=float(spec.get("output_cost_per_1k_usd", 0.0)),
                         quality=float(spec.get("quality", 0.5)),
                         dimensions=int(spec.get("dimensions", 0)),
+                        privacy=Privacy(str(spec["privacy"]).upper())
+                        if spec.get("privacy")
+                        else default_privacy(spec["provider"]),
+                        latency_ms=int(spec.get("latency_ms", 0)),
                     )
                 )
             except (KeyError, ValueError) as error:
@@ -115,4 +121,5 @@ class ModelCatalog:
                 or entry.context_tokens >= requirement.min_context_tokens
             )
             and entry.quality >= requirement.min_quality
+            and (not requirement.local_only or entry.privacy is Privacy.LOCAL)
         ]

@@ -62,9 +62,12 @@ function TaskDetail({
         <details>
           <summary>Models and tools</summary>
           <p className="work-muted">{task.model_reason}</p>
-          {task.models.map((model) => (
-            <p key={`${model.provider}:${model.model}`} className="work-evidence">
-              Model · {model.model} · {model.calls} call(s) · ${model.cost_usd.toFixed(4)}
+          {task.models.map((model, index) => (
+            <p key={`${model.provider}:${model.model}:${index}`} className="work-evidence">
+              {model.escalation_level ? "Escalated model" : "Model"} · {model.model}
+              {model.task_kind ? ` · ${model.task_kind.toLowerCase()}` : ""} · {model.calls} call(s)
+              {model.failed ? ` (${model.failed} failed)` : ""} · ${model.cost_usd.toFixed(4)}
+              {model.reason ? ` · ${model.reason}` : ""}
             </p>
           ))}
           {task.tools.map((tool, index) => (

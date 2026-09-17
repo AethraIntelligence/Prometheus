@@ -33,6 +33,10 @@ class RecommendedModel:
     input_cost_per_1k_usd: float = 0.0
     output_cost_per_1k_usd: float = 0.0
     dimensions: int = 0
+    #: Empty follows the provider default. LOCAL/REMOTE handles local servers
+    #: that forward selected models to a vendor cloud.
+    privacy: str = ""
+    latency_ms: int = 0
     #: Kinds of work (TaskKind values) to send to it when the setup is applied.
     route: tuple[str, ...] = ()
 

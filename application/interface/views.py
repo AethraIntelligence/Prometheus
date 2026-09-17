@@ -534,15 +534,30 @@ def work_task(
         ((datetime.now(UTC) if not task.is_terminal else task.updated_at) - task.created_at)
         .total_seconds(),
     )
-    models: dict[tuple[str, str], dict[str, Any]] = {}
+    # One line per model *and reason*: the same model chosen as the planning
+    # default and again as an escalation are two different decisions, and a
+    # trace that merged them could not show the second.
+    models: dict[tuple[str, str, str, str, int], dict[str, Any]] = {}
     for call in model_calls:
-        key = (call.provider, call.model)
+        key = (call.provider, call.model, call.task_kind, call.reason, call.escalation_level)
         entry = models.setdefault(
             key,
-            {"provider": call.provider, "model": call.model, "calls": 0, "cost_usd": 0.0},
+            {
+                "provider": call.provider,
+                "model": call.model,
+                "entry": call.entry,
+                "task_kind": call.task_kind,
+                "reason": call.reason,
+                "escalation_level": call.escalation_level,
+                "calls": 0,
+                "failed": 0,
+                "cost_usd": 0.0,
+            },
         )
         entry["calls"] += 1
+        entry["failed"] += 0 if call.success else 1
         entry["cost_usd"] = round(float(entry["cost_usd"]) + call.usage.cost_usd, 6)
+    escalated = any(call.escalation_level > 0 for call in model_calls)
     return {
         **task_summary(task),
         "parent_id": str(task.parent_id) if task.parent_id else None,
@@ -563,8 +578,12 @@ def work_task(
             },
         },
         "models": list(models.values()),
+        "escalated": escalated,
         "model_reason": (
-            "Models were routed per planning, execution and verification requirements."
+            "Ran on a stronger model after an earlier attempt failed in a way a better "
+            "model can fix."
+            if escalated
+            else "Each model below was chosen for the kind of work shown, for the reason shown."
             if model_calls
             else "No model call has been recorded for this task yet."
         ),
@@ -970,6 +989,11 @@ def model_entry(entry: ModelEntry, *, used_for: tuple[str, ...] = ()) -> dict[st
         "output_cost_per_1k_usd": entry.output_cost_per_1k_usd,
         "quality": entry.quality,
         "dimensions": entry.dimensions,
+        # The contract routing reads: which quality band escalation moves it
+        # in, whether its prompts leave the machine, how long it usually takes.
+        "tier": entry.contract.tier,
+        "privacy": entry.privacy.value,
+        "latency_ms": entry.latency_ms,
         # What it can be given, so a page offers an embedding model for
         # embedding and a chat model for everything else, and never the reverse.
         "embeds": entry.embeds,

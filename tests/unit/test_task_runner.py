@@ -200,3 +200,33 @@ async def test_resuming_finds_the_assignment_the_task_already_had(registry) -> N
 
     assert resumed.status is TaskStatus.COMPLETED
     assert (await assignments.get(assignment.id)).outcome is AssignmentOutcome.COMPLETED
+
+
+async def test_a_task_runs_under_its_escalation_and_bills_its_own_calls(registry) -> None:
+    """Phase 10: the manager's escalation reaches every model call of the run.
+
+    Read off the stored assignment rather than passed along a call chain, so a
+    resumed escalation is still one, and every call is attributed to the task
+    that made it - which is what lets the trace say why each model ran.
+    """
+    from domain.llm import escalation, routing
+
+    seen: list[tuple[object, object]] = []
+
+    def watch(request):
+        del request
+        seen.append((escalation.current().to_dict(), routing.billed_task()))
+
+    runner, _, _, llm = build(registry, [PLAN, reply("An answer."), PASS])
+    llm._on_request = watch
+    context = SharedContext(data={"escalation": {"level": 1, "cause": "NOT_ACCEPTED"}})
+
+    task, assignment = await runner.submit("Explain WAL mode", "researcher", context=context)
+    finished = await runner.run(task, assignment)
+
+    assert finished.status is TaskStatus.COMPLETED
+    assert seen and all(
+        state == {"level": 1, "cause": "NOT_ACCEPTED"} and billed == task.id
+        for state, billed in seen
+    )
+    assert escalation.current().level == 0, "the escalation belongs to that run only"

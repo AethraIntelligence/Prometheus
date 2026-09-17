@@ -91,6 +91,9 @@ EDITABLE: tuple[Editable, ...] = (
     Editable("local_llm_autostart", "Models", "Start the local model server",
              "Start Ollama, hidden, the first time a local model is used and nothing answers.",
              BOOL),
+    Editable("local_models_only", "Models", "Keep prompts on this machine",
+             "Only models whose contract says LOCAL are used. Work no local model can do "
+             "stops with a reason instead of being sent elsewhere.", BOOL),
     Editable("llm_retry_attempts", "Models", "Retries after a provider error",
              "How many times a transient provider error is retried.", INT, minimum=0),
     Editable("llm_timeout_seconds", "Models", "Model timeout",

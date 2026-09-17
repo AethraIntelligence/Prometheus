@@ -88,6 +88,8 @@ function scriptedRuntime({ withRunner = false, stopped = false } = {}) {
             output_cost_per_1k_usd: 0,
             quality: 0.5,
             dimensions: 0,
+            privacy: body.privacy,
+            latency_ms: 0,
             embeds: (body.capabilities ?? []).includes("EMBEDDING"),
             generates_text: !(
               (body.capabilities ?? []).length === 1 && body.capabilities[0] === "EMBEDDING"
@@ -268,6 +270,7 @@ describe("Settings → Providers", () => {
     await userEvent.selectOptions(screen.getByLabelText("Model"), "a-small-model");
     await userEvent.click(screen.getByRole("button", { name: "Add model" }));
     await waitFor(() => expect(state.models).toHaveLength(1));
+    expect(state.models[0]?.privacy).toBe("LOCAL");
 
     await userEvent.selectOptions(
       await screen.findByLabelText("Model for planning"),
@@ -280,6 +283,21 @@ describe("Settings → Providers", () => {
     // choice it just made.
     const entry = await screen.findByLabelText("Model: fast-local");
     expect(within(entry).getByText("planning")).toBeInTheDocument();
+  });
+
+  it("can mark a model behind a local connection as remote", async () => {
+    const { state, client } = scriptedRuntime({ withRunner: true });
+    await show(client);
+    await addProvider("the-runner", { kind: "local" });
+    await waitFor(() => expect(state.connections).toHaveLength(1));
+
+    await userEvent.click(await screen.findByRole("button", { name: "New model" }));
+    await userEvent.type(await screen.findByLabelText("Entry name"), "cloud-forwarder");
+    await userEvent.selectOptions(screen.getByLabelText("Model"), "a-small-model");
+    await userEvent.selectOptions(screen.getByLabelText("Prompt location"), "REMOTE");
+    await userEvent.click(screen.getByRole("button", { name: "Add model" }));
+
+    await waitFor(() => expect(state.models[0]?.privacy).toBe("REMOTE"));
   });
 
   it("shows the runtime's own refusal rather than deciding for itself", async () => {

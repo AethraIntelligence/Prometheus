@@ -82,7 +82,12 @@ from domain.integrations.catalog import (
 from domain.integrations.models import Integration, IntegrationKind
 from domain.knowledge.models import KnowledgeQuery
 from domain.knowledge.protocols import Retriever
-from domain.llm.catalog import DEFAULT_CONTEXT_TOKENS, ModelEntry
+from domain.llm.catalog import (
+    DEFAULT_CONTEXT_TOKENS,
+    ModelEntry,
+    Privacy,
+    default_privacy,
+)
 from domain.llm.models import TaskKind
 from domain.llm.telemetry import LLMCallLog
 from domain.memory.models import (
@@ -1591,6 +1596,8 @@ class PrometheusService:
         output_cost_per_1k_usd: float = 0.0,
         quality: float = 0.5,
         dimensions: int = 0,
+        privacy: str = "",
+        latency_ms: int = 0,
     ) -> dict[str, Any]:
         """Strings in, domain values on - as everywhere else on this boundary.
 
@@ -1608,18 +1615,28 @@ class PrometheusService:
             context_tokens = await providers.context_of(
                 connection.strip(), model.strip(), workspace
             ) or DEFAULT_CONTEXT_TOKENS
-        entry = ModelEntry(
-            name=name.strip(),
-            provider=provider.strip(),
-            model=model.strip(),
-            connection=connection.strip(),
-            capabilities=frozenset(_capability(item) for item in capabilities),
-            context_tokens=context_tokens,
-            input_cost_per_1k_usd=input_cost_per_1k_usd,
-            output_cost_per_1k_usd=output_cost_per_1k_usd,
-            quality=quality,
-            dimensions=dimensions,
-        )
+        clean_provider = provider.strip()
+        try:
+            entry = ModelEntry(
+                name=name.strip(),
+                provider=clean_provider,
+                model=model.strip(),
+                connection=connection.strip(),
+                capabilities=frozenset(_capability(item) for item in capabilities),
+                context_tokens=context_tokens,
+                input_cost_per_1k_usd=input_cost_per_1k_usd,
+                output_cost_per_1k_usd=output_cost_per_1k_usd,
+                quality=quality,
+                dimensions=dimensions,
+                privacy=(
+                    Privacy(privacy.strip().upper())
+                    if privacy.strip()
+                    else default_privacy(clean_provider)
+                ),
+                latency_ms=latency_ms,
+            )
+        except ValueError as error:
+            raise PrometheusError(str(error)) from error
         added = views.model_entry(await providers.add_model(entry, workspace))
         await self._follow_embedding_model()
         return added

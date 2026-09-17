@@ -32,7 +32,7 @@ from domain.employees.validation import Issue, check_all
 from domain.errors import PrometheusError
 from domain.integrations.repository import IntegrationRepository
 from domain.knowledge.protocols import EmbeddingProvider, KnowledgeStore, Retriever
-from domain.llm.models import RoutingHints, TaskKind
+from domain.llm.models import ModelChoice, RoutingHints, TaskKind
 from domain.llm.protocols import LLM, ModelRouter
 from domain.llm.telemetry import LLMCallLog
 from domain.memory.protocols import Memory, MemoryMaintenance
@@ -241,7 +241,10 @@ class Container:
 
     @cached_property
     def model_router(self) -> ModelRouter:
-        return CapabilityAwareModelRouter(self.model_catalog)
+        return CapabilityAwareModelRouter(
+            self.model_catalog,
+            local_only=bool(getattr(self.settings, "local_models_only", False)),
+        )
 
     @cached_property
     def llm_factory(self) -> ProviderFactory:
@@ -267,7 +270,7 @@ class Container:
         """Pick a model for a piece of work and hand back a client for it."""
         from infrastructure.llm.directed import DirectedLLM
 
-        def route() -> LLM:
+        def route() -> tuple[LLM, ModelChoice]:
             choice = self.model_router.select(
                 task_kind, requirement or CapabilityRequirement(), hints
             )
@@ -276,9 +279,9 @@ class Container:
             self.logger.debug(
                 "llm.routed", task_kind=str(task_kind), model=choice.model, reason=choice.reason
             )
-            return self.llm_factory.for_choice(choice)
+            return self.llm_factory.for_choice(choice), choice
 
-        return DirectedLLM(route(), route)
+        return DirectedLLM(route(), route, task_kind=task_kind)
 
     # --- Workforce ------------------------------------------------------------
 

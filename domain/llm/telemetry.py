@@ -24,6 +24,12 @@ class LLMCallRecord:
     task_id: UUID | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    #: Why this model ran: the kind of work, the catalog entry, the router's
+    #: reason and the escalation level. Empty where nothing routed the call.
+    task_kind: str = ""
+    entry: str = ""
+    reason: str = ""
+    escalation_level: int = 0
 
 
 @dataclass(frozen=True, slots=True)

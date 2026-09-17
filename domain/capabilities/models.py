@@ -47,6 +47,10 @@ class CapabilityRequirement:
     #: had just been shown to be unfit for. Stated here, it filters first, and
     #: the router says in its reason that the default could not do the work.
     min_quality: float = 0.0
+    #: Only models whose prompts never leave this machine. A requirement, like
+    #: the quality floor, so a configured default that is remote is filtered out
+    #: and the trace says so rather than the prompt being sent anyway.
+    local_only: bool = False
 
     def is_satisfied_by(self, offered: frozenset[Capability]) -> bool:
         return self.required <= offered

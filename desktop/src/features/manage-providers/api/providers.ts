@@ -28,6 +28,8 @@ export interface NewModel {
   capabilities?: string[];
   context_tokens?: number;
   quality?: number;
+  privacy?: "LOCAL" | "REMOTE";
+  latency_ms?: number;
 }
 
 export async function addConnection(

@@ -20,6 +20,7 @@ export interface ModelSubmission {
   model: string;
   connection: string;
   capabilities: string[];
+  privacy: "LOCAL" | "REMOTE";
 }
 
 interface Props {
@@ -45,7 +46,10 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
   const [attempt, setAttempt] = useState(0);
   const choices = found?.models ?? [];
   const [capabilities, setCapabilities] = useState<string[]>(["TEXT_REASONING", "TOOL_CALLING"]);
+  const [privacy, setPrivacy] = useState<"" | "LOCAL" | "REMOTE">("");
   const [busy, setBusy] = useState(false);
+  const inferredPrivacy =
+    connections.find((item) => item.name === connection)?.kind === "local" ? "LOCAL" : "REMOTE";
 
   useEffect(() => {
     let current = true;
@@ -108,6 +112,7 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
         model: model.trim(),
         connection,
         capabilities,
+        privacy: privacy || inferredPrivacy,
       });
       setName("");
       setModel("");
@@ -131,7 +136,10 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
         Through
         <select
           value={connection}
-          onChange={(event) => setConnection(event.target.value)}
+          onChange={(event) => {
+            setConnection(event.target.value);
+            setPrivacy("");
+          }}
           disabled={disabled || busy}
         >
           {connections.map((item) => (
@@ -139,6 +147,17 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
               {item.name}
             </option>
           ))}
+        </select>
+      </label>
+      <label>
+        Prompt location
+        <select
+          value={privacy || inferredPrivacy}
+          onChange={(event) => setPrivacy(event.target.value as "LOCAL" | "REMOTE")}
+          disabled={disabled || busy}
+        >
+          <option value="LOCAL">Stays on this machine</option>
+          <option value="REMOTE">Leaves this machine</option>
         </select>
       </label>
       <label>

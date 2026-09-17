@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.validation.evidence import Metrics
 from domain.validation.failures import FailureKind
+from domain.validation.profile import RoutingProfile
 from domain.validation.run import RunStatus, ValidationRun
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.persistence.dialect import upsert
@@ -55,6 +56,7 @@ def _to_run(row: ValidationRunRow) -> ValidationRun:
         note=str(result.get("note", "")),
         checks=ValidationRun.checks_from(result.get("checks", [])),
         metrics=Metrics.from_dict(result.get("metrics", {})),
+        profile=RoutingProfile.from_dict(result.get("profile")),
         workspace_id=WorkspaceId(row.workspace_id),
         started_at=_aware(row.started_at),  # type: ignore[arg-type]
         finished_at=_aware(row.finished_at),

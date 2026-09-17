@@ -15,6 +15,7 @@ from typing import Any
 
 from domain.capabilities.models import Capability
 from domain.errors import ConfigurationError
+from domain.llm.catalog import ModelEntry, Privacy, default_privacy
 from domain.llm.models import TaskKind
 from domain.providers.guide import (
     ProviderAdvice,
@@ -80,19 +81,24 @@ def _setup(item: dict[str, Any], kinds: set[str]) -> Setup:
         connection_name=item["connection_name"],
         good_for=_text(item.get("good_for", "")),
         steps=steps,
-        models=tuple(_model(model, item["id"]) for model in item.get("models", ())),
+        models=tuple(
+            _model(model, item["id"], item["kind"]) for model in item.get("models", ())
+        ),
         cautions=tuple(_text(text) for text in item.get("cautions", ())),
     )
 
 
-def _model(item: dict[str, Any], setup: str) -> RecommendedModel:
+def _model(item: dict[str, Any], setup: str, provider: str) -> RecommendedModel:
     for capability in item["capabilities"]:
         if capability not in Capability.__members__:
             raise ConfigurationError(f"Setup '{setup}': unknown capability '{capability}'.")
     for kind in item.get("route", ()):
         if kind not in TaskKind.__members__:
             raise ConfigurationError(f"Setup '{setup}': unknown kind of work '{kind}'.")
-    return RecommendedModel(
+    privacy = str(item.get("privacy", "")).upper()
+    if privacy and privacy not in Privacy.__members__:
+        raise ConfigurationError(f"Setup '{setup}': unknown privacy '{privacy}'.")
+    recommended = RecommendedModel(
         name=item["name"],
         role=item["role"],
         model=item["model"],
@@ -103,8 +109,27 @@ def _model(item: dict[str, Any], setup: str) -> RecommendedModel:
         input_cost_per_1k_usd=float(item.get("input_cost_per_1k_usd", 0.0)),
         output_cost_per_1k_usd=float(item.get("output_cost_per_1k_usd", 0.0)),
         dimensions=int(item.get("dimensions", 0)),
+        privacy=privacy,
+        latency_ms=int(item.get("latency_ms", 0)),
         route=tuple(item.get("route", ())),
     )
+    try:
+        ModelEntry(
+            name=recommended.name,
+            provider=provider,
+            model=recommended.model,
+            capabilities=frozenset(Capability(item) for item in recommended.capabilities),
+            context_tokens=recommended.context_tokens,
+            input_cost_per_1k_usd=recommended.input_cost_per_1k_usd,
+            output_cost_per_1k_usd=recommended.output_cost_per_1k_usd,
+            quality=recommended.quality,
+            dimensions=recommended.dimensions,
+            privacy=Privacy(privacy) if privacy else default_privacy(provider),
+            latency_ms=recommended.latency_ms,
+        )
+    except ValueError as error:
+        raise ConfigurationError(f"Setup '{setup}': {error}.") from error
+    return recommended
 
 
 def _provider(item: dict[str, Any], kinds: set[str]) -> ProviderAdvice:

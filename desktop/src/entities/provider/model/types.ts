@@ -47,6 +47,11 @@ export interface ModelEntry {
   generates_text: boolean;
   /** Kinds of work currently routed here, decided by the core. */
   used_for: string[];
+  /** The model's contract, as the core states it: quality band, whether its
+   * prompts leave this machine, and typical latency (0 is unknown). */
+  tier?: string;
+  privacy?: string;
+  latency_ms?: number;
 }
 
 /**

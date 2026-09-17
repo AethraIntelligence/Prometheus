@@ -170,6 +170,12 @@ class LLMCallRow(Base):
     success: Mapped[bool] = mapped_column(nullable=False, default=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    # Why this model, since migration 040: the kind of work, the catalog entry,
+    # the router's reason and whether it was an escalation.
+    task_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    entry: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    escalation_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class TaskAssignmentRow(Base):
@@ -935,6 +941,10 @@ class ModelEntryRow(Base):
     output_cost_per_1k_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     quality: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     dimensions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: LOCAL or REMOTE, and the typical latency - the two parts of a model's
+    #: contract routing reads that the file format did not have (migration 040).
+    privacy: Mapped[str] = mapped_column(String(8), nullable=False, default="REMOTE")
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 

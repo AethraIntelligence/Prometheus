@@ -37,7 +37,11 @@ function item(overrides: Partial<WorkItem> = {}): WorkItem {
         cost_usd: { used: 0.04, limit: 1 },
         wall_time_seconds: { used: 30, limit: 300 },
       },
-      models: [{ provider: "local", model: "reasoner", calls: 2, cost_usd: 0.04 }],
+      models: [
+        { provider: "local", model: "reasoner", calls: 2, cost_usd: 0.04, task_kind: "EXECUTION", reason: "configured default for execution", escalation_level: 0 },
+        { provider: "local", model: "thinker", calls: 1, cost_usd: 0.02, task_kind: "EXECUTION", reason: "escalated from 'fast' (fast) to strong after verification rejected", escalation_level: 1 },
+      ],
+      escalated: true,
       model_reason: "Routed for execution requirements.",
       tools: [{ tool: "search", success: true, reason: "Used search for current sources.", output: {}, error: "" }],
       result: null,
@@ -73,6 +77,8 @@ describe("Work Center", () => {
     expect(await screen.findByRole("heading", { name: "Prepare the launch report" })).toBeInTheDocument();
     expect(screen.getByText("Covers revenue and risks")).toBeInTheDocument();
     expect(screen.getByText("Why this employee: Best match for source research.")).toBeInTheDocument();
+    expect(screen.getByText(/Escalated model · thinker · execution .* after verification rejected/)).toBeInTheDocument();
+    expect(screen.getByText(/Model · reasoner · execution .* configured default for execution/)).toBeInTheDocument();
     expect(within(screen.getByText("Actions").parentElement!).getByText("2.00 / 12")).toBeInTheDocument();
     expect(screen.getAllByText("No action is needed while the employees continue working.")).toHaveLength(2);
 

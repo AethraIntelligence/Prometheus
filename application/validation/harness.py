@@ -28,8 +28,9 @@ reports failures for a switched-off desktop teaches people to stop reading it.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import rmtree
@@ -50,6 +51,7 @@ from domain.tasks.task import TaskCreatedBy, TaskStatus
 from domain.tools.telemetry import ToolCallLog
 from domain.validation.evidence import Evidence, Metrics, check
 from domain.validation.failures import classify
+from domain.validation.profile import RoutingProfile
 from domain.validation.protocols import (
     Approver,
     ObjectiveExecution,
@@ -88,6 +90,7 @@ class ValidationHarness:
         knowledge: KnowledgeService | None = None,
         workspaces: WorkspaceService | None = None,
         approver: Approver | None = None,
+        profile: Callable[[], RoutingProfile] | None = None,
     ) -> None:
         self._scenarios = scenarios
         self._runs = runs
@@ -110,6 +113,9 @@ class ValidationHarness:
         # do work: the scenario declared the answer before the run, and this
         # only holds it for the length of one.
         self._approver = approver
+        # Which models the run is measured on, read when it is recorded. A
+        # pass rate without it cannot tell the gate whether it still applies.
+        self._profile = profile
 
     # --- Running --------------------------------------------------------------
 
@@ -537,6 +543,11 @@ class ValidationHarness:
         return tuple(present), text
 
     async def _record(self, run: ValidationRun) -> ValidationRun:
+        if self._profile is not None and run.profile is None:
+            try:
+                run = replace(run, profile=self._profile())
+            except Exception as error:  # a run without a profile is still a run
+                log.warning("validation.profile_unreadable", error=str(error))
         await self._runs.save(run)
         return run
 

@@ -1,5 +1,18 @@
 export type WorkBucket = "ACTIVE" | "WAITING" | "BLOCKED" | "FAILED" | "COMPLETED";
 
+/** One model, for one kind of work, chosen for one reason - as the runtime recorded it. */
+export interface ModelUse {
+  provider: string;
+  model: string;
+  calls: number;
+  cost_usd: number;
+  entry?: string;
+  task_kind?: string;
+  reason?: string;
+  escalation_level?: number;
+  failed?: number;
+}
+
 export interface WorkArtifact {
   path: string;
   name: string;
@@ -36,7 +49,9 @@ export interface WorkTask {
     cost_usd: BudgetValue;
     wall_time_seconds: BudgetValue;
   };
-  models: Array<{ provider: string; model: string; calls: number; cost_usd: number }>;
+  models: ModelUse[];
+  /** True when any call ran above the normal choice after a failed attempt. */
+  escalated?: boolean;
   model_reason: string;
   tools: Array<{ tool: string; success: boolean; reason: string; output: unknown; error: string }>;
   result: { summary: string; artifacts: string[]; evidence: unknown } | null;

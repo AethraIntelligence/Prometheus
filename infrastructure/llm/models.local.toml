@@ -16,6 +16,10 @@
 [models.local-strong]
 provider = "local"
 model = "gemma4:31b-cloud"
+# Served through the local endpoint, answered on the vendor's machines: its
+# prompts leave this one, so the contract says so and `local_models_only`
+# will not route here.
+privacy = "REMOTE"
 capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "CODE"]
 context_tokens = 131072
 input_cost_per_1k_usd = 0.0

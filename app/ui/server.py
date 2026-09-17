@@ -243,11 +243,13 @@ class NewModel(BaseModel):
     connection: str = ""
     capabilities: tuple[str, ...] = ()
     #: Left out, it is asked of the runner that serves the model.
-    context_tokens: int | None = None
-    input_cost_per_1k_usd: float = 0.0
-    output_cost_per_1k_usd: float = 0.0
-    quality: float = 0.5
-    dimensions: int = 0
+    context_tokens: int | None = Field(default=None, gt=0)
+    input_cost_per_1k_usd: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    output_cost_per_1k_usd: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    quality: float = Field(default=0.5, ge=0, le=1, allow_inf_nan=False)
+    dimensions: int = Field(default=0, ge=0)
+    privacy: str = ""
+    latency_ms: int = Field(default=0, ge=0)
 
 
 class WorkRouting(BaseModel):
@@ -946,6 +948,8 @@ def _routes(app: FastAPI) -> None:
                 output_cost_per_1k_usd=body.output_cost_per_1k_usd,
                 quality=body.quality,
                 dimensions=body.dimensions,
+                privacy=body.privacy,
+                latency_ms=body.latency_ms,
             )
         )
 

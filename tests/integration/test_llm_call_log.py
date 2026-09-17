@@ -57,3 +57,25 @@ async def test_spend_is_attributable_to_a_task(call_log) -> None:
 async def test_failed_calls_are_kept(call_log) -> None:
     await call_log.record(call(0.0, success=False))
     assert (await call_log.total()).calls == 1
+
+
+async def test_why_a_model_ran_is_stored_with_the_call(session_factory) -> None:
+    log = SqlLLMCallLog(session_factory)
+    task_id = uuid4()
+    await log.record(
+        LLMCallRecord(
+            provider="local",
+            model="large",
+            usage=Usage(prompt_tokens=1, output_tokens=1),
+            success=True,
+            task_id=task_id,
+            task_kind="EXECUTION",
+            entry="strong",
+            reason="escalated from 'fast' (fast) to strong after step budget",
+            escalation_level=1,
+        )
+    )
+
+    (stored,) = await log.list_for_task(task_id)
+    assert (stored.task_kind, stored.entry, stored.escalation_level) == ("EXECUTION", "strong", 1)
+    assert stored.reason.startswith("escalated from 'fast'")

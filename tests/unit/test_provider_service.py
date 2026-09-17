@@ -15,11 +15,12 @@ import pytest
 from application.providers.service import ProviderService
 from domain.capabilities.models import Capability
 from domain.errors import ConfigurationError, NotFoundError
-from domain.llm.catalog import ModelEntry
+from domain.llm.catalog import ModelEntry, Privacy
 from domain.llm.models import TaskKind
 from domain.providers.models import Connection, InstalledModels
 from domain.secrets.models import Secret
 from domain.workspace.models import DEFAULT_WORKSPACE_ID
+from infrastructure.llm.guide import load_guide
 
 
 @dataclass(frozen=True)
@@ -251,6 +252,16 @@ async def test_a_machine_that_cannot_discover_says_the_kind_cannot_be_asked() ->
     await providers.add_connection("ollama", "local")
 
     assert await providers.available_models("ollama") == InstalledModels()
+
+
+async def test_a_local_recommended_setup_keeps_prompts_on_this_machine() -> None:
+    providers, _, catalog, _ = service(guide=load_guide())
+    await providers.add_connection("ollama", "local")
+
+    await providers.apply_setup("local-private", "ollama")
+
+    assert catalog.rows
+    assert {entry.privacy for entry in catalog.rows.values()} == {Privacy.LOCAL}
 
 
 # --- Where work goes ----------------------------------------------------------

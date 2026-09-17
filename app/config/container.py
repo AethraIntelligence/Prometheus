@@ -312,6 +312,7 @@ def build_manager(container: Container) -> PrometheusManager:
                 container.llm_for(*CapabilityDelegator.routing()), registry
             ),
             progress=container.progress,
+            escalation=_RoutedEscalation(container),
         ),
         verifier=ObjectiveVerifier(container.llm_for(*ObjectiveVerifier.routing())),
         synthesizer=Synthesizer(
@@ -346,6 +347,18 @@ def build_session_memory(container: Container) -> SessionMemory:
         tool_calls=container.tool_call_log,
         llm=container.llm_for(*SessionMemory.routing()),
     )
+
+
+class _RoutedEscalation:
+    """Asks whichever router the container holds now, not the one it held at
+    assembly: saving a model in Settings replaces the router, and an advisor
+    bound to the old one would answer about a catalog nobody has any more."""
+
+    def __init__(self, container: Container) -> None:
+        self._container = container
+
+    def stronger_available(self, task_kind, required=None) -> bool:
+        return self._container.model_router.stronger_available(task_kind, required)
 
 
 def build_task_runner(container: Container) -> TaskRunner:
@@ -527,7 +540,7 @@ def build_providers(container: Container) -> ProviderService:
     )
 
 
-def build_harness(container: Container) -> ValidationHarness:
+def build_harness(container: Container, *, baseline: bool = False) -> ValidationHarness:
     """Assemble the validation harness with all three of the platform's doors.
 
     It gets the manager, the task runner and the workflow engine - the same
@@ -557,4 +570,13 @@ def build_harness(container: Container) -> ValidationHarness:
         knowledge=build_knowledge(container),
         workspaces=build_workspaces(container),
         approver=approver,
+        profile=lambda: current_routing_profile(container, baseline=baseline),
     )
+
+
+def current_routing_profile(container: Container, *, baseline: bool = False):
+    """What the router answers for every kind of work now - or, for a baseline
+    run, with everything forced onto the strongest model."""
+    from infrastructure.llm.profiles import current_profile
+
+    return current_profile(container.model_router, container.model_catalog, baseline=baseline)

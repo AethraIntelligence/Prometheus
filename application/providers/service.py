@@ -33,7 +33,7 @@ import structlog
 
 from domain.capabilities.models import Capability
 from domain.errors import ConfigurationError, NotFoundError
-from domain.llm.catalog import ModelEntry
+from domain.llm.catalog import ModelEntry, Privacy, default_privacy
 from domain.llm.models import TaskKind
 from domain.providers.guide import ProviderGuide, Setup
 from domain.providers.models import Connection, InstalledModels
@@ -307,6 +307,12 @@ class ProviderService:
                 output_cost_per_1k_usd=recommended.output_cost_per_1k_usd,
                 quality=recommended.quality,
                 dimensions=recommended.dimensions,
+                privacy=(
+                    Privacy(recommended.privacy.upper())
+                    if recommended.privacy
+                    else default_privacy(setup.kind)
+                ),
+                latency_ms=recommended.latency_ms,
             )
             await self._catalog.save_entry(entry, workspace_id)
             entries[name] = entry

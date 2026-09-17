@@ -55,6 +55,9 @@ import structlog
 
 from application.prometheus.delegation import CapabilityDelegator
 from application.workforce.coordinator import WorkforceCoordinator
+from domain.llm import escalation as escalations
+from domain.llm.escalation import Escalation, EscalationAdvisor
+from domain.llm.models import TaskKind
 from domain.policies.models import ActorKind
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.task import Task, TaskStatus
@@ -223,8 +226,12 @@ class Supervisor:
         progress: ProgressSink | None = None,
         max_attempts: int = MAX_TASK_ATTEMPTS,
         max_parallel: int = MAX_PARALLEL_TASKS,
+        escalation: EscalationAdvisor | None = None,
     ) -> None:
         self._execution = execution
+        # None means no escalation: a failed task is retried, reassigned or
+        # replanned exactly as before Phase 10.
+        self._escalation = escalation
         self._delegator = delegator
         self._progress = progress or NullProgress()
         self._max_attempts = max_attempts
@@ -358,7 +365,64 @@ class Supervisor:
                 _next_attempt(planned, attempt), context, objective_id, avoid, requirement
             )
 
+        cause = self._escalation_cause(outcome)
+        if cause is not None:
+            # One more attempt, on a stronger model, and only for a failure a
+            # stronger model plausibly fixes. Not counted against the attempts
+            # above: those were spent on the model routing chose, and this is
+            # the one piece of evidence that the choice was too cheap.
+            attempt += 1
+            level = Escalation(level=1, cause=cause)
+            log.info(
+                "prometheus.task_escalated",
+                task_id=str(planned.id),
+                attempt=attempt,
+                cause=cause.value,
+            )
+            await self._announce(
+                planned,
+                objective_id,
+                "Trying again on a stronger model: the previous attempt failed with "
+                f"{cause.value.lower().replace('_', ' ')}.",
+                payload={"task_id": str(planned.id), "escalation": level.to_dict()},
+            )
+            outcome = await self._attempt(
+                _next_attempt(planned, attempt),
+                replace(context, data={**context.data, "escalation": level.to_dict()}),
+                objective_id,
+                avoid,
+                requirement,
+            )
+
         return outcome
+
+    def _escalation_cause(self, outcome: TaskOutcome) -> escalations.EscalationCause | None:
+        if outcome.succeeded or self._escalation is None:
+            return None
+        task = outcome.task
+        cause = escalations.cause_of(
+            completed=task.status is TaskStatus.COMPLETED,
+            error_kind=task.error.kind if task.error else "",
+            stopped_by=(task.result.output.get("stopped_by") if task.result else None),
+            refused=outcome.acceptance.refused or _was_refused_a_tool(task),
+            accepted=outcome.acceptance.accepted,
+        )
+        if cause is None:
+            return None
+        try:
+            stage = {
+                escalations.EscalationCause.PLANNING_FAILED: TaskKind.PLANNING,
+                escalations.EscalationCause.VERIFICATION_REJECTED: TaskKind.VERIFICATION,
+                escalations.EscalationCause.NOT_ACCEPTED: TaskKind.VERIFICATION,
+                escalations.EscalationCause.STEP_BUDGET: TaskKind.EXECUTION,
+            }[cause]
+            if not self._escalation.stronger_available(stage):
+                log.info("prometheus.no_stronger_model", task_id=str(task.id), cause=cause.value)
+                return None
+        except Exception as error:  # a catalog that cannot be read is no escalation
+            log.warning("prometheus.escalation_unavailable", error=str(error))
+            return None
+        return cause
 
     async def _attempt(
         self,

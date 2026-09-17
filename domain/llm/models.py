@@ -139,6 +139,11 @@ class ModelChoice:
     #: the one the machine was configured with - which is what every choice
     #: meant before a person could add a second account to one provider.
     connection: str = ""
+    #: The catalog entry chosen, by name, and how many steps above the normal
+    #: choice it is. Both are for the trace; the adapters read neither.
+    entry: str = ""
+    escalation_level: int = 0
+    privacy: str = ""
 
 
 @dataclass(frozen=True, slots=True)

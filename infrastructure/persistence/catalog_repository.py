@@ -21,7 +21,7 @@ from domain.capabilities.models import Capability
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.llm.models import TaskKind
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
-from infrastructure.llm.catalog import ModelEntry
+from infrastructure.llm.catalog import ModelEntry, Privacy, default_privacy
 from infrastructure.persistence.dialect import upsert
 from infrastructure.persistence.models import ModelEntryRow, TaskDefaultRow
 from infrastructure.persistence.session import session_scope
@@ -40,6 +40,8 @@ def _to_row(entry: ModelEntry, workspace_id: WorkspaceId) -> dict[str, Any]:
         "output_cost_per_1k_usd": entry.output_cost_per_1k_usd,
         "quality": entry.quality,
         "dimensions": entry.dimensions,
+        "privacy": entry.privacy.value,
+        "latency_ms": entry.latency_ms,
         "updated_at": datetime.now(UTC),
     }
 
@@ -61,6 +63,12 @@ def _to_entry(row: ModelEntryRow) -> ModelEntry:
         output_cost_per_1k_usd=row.output_cost_per_1k_usd,
         quality=row.quality,
         dimensions=row.dimensions,
+        privacy=(
+            Privacy(row.privacy)
+            if row.privacy in Privacy.__members__
+            else default_privacy(row.provider)
+        ),
+        latency_ms=row.latency_ms or 0,
     )
 
 

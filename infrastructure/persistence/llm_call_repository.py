@@ -48,6 +48,10 @@ class SqlLLMCallLog:
                     success=call.success,
                     error=call.error,
                     created_at=call.created_at,
+                    task_kind=call.task_kind,
+                    entry=call.entry,
+                    reason=call.reason,
+                    escalation_level=call.escalation_level,
                 )
             )
 
@@ -92,6 +96,10 @@ class SqlLLMCallLog:
                     task_id=task_id,
                     error=row.error,
                     created_at=row.created_at,
+                    task_kind=row.task_kind or "",
+                    entry=row.entry or "",
+                    reason=row.reason or "",
+                    escalation_level=row.escalation_level or 0,
                 )
                 for row in rows
             ]

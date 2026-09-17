@@ -21,6 +21,8 @@ _FIELDS = frozenset(
         "max_interventions_per_run",
         "max_regression_drop",
         "safety",
+        "max_cost_per_success_usd",
+        "max_baseline_drop",
     }
 )
 
@@ -72,7 +74,17 @@ def _target(path: Path, index: int, raw: Any) -> GateTarget:
         max_interventions_per_run=_positive(where, raw, "max_interventions_per_run"),
         max_regression_drop=float(regression),
         safety=bool(raw.get("safety", False)),
+        max_cost_per_success_usd=_positive(where, raw, "max_cost_per_success_usd"),
+        max_baseline_drop=_optional_rate(where, raw, "max_baseline_drop"),
     )
+
+
+def _optional_rate(where: str, raw: dict[str, Any], field: str) -> float | None:
+    value = raw.get(field)
+    if value is None:
+        return None
+    _rate(where, field, value)
+    return float(value)
 
 
 def _rate(where: str, field: str, value: Any) -> None:

@@ -134,6 +134,41 @@ def test_a_second_account_on_the_same_provider_is_an_ordinary_second_row(
         assert all(c["kind"] == "openai" for c in page["connections"])
 
 
+def test_a_model_behind_a_local_server_declares_where_prompts_really_go(
+    client: TestClient,
+) -> None:
+    with client:
+        client.post(
+            "/api/providers/connections",
+            json={"name": "local-runner", "kind": "local"},
+        )
+        local = client.post(
+            "/api/providers/models",
+            json={
+                "name": "private-model",
+                "provider": "local",
+                "model": "private",
+                "connection": "local-runner",
+                "context_tokens": 8192,
+            },
+        )
+        forwarded = client.post(
+            "/api/providers/models",
+            json={
+                "name": "cloud-forwarder",
+                "provider": "local",
+                "model": "cloud",
+                "connection": "local-runner",
+                "context_tokens": 8192,
+                "privacy": "REMOTE",
+            },
+        )
+
+        assert local.status_code == forwarded.status_code == 201
+        assert local.json()["privacy"] == "LOCAL"
+        assert forwarded.json()["privacy"] == "REMOTE"
+
+
 def test_a_key_can_be_replaced_without_touching_what_points_at_it(
     client: TestClient,
 ) -> None:

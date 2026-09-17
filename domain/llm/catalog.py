@@ -13,9 +13,31 @@ of a record somebody added.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
+from math import isfinite
 
 from domain.capabilities.models import Capability
 from domain.llm.models import ModelChoice
+
+
+def default_privacy(provider: str) -> Privacy:
+    """What an entry that did not say is assumed to be: a model this machine
+    serves is local, anything else is not. An entry forwarded elsewhere by a
+    local server has to say REMOTE, and the shipped local catalog does."""
+    return Privacy.LOCAL if provider.strip().lower() == "local" else Privacy.REMOTE
+
+
+class Privacy(StrEnum):
+    """Where a prompt goes when this model is called.
+
+    LOCAL never leaves the machine. REMOTE is anyone else's computer - a hosted
+    provider, or a local server that forwards to its vendor's cloud. Declared
+    rather than guessed from the provider name, because the second case is real
+    and ships in the local catalog.
+    """
+
+    LOCAL = "LOCAL"
+    REMOTE = "REMOTE"
 
 #: What an entry is assumed to take when nobody said and nothing could be asked.
 DEFAULT_CONTEXT_TOKENS = 8_192
@@ -42,6 +64,31 @@ class ModelEntry:
     #: full of vectors of one size has to be able to say so before a query is
     #: made rather than after it returns a wrong answer (ADR 0016).
     dimensions: int = 0
+    privacy: Privacy = Privacy.REMOTE
+    #: Typical time to a full answer, in milliseconds, as measured or stated.
+    #: Zero is unknown, which ranks as neither fast nor slow.
+    latency_ms: int = 0
+
+    def __post_init__(self) -> None:
+        """Reject contracts whose numbers would invert or bypass routing.
+
+        Cost and latency participate directly in ranking, while quality picks
+        the escalation tier. Negative or out-of-range values are therefore not
+        harmless metadata: they can make an invalid model win every route.
+        """
+        if self.context_tokens <= 0:
+            raise ValueError("context_tokens must be greater than zero")
+        if not all(
+            isfinite(cost) and cost >= 0
+            for cost in (self.input_cost_per_1k_usd, self.output_cost_per_1k_usd)
+        ):
+            raise ValueError("model costs must be finite and non-negative")
+        if not isfinite(self.quality) or not 0 <= self.quality <= 1:
+            raise ValueError("quality must be between 0 and 1")
+        if self.dimensions < 0:
+            raise ValueError("dimensions cannot be negative")
+        if self.latency_ms < 0:
+            raise ValueError("latency_ms cannot be negative")
 
     @property
     def embeds(self) -> bool:
@@ -68,3 +115,60 @@ class ModelEntry:
         return ModelChoice(
             provider=self.provider, model=self.model, connection=self.connection
         )
+
+    @property
+    def contract(self) -> ModelContract:
+        return ModelContract.of(self)
+
+
+#: Quality bands. A tier is what escalation moves between: two entries a
+#: hundredth apart in hand-maintained quality are not a step up.
+TIERS: tuple[tuple[float, str], ...] = (
+    (0.75, "STRONG"),
+    (0.55, "BALANCED"),
+    (0.0, "FAST"),
+)
+
+
+def tier_of(quality: float) -> str:
+    return next(name for floor, name in TIERS if quality >= floor)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelContract:
+    """What routing may rely on a model for, stated in one place.
+
+    Everything a decision reads - capabilities, context, quality tier, privacy,
+    latency, cost - and nothing a decision may not. Whether the model actually
+    lives up to it is not a declaration at all: it is the validation record
+    for the profile it runs in (`domain/validation/gate.py`).
+    """
+
+    entry: str
+    capabilities: frozenset[Capability]
+    context_tokens: int
+    quality: float
+    tier: str
+    privacy: Privacy
+    latency_ms: int
+    input_cost_per_1k_usd: float
+    output_cost_per_1k_usd: float
+
+    @classmethod
+    def of(cls, entry: ModelEntry) -> ModelContract:
+        return cls(
+            entry=entry.name,
+            capabilities=entry.capabilities,
+            context_tokens=entry.context_tokens,
+            quality=entry.quality,
+            tier=tier_of(entry.quality),
+            privacy=entry.privacy,
+            latency_ms=entry.latency_ms,
+            input_cost_per_1k_usd=entry.input_cost_per_1k_usd,
+            output_cost_per_1k_usd=entry.output_cost_per_1k_usd,
+        )
+
+    @property
+    def estimated_cost_per_1k_usd(self) -> float:
+        """Input plus a quarter of output: precise enough to rank, only used to rank."""
+        return self.input_cost_per_1k_usd + self.output_cost_per_1k_usd / 4

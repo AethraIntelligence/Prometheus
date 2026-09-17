@@ -29,6 +29,14 @@ export function ModelRow({ entry, actions }: Props) {
         {entry.connection && ` · via ${entry.connection}`}
         {entry.capabilities.length > 0 && ` · ${entry.capabilities.join(", ").toLowerCase()}`}
       </p>
+      {entry.tier && (
+        <p className="meta" aria-label="Contract">
+          {entry.tier.toLowerCase()}
+          {entry.privacy === "LOCAL" ? " · stays on this machine" : " · prompts leave this machine"}
+          {entry.latency_ms ? ` · ~${entry.latency_ms} ms` : ""}
+          {` · $${entry.input_cost_per_1k_usd}/1k in, $${entry.output_cost_per_1k_usd}/1k out`}
+        </p>
+      )}
       {actions}
     </article>
   );

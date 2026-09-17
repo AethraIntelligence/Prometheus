@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.capabilities.models import Capability
+from domain.llm.catalog import Privacy
 from domain.llm.models import TaskKind
 from infrastructure.llm.catalog import ModelCatalog, ModelEntry
 from infrastructure.llm.store import StoredCatalogSource
@@ -91,10 +92,13 @@ async def test_an_entry_keeps_what_it_was_given(catalog: SqlCatalogRepository) -
             context_tokens=64_000,
             input_cost_per_1k_usd=0.5,
             quality=0.9,
+            privacy=Privacy.LOCAL,
+            latency_ms=1200,
         )
     )
 
     stored = (await catalog.entries())[0]
+    assert (stored.privacy, stored.latency_ms) == (Privacy.LOCAL, 1200), "the contract too"
     assert stored.connection == "openai-work"
     assert stored.capabilities == frozenset({Capability.TOOL_CALLING})
     assert stored.context_tokens == 64_000

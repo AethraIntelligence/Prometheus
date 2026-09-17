@@ -29,6 +29,7 @@ class RuntimeSettings(Protocol):
     llm_retry_attempts: int
     local_llm_base_url: str
     local_llm_autostart: bool
+    local_models_only: bool
     knowledge_min_similarity: float
 
     # --- Tools ----------------------------------------------------------------

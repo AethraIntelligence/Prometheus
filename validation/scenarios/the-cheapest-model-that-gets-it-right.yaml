@@ -1,0 +1,37 @@
+# Phase 10: whether cheap routing is good enough is measured, not assumed. The
+# request is checkable to the cent and needs no tools but reading and writing, so
+# the only variable is the model. Run it on the profile the machine routes to and
+# again with `prometheus validate --baseline`; the gate compares the two, and a
+# catalog change starts this scenario with no evidence at all. Where the routed
+# model gets it wrong and a stronger one exists, the trace shows the task retried
+# as an escalation, with the reason on every model call.
+
+name: the-cheapest-model-that-gets-it-right
+description: A precise total from a small table, measured per model profile and against the strongest model.
+phase: 10
+tags: [routing, models, manager]
+
+request: >
+  Read "ledger/march.txt". Add up every amount in it and write "ledger/total.md"
+  containing only the total, with two decimal places.
+
+reset: [ledger/total.md]
+
+approve: [fs.write]
+
+setup:
+  ledger/march.txt: |
+    Office rent ............ 1250.00
+    Cloud hosting ........... 184.37
+    Coffee beans ............. 42.90
+    Train tickets ........... 311.15
+    Accountant ............... 450.00
+    Domain renewal ............ 18.99
+    Printer paper ............. 23.40
+
+expect:
+  files_exist: [ledger/total.md]
+  file_contains:
+    # 1250.00 + 184.37 + 42.90 + 311.15 + 450.00 + 18.99 + 23.40
+    ledger/total.md: "2280.81"
+  max_steps: 20

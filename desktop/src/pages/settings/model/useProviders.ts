@@ -132,6 +132,7 @@ export function useProviders(client: RuntimeClient): ProvidersState {
           model: submission.model,
           connection: submission.connection,
           capabilities: submission.capabilities,
+          privacy: submission.privacy,
         });
       }),
     dropEntry: (name) => run(() => removeModel(client, name)),

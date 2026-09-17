@@ -174,3 +174,33 @@ def test_memory_provenance_migration_traces_existing_memories_and_keeps_the_inde
     ]
     assert len(found) == 1
     assert len(refound) == 1, "the triggers that keep the index in step survived"
+
+
+def test_model_contract_migration_marks_served_entries_local(tmp_path: Path) -> None:
+    from alembic import command
+
+    database = tmp_path / "legacy-catalog.db"
+    config = _alembic_config(f"sqlite+aiosqlite:///{database}")
+    command.upgrade(config, "039")
+    engine = create_engine(f"sqlite:///{database}")
+    with engine.begin() as connection:
+        for name, provider in (("here", "local"), ("there", "openrouter")):
+            connection.execute(
+                text(
+                    "INSERT INTO model_entries (id, workspace_id, name, provider, model, "
+                    "connection, capabilities, context_tokens, input_cost_per_1k_usd, "
+                    "output_cost_per_1k_usd, quality, dimensions, created_at, updated_at) "
+                    "VALUES (:id, 'default', :name, :provider, 'm', '', '[]', 8192, 0, 0, "
+                    "0.5, 0, '2026-09-01', '2026-09-01')"
+                ),
+                {"id": f"00000000-0000-0000-0000-0000000000{len(name):02d}", "name": name,
+                 "provider": provider},
+            )  # fmt: skip
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        rows = dict(
+            connection.execute(text("SELECT name, privacy FROM model_entries")).all()
+        )
+    assert rows == {"here": "LOCAL", "there": "REMOTE"}

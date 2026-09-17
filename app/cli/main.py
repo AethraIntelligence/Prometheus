@@ -25,6 +25,7 @@ from app.config.container import (
     build_task_runner,
     build_workflow_engine,
     build_workspaces,
+    current_routing_profile,
     load_catalog,
     load_grants,
     prepare,
@@ -32,9 +33,9 @@ from app.config.container import (
 from app.config.settings import get_settings, normalise_database_url
 from domain.approvals.models import ApprovalState
 from domain.capabilities.models import Capability
-from domain.errors import PrometheusError, StorageNotInitializedError
+from domain.errors import ConfigurationError, PrometheusError, StorageNotInitializedError
 from domain.integrations.specs import spec_for
-from domain.llm.catalog import ModelEntry
+from domain.llm.catalog import ModelEntry, Privacy, default_privacy
 from domain.llm.models import LLMRequest, Message, RoutingHints, TaskKind
 from domain.policies.models import ActorKind, SimpleActor
 from domain.policies.risk import at_least
@@ -43,6 +44,8 @@ from domain.validation.failures import FailureKind
 from domain.validation.gate import evaluate_gate
 from domain.validation.reliability import Verdict, build_report, reliability_of
 from domain.validation.run import RunStatus
+from domain.workforce import directions as carried_directions
+from domain.workforce.directions import Directions
 from domain.workspace.models import WorkspaceId
 from infrastructure.persistence.session import create_engine
 
@@ -214,13 +217,21 @@ def models() -> None:
         default_for = [k.value.lower() for k, n in catalog.defaults.items() if n == entry.name]
         marker = f"  <- default for {', '.join(sorted(default_for))}" if default_for else ""
         typer.echo(f"{entry.name:<10} {entry.provider}/{entry.model}{marker}")
+        contract = entry.contract
         typer.echo(
-            f"           ${entry.input_cost_per_1k_usd}/1k in, "
+            f"           {contract.tier.lower()} (quality {entry.quality}), "
+            f"{contract.privacy.value.lower()}, "
+            + (f"~{entry.latency_ms} ms, " if entry.latency_ms else "")
+            + f"${entry.input_cost_per_1k_usd}/1k in, "
             f"${entry.output_cost_per_1k_usd}/1k out, "
             f"{entry.context_tokens} ctx"
         )
     if not defaults:
         typer.echo("No defaults configured.")
+    profile = current_routing_profile(container)
+    typer.echo(f"\nRouting profile {profile.fingerprint}:")
+    for kind, route in profile.routes.items():
+        typer.echo(f"  {kind.lower():<13} {route}")
 
 
 @app.command(name="ask-prometheus")
@@ -984,6 +995,12 @@ def validate(
         "--release",
         help="Run the declared release set enough times, then evaluate its gate.",
     ),
+    baseline: bool = typer.Option(
+        False,
+        "--baseline",
+        help="Force every kind of work onto the strongest model and record the runs "
+        "as the baseline other profiles are compared with.",
+    ),
 ) -> None:
     """Give the platform real work and record what happened.
 
@@ -1022,7 +1039,16 @@ def validate(
                 typer.echo("Nothing matched. `prometheus scenarios` lists what is declared.")
                 raise typer.Exit(code=1)
 
-            harness = build_harness(container)
+            harness = build_harness(container, baseline=baseline)
+            from infrastructure.llm.profiles import baseline_entry
+
+            forced = (
+                Directions(model=baseline_entry(container.model_catalog).name)
+                if baseline
+                else None
+            )
+            if forced is not None:
+                typer.secho(f"Baseline on '{forced.model}'.", fg="cyan")
             failures = 0
             skipped = 0
             total = 0
@@ -1037,7 +1063,11 @@ def validate(
                     # is the request - so there is not always a first line to show.
                     first = next(iter(scenario.request.splitlines()), scenario.target)
                     typer.echo(f"  {first[:96]}")
-                    run = await harness.run_scenario(scenario)
+                    if forced is not None:
+                        with carried_directions.given(forced):
+                            run = await harness.run_scenario(scenario)
+                    else:
+                        run = await harness.run_scenario(scenario)
                     _report_validation(run)
                     if run.status is RunStatus.FAILED:
                         failures += 1
@@ -1059,7 +1089,14 @@ def validate(
             if release:
                 from application.validation.gate_report import render_gate
 
-                gate = evaluate_gate(gate_targets, await _history(container))
+                gate = evaluate_gate(
+                    gate_targets,
+                    await _history(container),
+                    profile=current_routing_profile(container).fingerprint,
+                    baseline_profile=current_routing_profile(
+                        container, baseline=True
+                    ).fingerprint,
+                )
                 typer.echo("\n" + render_gate(gate))
                 gate_failed = not gate.passed
             if failures or gate_failed:
@@ -1121,8 +1158,17 @@ def validation_gate(
         "--json",
         help="Print a machine-readable result.",
     ),
+    all_profiles: bool = typer.Option(
+        False,
+        "--all-profiles",
+        help="Count runs on any models, not only the profile routed to now.",
+    ),
 ) -> None:
-    """Evaluate the recorded release window against declared product thresholds."""
+    """Evaluate the recorded release window against declared product thresholds.
+
+    Only runs measured on the models the machine routes to now count, unless
+    `--all-profiles`: a changed catalog has to earn its pass rate again.
+    """
     from infrastructure.validation.gate import load_gate
     from infrastructure.validation.yaml_registry import YamlScenarioRegistry
 
@@ -1145,7 +1191,16 @@ def validation_gate(
     async def _run() -> None:
         container = build_container()
         try:
-            report = evaluate_gate(targets, await _history(container))
+            report = evaluate_gate(
+                targets,
+                await _history(container),
+                profile="" if all_profiles else current_routing_profile(container).fingerprint,
+                baseline_profile=(
+                    ""
+                    if all_profiles
+                    else current_routing_profile(container, baseline=True).fingerprint
+                ),
+            )
             typer.echo(gate_json(report) if json_output else render_gate(report))
             if not report.passed:
                 raise typer.Exit(code=1)
@@ -1804,6 +1859,12 @@ def model_add(
     ),
     context_tokens: int = typer.Option(8192, "--context", help="Context window, in tokens."),
     quality: float = typer.Option(0.5, "--quality", help="Preference order, 0 to 1."),
+    privacy: str = typer.Option(
+        "", "--privacy", help="Where prompts go: LOCAL or REMOTE. Defaults from provider."
+    ),
+    latency_ms: int = typer.Option(
+        0, "--latency-ms", help="Typical full-answer latency; zero means unknown."
+    ),
 ) -> None:
     """Add a model to the catalog, reached through a connection."""
 
@@ -1816,19 +1877,29 @@ def model_add(
             if not kind and connection:
                 found = await service.list_connections()
                 kind = next((c.kind for c in found if c.name == connection), "")
-            entry = ModelEntry(
-                name=name,
-                provider=kind or "local",
-                model=model,
-                connection=connection,
-                capabilities=frozenset(
-                    Capability(item.strip().upper())
-                    for item in capabilities.split(",")
-                    if item.strip()
-                ),
-                context_tokens=context_tokens,
-                quality=quality,
-            )
+            resolved_kind = kind or "local"
+            try:
+                entry = ModelEntry(
+                    name=name,
+                    provider=resolved_kind,
+                    model=model,
+                    connection=connection,
+                    capabilities=frozenset(
+                        Capability(item.strip().upper())
+                        for item in capabilities.split(",")
+                        if item.strip()
+                    ),
+                    context_tokens=context_tokens,
+                    quality=quality,
+                    privacy=(
+                        Privacy(privacy.strip().upper())
+                        if privacy.strip()
+                        else default_privacy(resolved_kind)
+                    ),
+                    latency_ms=latency_ms,
+                )
+            except ValueError as error:
+                raise ConfigurationError(str(error)) from error
             await service.add_model(entry)
             typer.secho(f"Added {name} -> {model}.", fg="green")
         finally:

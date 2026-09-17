@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 
 from domain.validation.evidence import CheckResult, CheckStatus, Evidence, Metrics
 from domain.validation.failures import FailureKind
+from domain.validation.profile import RoutingProfile
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 
@@ -49,6 +50,9 @@ class ValidationRun:
     workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
+    #: The models it was measured on (Phase 10). None for a run recorded
+    #: before profiles were, which no profile-scoped gate counts.
+    profile: RoutingProfile | None = None
 
     @classmethod
     def create(cls, scenario: str, status: RunStatus, **extra: Any) -> ValidationRun:
@@ -72,6 +76,7 @@ class ValidationRun:
             "note": self.note,
             "checks": [result.to_dict() for result in self.checks],
             "metrics": self.metrics.to_dict(),
+            **({"profile": self.profile.to_dict()} if self.profile else {}),
         }
 
     @staticmethod

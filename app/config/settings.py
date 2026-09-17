@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     #: actually used. Off for a machine that runs its model server some other
     #: way and wants to see it missing.
     local_llm_autostart: bool = True
+    #: Send no prompt to a model whose contract is REMOTE. A requirement on
+    #: every route, so work that only a remote model could do fails at routing
+    #: with a reason, rather than quietly leaving the machine (Phase 10).
+    local_models_only: bool = False
 
     # --- Tools ---------------------------------------------------------------
     #: The one directory the filesystem tools can see. Point it at the folder

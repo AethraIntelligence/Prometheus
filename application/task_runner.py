@@ -18,6 +18,7 @@ from application.employee_runtime.runtime import EmployeeRuntime
 from application.orchestrator import Failure, classify
 from domain.employees.definition import EmployeeDefinition
 from domain.employees.protocols import EmployeeRegistry
+from domain.llm import escalation, routing
 from domain.policies.models import ActorKind
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.repository import TaskRepository
@@ -136,7 +137,14 @@ class TaskRunner:
                 # failure of the task like any other, not an escaping exception.
                 definition = self._definition_for(task)
                 runtime = await self._build_runtime(definition)
-                await runtime.run(task, assignment)
+                # Every model call this run makes is billed to this task, and
+                # routed a step up if the manager sent it back as an escalation.
+                # Read off the assignment, so a resumed escalation stays one.
+                carried = escalation.Escalation.from_dict(
+                    assignment.context.data.get("escalation") if assignment else None
+                )
+                with routing.billing(task.id), escalation.given(carried):
+                    await runtime.run(task, assignment)
                 break
             except Exception as error:
                 failure = classify(error)

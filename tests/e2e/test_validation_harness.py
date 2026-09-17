@@ -374,3 +374,20 @@ async def test_a_thread_is_asked_in_one_conversation_before_the_measured_request
     assert len(threads) == 1 and None not in threads
     assert run.status is RunStatus.PASSED
     assert round(run.metrics.cost_usd, 2) == 0.03, "the history is part of what it cost"
+
+
+async def test_every_run_records_the_models_it_was_measured_on(tmp_path: Path) -> None:
+    """Phase 10: a pass rate is about a scenario *and* the models that ran it."""
+    from domain.validation.profile import profile_of
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runs = InMemoryValidationRunRepository()
+    profile = profile_of({"EXECUTION": "fast (local/small)"})
+    built = harness(tmp_path, FakeEmployees(workspace), runs=runs)
+    built._profile = lambda: profile
+
+    run = await built.run("file-the-invoice")
+
+    assert run.profile == profile
+    assert (await runs.recent())[0].profile == profile

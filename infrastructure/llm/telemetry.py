@@ -11,6 +11,7 @@ from dataclasses import replace
 from uuid import UUID
 
 from domain.errors import ProviderError
+from domain.llm import routing
 from domain.llm.models import LLMRequest, LLMResponse, Usage
 from domain.llm.protocols import LLM
 from domain.llm.telemetry import LLMCallLog, LLMCallRecord
@@ -59,8 +60,9 @@ class MeteredLLM:
                     model=request.model or "unknown",
                     usage=self._elapsed_usage(started),
                     success=False,
-                    task_id=self._task_id,
+                    task_id=self._task_id or routing.billed_task(),
                     error=f"{type(error).__name__}: {error}",
+                    **_why(),
                 )
             )
             raise
@@ -72,7 +74,8 @@ class MeteredLLM:
                 model=priced.model,
                 usage=priced.usage,
                 success=True,
-                task_id=self._task_id,
+                task_id=self._task_id or routing.billed_task(),
+                **_why(),
             )
         )
         log.info(
@@ -105,3 +108,16 @@ class MeteredLLM:
         if self._call_log is None:
             return
         await self._call_log.record(record)
+
+
+def _why() -> dict[str, object]:
+    """The routing decision this call was made under, as call-record fields."""
+    decision = routing.decision()
+    if decision is None:
+        return {}
+    return {
+        "task_kind": decision.task_kind,
+        "entry": decision.entry,
+        "reason": decision.reason,
+        "escalation_level": decision.escalation_level,
+    }
