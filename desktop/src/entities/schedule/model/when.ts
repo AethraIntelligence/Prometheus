@@ -19,6 +19,9 @@ export function describeWhen(schedule: Schedule, now: Date = new Date()): string
     if (minutes % 60 === 0) return plural(minutes / 60, "hour");
     return plural(minutes, "minute");
   }
+  if (schedule.daily_at && schedule.timezone) {
+    return `Every day at ${schedule.daily_at} (${schedule.timezone})`;
+  }
   if (schedule.daily_at_utc) {
     return `Every day at ${localTime(schedule.daily_at_utc, now)}`;
   }

@@ -16,6 +16,11 @@ from typing import Any
 from domain.llm.models import Message, Role, ToolCallRequest
 from domain.tasks.plan import Observation
 
+# Roughly sixteen thousand tokens for ordinary prose, leaving room for the
+# system prompt, tool schemas and the model's answer on common context windows.
+# The persisted transcript remains complete; this only bounds one model call.
+MODEL_CONTEXT_CHARS = 48_000
+
 
 def message_to_state(message: Message) -> dict[str, Any]:
     state: dict[str, Any] = {"role": message.role.value, "content": message.content}
@@ -68,6 +73,33 @@ class Transcript:
 
     def advanced(self) -> Transcript:
         return replace(self, steps=self.steps + 1)
+
+    def messages_for_model(self, max_chars: int = MODEL_CONTEXT_CHARS) -> tuple[Message, ...]:
+        """Opening instructions plus the nearest complete tool exchanges.
+
+        Tool results cannot be detached from the assistant call that requested
+        them: several providers reject that wire shape. Old exchanges are
+        therefore removed as groups. A newest exchange larger than the whole
+        budget is kept with its text shortened, while the durable transcript
+        still contains the complete result for audit and resume.
+        """
+        if len(self.messages) <= 2:
+            return self.messages
+        opening = self.messages[:2]
+        remaining = max(0, max_chars - sum(_message_size(item) for item in opening))
+        groups = _exchange_groups(self.messages[2:])
+        selected: list[tuple[Message, ...]] = []
+        for group in reversed(groups):
+            size = sum(_message_size(item) for item in group)
+            if size <= remaining:
+                selected.append(group)
+                remaining -= size
+                continue
+            if not selected and remaining > 0:
+                selected.append(_shortened(group, remaining))
+            break
+        selected.reverse()
+        return (*opening, *(message for group in selected for message in group))
 
     @property
     def last_observation(self) -> Observation | None:
@@ -124,3 +156,33 @@ class RunState:
             attempt=int(state.get("attempt", 1)),
             verifier_feedback=tuple(state.get("verifier_feedback", ())),
         )
+
+
+def _message_size(message: Message) -> int:
+    calls = sum(len(call.name) + len(str(call.arguments)) for call in message.tool_calls)
+    return len(message.content) + calls + 32
+
+
+def _exchange_groups(messages: tuple[Message, ...]) -> list[tuple[Message, ...]]:
+    groups: list[list[Message]] = []
+    for message in messages:
+        if message.role is Role.TOOL and groups:
+            groups[-1].append(message)
+        else:
+            groups.append([message])
+    return [tuple(group) for group in groups]
+
+
+def _shortened(group: tuple[Message, ...], budget: int) -> tuple[Message, ...]:
+    each = max(80, budget // max(1, len(group)) - 32)
+    return tuple(
+        replace(
+            message,
+            content=(
+                message.content
+                if len(message.content) <= each
+                else message.content[: max(0, each - 24)].rstrip() + "\n[output shortened]"
+            ),
+        )
+        for message in group
+    )

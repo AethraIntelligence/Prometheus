@@ -57,6 +57,45 @@ async def test_due_answers_about_a_moment_rather_than_now(
     assert [s.id for s in await store.due(NOON + timedelta(hours=1))] == [hourly.id]
 
 
+async def test_a_zoned_schedule_and_its_version_survive_storage(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    store = SqlScheduleRepository(session_factory)
+    created = Schedule.create(
+        "Morning digest",
+        recurrence=Recurrence(daily_at=time(9, 0), timezone="Europe/Rome"),
+    )
+    edited = created.edited(
+        request="Morning digest with sources",
+        name="Digest",
+        recurrence=created.recurrence,
+        on_event="",
+        model="",
+    )
+
+    await store.save(edited)
+    read = await store.get(created.id)
+
+    assert read is not None
+    assert read.recurrence == Recurrence(daily_at=time(9, 0), timezone="Europe/Rome")
+    assert read.version == 2
+
+
+async def test_a_schedule_lease_is_atomic_and_can_be_recovered_after_expiry(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    store = SqlScheduleRepository(session_factory)
+    created = Schedule.create("check", recurrence=Recurrence(every_seconds=3600))
+    await store.save(created)
+
+    assert await store.claim(created.id, "one", NOON, 60)
+    assert not await store.claim(created.id, "two", NOON + timedelta(seconds=30), 60)
+    assert await store.renew(created.id, "one", NOON + timedelta(seconds=30), 60)
+    assert not await store.release(created.id, "two")
+    assert await store.claim(created.id, "two", NOON + timedelta(seconds=91), 60)
+    assert await store.release(created.id, "two")
+
+
 async def test_a_paused_schedule_is_never_due(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

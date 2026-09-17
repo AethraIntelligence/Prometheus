@@ -424,6 +424,7 @@ def build_service(
             providers=build_providers(container),
             settings=_settings_editor(container),
             schedules=container.schedule_repository,
+            events=container.event_log,
             scheduler_running=scheduler_running,
             history_limit=history_limit,
         )

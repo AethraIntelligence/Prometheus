@@ -55,3 +55,39 @@ def test_run_state_carries_the_stage_a_restart_must_resume_into() -> None:
     assert restored.stage == "EXECUTING"
     assert restored.attempt == 2
     assert restored.verifier_feedback == ("no sources",)
+
+
+def test_model_context_keeps_opening_and_nearest_complete_tool_exchange() -> None:
+    first = ToolCallRequest(id="c1", name="browser.extract", arguments={"url": "one"})
+    second = ToolCallRequest(id="c2", name="browser.extract", arguments={"url": "two"})
+    transcript = Transcript(messages=(
+        Message.system("system"),
+        Message.user("task"),
+        Message.assistant("", tool_calls=(first,)),
+        Message.tool("old result " * 100, "c1"),
+        Message.assistant("", tool_calls=(second,)),
+        Message.tool("new result " * 20, "c2"),
+    ))
+
+    shown = transcript.messages_for_model(max_chars=500)
+
+    assert shown[:2] == transcript.messages[:2]
+    assert all(message.tool_call_id != "c1" for message in shown)
+    assert any(message.tool_call_id == "c2" for message in shown)
+    assert transcript.messages[3].content.startswith("old result"), "the stored audit is untouched"
+
+
+def test_an_oversized_latest_tool_result_is_shortened_but_keeps_its_call() -> None:
+    call = ToolCallRequest(id="c1", name="browser.extract", arguments={"url": "one"})
+    transcript = Transcript(messages=(
+        Message.system("system"),
+        Message.user("task"),
+        Message.assistant("", tool_calls=(call,)),
+        Message.tool("x" * 10_000, "c1"),
+    ))
+
+    shown = transcript.messages_for_model(max_chars=400)
+
+    assert shown[2].tool_calls[0].id == "c1"
+    assert shown[3].tool_call_id == "c1"
+    assert "[output shortened]" in shown[3].content

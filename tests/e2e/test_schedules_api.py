@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from time import sleep
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,6 +52,8 @@ def test_a_schedule_is_made_listed_paused_and_removed(client: TestClient) -> Non
     assert schedule["daily_at_utc"] == "06:30", "the person's clock is stored as UTC"
     assert schedule["enabled"] is True
     assert schedule["conversation_id"]
+    assert schedule["overlap_policy"] == "SKIP"
+    assert schedule["misfire_policy"] == "COALESCE"
 
     thread = client.get(f"/api/conversations/{schedule['conversation_id']}")
     assert thread.status_code == 200
@@ -89,7 +92,14 @@ def test_run_now_asks_in_the_schedules_own_thread(client: TestClient) -> None:
     assert ran.status_code == 201, ran.text
     assert ran.json()["conversation_id"] == made["conversation_id"]
     listed = client.get("/api/schedules").json()["schedules"][0]
-    assert listed["runs"] == 0, "running it now is not a firing"
+    for _ in range(50):
+        if listed["runs"] == 1:
+            break
+        sleep(0.02)
+        listed = client.get("/api/schedules").json()["schedules"][0]
+    assert listed["runs"] == 1
+    assert listed["recent_runs"][0]["objective_id"] == ran.json()["id"]
+    assert listed["recent_runs"][0]["schedule_version"] == 1
 
 
 def test_a_schedule_made_from_a_thread_repeats_into_that_thread(client: TestClient) -> None:

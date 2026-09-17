@@ -32,6 +32,18 @@ class ScheduleRepository(Protocol):
 
     async def delete(self, schedule_id: UUID) -> bool: ...
 
+    async def claim(
+        self, schedule_id: UUID, owner: str, now: datetime, lease_seconds: int
+    ) -> bool:
+        """Atomically lease one firing. False while another process owns it."""
+        ...
+
+    async def renew(
+        self, schedule_id: UUID, owner: str, now: datetime, lease_seconds: int
+    ) -> bool: ...
+
+    async def release(self, schedule_id: UUID, owner: str) -> bool: ...
+
 
 class EventLog(Protocol):
     async def record(self, event: Event) -> None: ...

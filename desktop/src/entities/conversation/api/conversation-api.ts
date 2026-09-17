@@ -2,6 +2,7 @@ import { SOURCE, type RuntimeClient } from "../../../shared/api";
 import {
   NO_DIRECTIONS,
   type Conversation,
+  type ConversationKind,
   type ConversationList,
   type Directions,
   type Message,
@@ -10,8 +11,12 @@ import {
 
 /** Opening a thread, reading it, naming it, removing it, and saying one thing in it. */
 export const conversationApi = {
-  open(client: RuntimeClient, title = ""): Promise<Conversation> {
-    return client.post<Conversation>("/api/conversations", { title });
+  open(
+    client: RuntimeClient,
+    title = "",
+    kind: ConversationKind = "TASK",
+  ): Promise<Conversation> {
+    return client.post<Conversation>("/api/conversations", { title, kind });
   },
 
   /** The threads of this workspace, most recent first. */

@@ -2245,6 +2245,11 @@ html[data-shell="mac"] .settings-rail {
   color: var(--grey);
 }
 
+.badge.danger {
+  color: var(--del);
+  background: var(--del-bg);
+}
+
 .actions {
   display: flex;
   gap: 6px;
@@ -3730,6 +3735,48 @@ article > .actions {
 .schedule.paused .schedule-head strong,
 .schedule.paused .schedule-request {
   color: var(--grey);
+}
+
+.schedule-runs {
+  list-style: none;
+  margin: 9px 0 0;
+  padding: 7px 0 0;
+  border-top: 1px solid var(--hair);
+}
+
+.schedule-runs li {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 24px;
+  color: var(--grey);
+  font-size: 12px;
+}
+
+.run-state {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.run-state.done {
+  color: var(--add);
+}
+
+.run-state.failed,
+.run-state.escalated {
+  color: var(--del);
+}
+
+.thread-kind {
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--grey-2);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .schedule > .actions {

@@ -5,6 +5,7 @@ export type {
   ApprovalChoice,
   Artifact,
   Conversation,
+  ConversationKind,
   ConversationList,
   Directions,
   Message,

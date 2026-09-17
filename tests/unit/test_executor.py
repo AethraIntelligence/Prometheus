@@ -279,9 +279,10 @@ async def test_every_step_is_handed_to_the_persistence_callback() -> None:
         task, employee, opening(task, employee), on_step=on_step
     )
 
-    # Saved after the tool step and after the final answer: a crash between them
-    # must not lose the first.
-    assert saved == [1, 2]
+    # The requested action is saved before execution, then its result, then the
+    # final answer. A crash at either boundary can resume without inventing a
+    # new tool-call id or repeating a completed action.
+    assert saved == [1, 1, 2]
 
 
 def test_the_opening_messages_carry_role_goals_and_plan() -> None:

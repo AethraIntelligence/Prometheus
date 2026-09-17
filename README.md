@@ -88,13 +88,14 @@ export PROMETHEUS_MODEL_CATALOG_PATH=infrastructure/llm/models.local.toml
 
 ## What it can do
 
-### Answer, or work - it decides
+### Ask, delegate, or schedule
 
-A greeting, a question about itself or a fact that does not change gets a direct
-answer, like a chat assistant. Anything that has to be looked up, touches your
-files or must exist afterwards becomes work: a plan, the right employees, and a
-check before you see the result. A second, narrow question guards the boundary, so
-"today's weather" is looked up rather than invented.
+Use **Ask** for conversation, web and document questions, and **New task** when
+you are delegating an outcome. Both use the same manager and workspace knowledge:
+a greeting or stable fact can still be answered directly, while anything that
+has to be looked up, touches your files or must exist afterwards becomes work -
+a plan, the right employees and a check before you see the result. **Scheduled**
+keeps standing instructions and shows every firing as its own run.
 
 ### A team of five, each declared in one file
 
@@ -134,7 +135,9 @@ the old one in place; changing the embedding model re-indexes by itself.
 
 What a task learned, what a plan produced and how you like things done are
 recalled into the next run, so *"do the same for the returns folder"* means
-something. Working notes expire in hours, outcomes fade over months, stated
+something. The nearest eight answered turns are also kept as exact, thread-local
+context; older durable facts come from memory instead of an ever-growing prompt.
+Working notes expire in hours, outcomes fade over months, stated
 preferences stay until you change them. Documents are kept apart from memory:
 they do not decay, and they are cited.
 
@@ -166,7 +169,17 @@ and asks first; nobody can use a service until you grant it.
 A process you already know the shape of is a YAML file under [`workflows/`](workflows). A
 schedule ("every morning", "every 3 hours") or an event can start an objective with
 nobody at the keyboard - through the same checks and the same brake. Work nobody
-asked for is opt-in: `PROMETHEUS_FLAGS__SCHEDULER=true`.
+asked for is opt-in: `PROMETHEUS_FLAGS__SCHEDULER=true`. Daily schedules keep an
+IANA time zone, so "09:00" remains 09:00 across daylight-saving changes. A
+persistent renewable lease prevents two runtime processes from firing the same
+schedule, and each automatic or manual run keeps its status, cost and schedule
+version in the run history. Overlapping runs are skipped and missed times
+coalesce into one current run rather than creating a catch-up burst.
+
+Tool execution is crash-safe by default: the `(task, provider call id)` intent
+is persisted before an external action. A completed result is replayed after a
+restart; a call whose outcome is uncertain is surfaced as uncertain and is not
+automatically repeated.
 
 ---
 

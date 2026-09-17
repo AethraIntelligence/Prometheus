@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -31,6 +32,19 @@ from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 TITLE_LIMIT = 60
 
 
+class ConversationKind(StrEnum):
+    """The expectation a person chose when opening a thread.
+
+    ASK is conversation-first: answer, retrieve and explain. TASK is
+    outcome-first: the same manager may still answer a trivial question
+    directly, but the surface promises work, progress and artifacts when the
+    request needs them. The kind belongs to the thread, not to its workspace.
+    """
+
+    ASK = "ASK"
+    TASK = "TASK"
+
+
 @dataclass(frozen=True, slots=True)
 class Conversation:
     """A named thread of objectives, in one workspace."""
@@ -38,6 +52,7 @@ class Conversation:
     id: UUID
     title: str = ""
     workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    kind: ConversationKind = ConversationKind.TASK
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     #: When something was last said in this thread. What a list is ordered by:
     #: a thread picked up after a week belongs at the top, and `created_at`

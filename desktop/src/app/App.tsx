@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 
+import type { ConversationKind } from "../entities/conversation";
 import { ChatPage } from "../pages/chat";
 import { SchedulesPage } from "../pages/schedules";
 import { SettingsPage } from "../pages/settings";
@@ -35,6 +36,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
   const [showing, setShowing] = useState<"work" | "settings" | "schedules">("work");
   const [workspace, setWorkspace] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
+  const [newKind, setNewKind] = useState<ConversationKind>("TASK");
   const [railOpen, setRailOpen] = useState(() => !narrow());
   const [heard, setHeard] = useState(0);
   const [renamed, setRenamed] = useState(0);
@@ -81,7 +83,14 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           }}
           refresh={heard}
           onSelect={(thread) => go("work", thread)}
-          onNew={() => go("work", null)}
+          onNew={() => {
+            setNewKind("TASK");
+            go("work", null);
+          }}
+          onAsk={() => {
+            setNewKind("ASK");
+            go("work", null);
+          }}
           onSettings={(to) => {
             setSection(to);
             go("settings");
@@ -113,8 +122,9 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           />
         ) : (
           <ChatPage
-            key={workspace}
+            key={`${workspace}:${open ?? newKind}`}
             conversationId={open}
+            newKind={newKind}
             onOpened={setOpen}
             onChanged={() => setHeard((count) => count + 1)}
             refresh={renamed}

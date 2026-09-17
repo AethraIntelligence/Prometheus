@@ -57,6 +57,7 @@ from domain.errors import PermissionDeniedError, ToolNotFoundError
 from domain.llm.models import (
     LLMRequest,
     Message,
+    Role,
     RoutingHints,
     TaskKind,
     ToolCallRequest,
@@ -179,30 +180,44 @@ class Executor:
                     stopped_by=exceeded,
                 )
 
-            # Recomputed from the transcript each turn rather than tracked in a
-            # local, so a run resumed in another process offers the same tools
-            # this one would have.
-            barred = withheld(transcript.observations)
-            offered = tuple(spec for spec in granted if spec.name not in barred)
-            response = await self._llm.generate(
-                LLMRequest(
-                    messages=transcript.messages,
-                    tools=offered,
-                    temperature=definition.model_profile.temperature,
+            pending = self._pending_calls(transcript)
+            if pending:
+                # The process stopped after the model requested an action but
+                # before every result reached the transcript. Resume that exact
+                # exchange instead of asking the model to invent new call ids.
+                calls = pending
+            else:
+                # Recomputed from the transcript each turn rather than tracked
+                # in a local, so a resumed run offers the same tools.
+                barred = withheld(transcript.observations)
+                offered = tuple(spec for spec in granted if spec.name not in barred)
+                response = await self._llm.generate(
+                    LLMRequest(
+                        messages=transcript.messages_for_model(),
+                        tools=offered,
+                        temperature=definition.model_profile.temperature,
+                    )
                 )
-            )
-            transcript = transcript.with_spend(response.usage.cost_usd).advanced()
+                transcript = transcript.with_spend(response.usage.cost_usd).advanced()
 
-            if not response.tool_calls:
-                transcript = transcript.with_message(Message.assistant(response.content))
+                if not response.tool_calls:
+                    transcript = transcript.with_message(Message.assistant(response.content))
+                    if on_step is not None:
+                        await on_step(transcript)
+                    return StepOutcome(
+                        transcript=transcript, finished=True, answer=response.content
+                    )
+
+                transcript = transcript.with_message(
+                    Message.assistant(response.content, tool_calls=response.tool_calls)
+                )
+                calls = response.tool_calls
+                # The model's intent is durable before the first external
+                # action. On restart `_pending_calls` can continue the same ids.
                 if on_step is not None:
                     await on_step(transcript)
-                return StepOutcome(transcript=transcript, finished=True, answer=response.content)
 
-            transcript = transcript.with_message(
-                Message.assistant(response.content, tool_calls=response.tool_calls)
-            )
-            for call in response.tool_calls:
+            for call in calls:
                 if self._cancellation.is_cancelled(task.id):
                     # Asked to stop between two calls of the same step: the
                     # remaining calls are not made, and the ones already made
@@ -232,6 +247,10 @@ class Executor:
                 transcript = transcript.with_observation(observation).with_message(
                     Message.tool(observation.summary, call.id)
                 )
+                # One call at a time, so a crash during the next call never
+                # loses the completed result of this one.
+                if on_step is not None:
+                    await on_step(transcript)
                 await self._announce(
                     task,
                     ProgressKind.OBSERVATION,
@@ -240,8 +259,21 @@ class Executor:
                     payload={"succeeded": observation.succeeded, **observation.details},
                 )
 
-            if on_step is not None:
-                await on_step(transcript)
+
+    @staticmethod
+    def _pending_calls(transcript: Transcript) -> tuple[ToolCallRequest, ...]:
+        """Tool requests in the latest exchange that have no durable reply yet."""
+        for index in range(len(transcript.messages) - 1, -1, -1):
+            message = transcript.messages[index]
+            if message.role is not Role.ASSISTANT or not message.tool_calls:
+                continue
+            answered = {
+                item.tool_call_id
+                for item in transcript.messages[index + 1 :]
+                if item.role is Role.TOOL and item.tool_call_id
+            }
+            return tuple(call for call in message.tool_calls if call.id not in answered)
+        return ()
 
     # --- Announcing -----------------------------------------------------------
 
@@ -289,6 +321,10 @@ class Executor:
         and the distinction is the whole of it: a tool that ran and returned an
         error may work next time, a tool that was never reached will not.
         """
+        replayed = await self._previous_result(task, call)
+        if replayed is not None:
+            return replayed, False
+
         try:
             tool = self._tools.get(call.name, definition)
         except (ToolNotFoundError, PermissionDeniedError) as error:
@@ -305,6 +341,13 @@ class Executor:
             await self._record(task, call, ToolResult.failure(gate.reason))
             return ToolResult.failure(gate.reason), True
 
+        reserved = await self._reserve(task, call, tool.spec.interface_level)
+        if reserved is False:
+            replayed = await self._previous_result(task, call)
+            if replayed is not None:
+                return replayed, False
+            return ToolResult.failure("The tool call could not be reserved safely."), False
+
         started = self._clock()
         try:
             result = await tool.execute(call.arguments)
@@ -314,9 +357,86 @@ class Executor:
 
         if not result.latency_ms:
             result = replace(result, latency_ms=int((self._clock() - started) * 1000))
-        await self._record(task, call, result, tool.spec.interface_level)
+        if reserved is None:
+            await self._record(task, call, result, tool.spec.interface_level)
+        else:
+            await self._complete(task, call, result, tool.spec.interface_level)
         await self._audit_call(task, definition, tool, call, result)
         return result, False
+
+    async def _previous_result(
+        self, task: Task, call: ToolCallRequest
+    ) -> ToolResult | None:
+        if self._call_log is None or not call.id or not hasattr(self._call_log, "get_call"):
+            return None
+        try:
+            previous = await self._call_log.get_call(task.id, call.id)
+        except Exception as error:
+            log.warning("tool.idempotency_read_failed", tool=call.name, error=str(error))
+            return ToolResult.failure("The tool-call ledger could not be read safely.")
+        if previous is None:
+            return None
+        if not previous.completed:
+            return ToolResult.failure(
+                "A previous attempt may already have performed this action; "
+                "its outcome is unknown, so it was not repeated."
+            )
+        return ToolResult(
+            success=previous.success,
+            output=previous.output,
+            error=previous.error,
+            latency_ms=previous.latency_ms,
+        )
+
+    async def _reserve(
+        self, task: Task, call: ToolCallRequest, interface: InterfaceLevel
+    ) -> bool | None:
+        """True for a durable reservation, None for a legacy telemetry sink."""
+        if self._call_log is None or not call.id or not hasattr(self._call_log, "reserve"):
+            return None
+        try:
+            return await self._call_log.reserve(
+                ToolCallRecord(
+                    tool=call.name,
+                    success=False,
+                    task_id=task.id,
+                    call_id=call.id,
+                    completed=False,
+                    input_data=call.arguments,
+                    interface=interface,
+                )
+            )
+        except Exception as error:
+            log.warning("tool.idempotency_reserve_failed", tool=call.name, error=str(error))
+            return False
+
+    async def _complete(
+        self,
+        task: Task,
+        call: ToolCallRequest,
+        result: ToolResult,
+        interface: InterfaceLevel,
+    ) -> None:
+        assert self._call_log is not None
+        try:
+            await self._call_log.complete(
+                ToolCallRecord(
+                    tool=call.name,
+                    success=result.success,
+                    latency_ms=result.latency_ms,
+                    task_id=task.id,
+                    call_id=call.id,
+                    completed=True,
+                    input_data=call.arguments,
+                    output=result.output,
+                    error=result.error,
+                    interface=interface,
+                )
+            )
+        except Exception as error:
+            # The action already happened. Never fail into an automatic retry;
+            # the STARTED reservation remains the conservative recovery truth.
+            log.warning("tool.idempotency_complete_failed", tool=call.name, error=str(error))
 
     async def _audit_call(
         self,
@@ -376,6 +496,7 @@ class Executor:
                     input_data=call.arguments,
                     output=result.output,
                     error=result.error,
+                    call_id=call.id or None,
                     interface=interface,
                 )
             )

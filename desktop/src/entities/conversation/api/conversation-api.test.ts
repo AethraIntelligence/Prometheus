@@ -14,6 +14,16 @@ function answering(body: unknown) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("conversationApi", () => {
+  it("opens a conversation-first thread explicitly", async () => {
+    const fetchMock = answering({ id: "thread-1", kind: "ASK" });
+
+    await conversationApi.open(new RuntimeClient(BASE), "", "ASK");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${BASE}/api/conversations`);
+    expect(JSON.parse(init.body)).toEqual({ title: "", kind: "ASK" });
+  });
+
   it("says a request came from the desktop, and sends the text unchanged", async () => {
     const fetchMock = answering({ id: "m1" });
 

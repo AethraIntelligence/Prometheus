@@ -15,7 +15,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from domain.conversations.models import Conversation
+from domain.conversations.models import Conversation, ConversationKind
 from domain.workforce.directions import ApprovalChoice
 from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
 from infrastructure.persistence.conversation_repository import (
@@ -50,6 +50,16 @@ async def test_a_thread_survives_the_process_that_opened_it(repository) -> None:
     assert read.approvals is ApprovalChoice.AUTO
     assert read.model == "balanced"
     assert read.created_at == thread.created_at
+
+
+async def test_a_conversation_first_thread_keeps_its_purpose(repository) -> None:
+    thread = Conversation.create("Questions", kind=ConversationKind.ASK)
+    await repository.save(thread)
+
+    read = await repository.get(thread.id)
+
+    assert read is not None
+    assert read.kind is ConversationKind.ASK
 
 
 async def test_threads_are_listed_by_when_they_were_last_spoken_in(repository) -> None:

@@ -145,6 +145,14 @@ class Runs:
     def is_thinking(self, objective_id: UUID) -> bool:
         return objective_id in self._objectives
 
+    async def wait_objective(self, objective_id: UUID) -> ObjectiveResult | None:
+        """Wait for a background objective when this process is carrying it."""
+        work = self._objectives.get(objective_id)
+        if work is not None:
+            return await work
+        stored = await self._objectives_store.get(objective_id)
+        return stored.result if stored is not None else None
+
     def _finished(self, task_id: UUID) -> None:
         self._running.pop(task_id, None)
         # A cancellation that outlived its run would silently stop the next one

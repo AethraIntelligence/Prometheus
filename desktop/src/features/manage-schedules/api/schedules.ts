@@ -16,6 +16,8 @@ export interface NewSchedule {
   /** HH:MM on the person's clock. */
   daily_at?: string;
   utc_offset_minutes?: number;
+  /** IANA time zone so a daily time stays local across DST. */
+  timezone?: string;
   on_event?: string;
   conversation_id?: string;
   /** A catalog entry its runs prefer. Empty: the router decides. */

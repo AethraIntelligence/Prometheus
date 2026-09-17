@@ -6,6 +6,17 @@
  * which moment is meant is the runtime's.
  */
 
+export interface ScheduleRun {
+  id: string;
+  objective_id: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string;
+  cost_usd: number;
+  summary: string;
+  schedule_version: number;
+}
+
 export interface Schedule {
   id: string;
   name: string;
@@ -14,6 +25,10 @@ export interface Schedule {
   every_seconds: number | null;
   /** HH:MM in UTC. */
   daily_at_utc: string | null;
+  /** Wall-clock time for zoned schedules, or the same UTC time for legacy ones. */
+  daily_at?: string | null;
+  /** IANA zone, for example Europe/Rome. Empty on legacy UTC schedules. */
+  timezone?: string;
   on_event: string;
   next_due_at: string | null;
   last_run_at: string | null;
@@ -27,6 +42,15 @@ export interface Schedule {
   /** ASK, AUTO or DENY: what its runs do about an action that needs approval. */
   approvals: "ASK" | "AUTO" | "DENY";
   created_at: string;
+  version?: number;
+  /** The nearest completed firings, newest first. */
+  recent_runs?: ScheduleRun[];
+  consecutive_failures?: number;
+  last_success_at?: string | null;
+  /** A still-running firing prevents another one from starting. */
+  overlap_policy?: "SKIP";
+  /** Missed times collapse into one current run, never a catch-up burst. */
+  misfire_policy?: "COALESCE";
 }
 
 export interface ScheduleList {

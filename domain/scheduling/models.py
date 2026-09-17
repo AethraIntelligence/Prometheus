@@ -36,6 +36,7 @@ from datetime import UTC, datetime, time, timedelta
 from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from domain.workforce.directions import ApprovalChoice, Directions
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
@@ -73,6 +74,9 @@ class Recurrence:
     #: express: "every morning" drifts under `every_seconds=86400` as soon as a
     #: run starts late, and drifts further every day after that.
     daily_at: time | None = None
+    #: IANA zone whose wall clock `daily_at` belongs to. Empty keeps the
+    #: backwards-compatible UTC meaning for schedules created before zones.
+    timezone: str = ""
 
     def __post_init__(self) -> None:
         if (self.every_seconds is None) == (self.daily_at is None):
@@ -82,19 +86,33 @@ class Recurrence:
                 f"The shortest interval is {MIN_INTERVAL_SECONDS} seconds; "
                 f"{self.every_seconds} was asked for"
             )
+        if self.every_seconds is not None and self.timezone:
+            raise ValueError("An interval does not have a time zone")
+        if self.timezone:
+            try:
+                ZoneInfo(self.timezone)
+            except ZoneInfoNotFoundError as error:
+                raise ValueError(f"Unknown time zone: {self.timezone}") from error
 
     def next_after(self, moment: datetime) -> datetime:
         """The first firing strictly after `moment`."""
         if self.every_seconds is not None:
             return moment + timedelta(seconds=self.every_seconds)
         assert self.daily_at is not None
-        candidate = datetime.combine(moment.date(), self.daily_at, tzinfo=UTC)
-        return candidate if candidate > moment else candidate + timedelta(days=1)
+        zone = ZoneInfo(self.timezone) if self.timezone else UTC
+        local = moment.astimezone(zone)
+        candidate = datetime.combine(local.date(), self.daily_at, tzinfo=zone)
+        if candidate <= local:
+            candidate = datetime.combine(
+                local.date() + timedelta(days=1), self.daily_at, tzinfo=zone
+            )
+        return candidate.astimezone(UTC)
 
     def describe(self) -> str:
         if self.every_seconds is not None:
             return f"every {self.every_seconds}s"
-        return f"daily at {self.daily_at.isoformat(timespec='minutes')} UTC"
+        zone = self.timezone or "UTC"
+        return f"daily at {self.daily_at.isoformat(timespec='minutes')} {zone}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +158,9 @@ class Schedule:
     #: nobody answers in time; AUTO goes ahead where this machine would have
     #: asked; DENY refuses without asking. The same three the composer offers.
     approvals: ApprovalChoice = ApprovalChoice.ASK
+    #: Incremented whenever the standing instruction is edited. A run records
+    #: this value so its exact configuration remains explainable afterwards.
+    version: int = 1
 
     @classmethod
     def create(cls, request: str, **extra: Any) -> Schedule:
@@ -184,10 +205,23 @@ class Schedule:
         return replace(
             self,
             last_run_at=now,
-            last_objective_id=objective_id or self.last_objective_id,
+            last_objective_id=objective_id,
             runs=self.runs + 1,
             next_due_at=self.recurrence.next_after(now) if self.recurrence else None,
         )
+
+    def manually_fired(self, now: datetime, objective_id: UUID) -> Schedule:
+        """Record a person-triggered run without moving the automatic clock."""
+        return replace(
+            self,
+            last_run_at=now,
+            last_objective_id=objective_id,
+            runs=self.runs + 1,
+        )
+
+    def with_last_objective(self, objective_id: UUID) -> Schedule:
+        """Attach the objective created for the already-counted firing."""
+        return replace(self, last_objective_id=objective_id)
 
     def set_enabled(self, enabled: bool, now: datetime | None = None) -> Schedule:
         """Pause or resume. Resuming never owes the runs a pause skipped.
@@ -241,6 +275,7 @@ class Schedule:
             on_event=on_event.strip(),
             model=model.strip(),
             approvals=approvals,
+            version=self.version + 1,
             next_due_at=next_due,
         )
 

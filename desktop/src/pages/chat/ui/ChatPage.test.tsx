@@ -27,6 +27,7 @@ function scriptedRuntime() {
     deleted: false,
     approvals: [] as unknown[],
     asked: [] as string[],
+    openedKinds: [] as string[],
     directions: [] as { approvals: string; model: string }[],
     threadApprovals: "ASK",
     threadModel: "",
@@ -54,9 +55,12 @@ function scriptedRuntime() {
       };
     }
     if (path.endsWith("/api/conversations") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      state.openedKinds.push(body.kind);
       return {
         id: "c1",
         title: "",
+        kind: body.kind,
         messages: 0,
         created_at: "2026-09-08T09:00:00+00:00",
         updated_at: "2026-09-08T09:00:00+00:00",
@@ -242,6 +246,21 @@ afterEach(() => {
 });
 
 describe("the desktop window", () => {
+  it("opens Ask as a conversation-first thread", async () => {
+    const user = userEvent.setup();
+    render(<App client={new RuntimeClient(BASE)} />);
+
+    await user.click(await screen.findByRole("button", { name: "Ask" }));
+    expect(screen.getByRole("heading", { name: "Ask" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Ask Prometheus anything.")).toBeInTheDocument();
+    await user.type(
+      screen.getByLabelText("Tell Prometheus what you need"),
+      "What is in my notes?{Enter}",
+    );
+
+    await waitFor(() => expect(runtime.state.openedKinds).toEqual(["ASK"]));
+  });
+
   it("greets, takes a request, and shows the answer the runtime produced", async () => {
     const user = userEvent.setup();
     render(<App client={new RuntimeClient(BASE)} />);

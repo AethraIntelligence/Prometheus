@@ -408,6 +408,7 @@ def conversation(
     return {
         "id": str(item.id),
         "title": item.title,
+        "kind": item.kind.value,
         "messages": messages,
         "status": status,
         "created_at": item.created_at.isoformat(),
@@ -698,7 +699,14 @@ def provider_guide(
     }
 
 
-def schedule(item: Schedule, *, last_status: str | None = None) -> dict[str, Any]:
+def schedule(
+    item: Schedule,
+    *,
+    last_status: str | None = None,
+    recent_runs: list[dict[str, Any]] | None = None,
+    consecutive_failures: int = 0,
+    last_success_at: str | None = None,
+) -> dict[str, Any]:
     """A standing request: what, when, and what became of it last time.
 
     Times go out as UTC ISO strings and the recurrence as its parts. How "09:00
@@ -714,9 +722,15 @@ def schedule(item: Schedule, *, last_status: str | None = None) -> dict[str, Any
         "every_seconds": recurrence.every_seconds if recurrence else None,
         "daily_at_utc": (
             recurrence.daily_at.isoformat(timespec="minutes")
+            if recurrence and recurrence.daily_at and not recurrence.timezone
+            else None
+        ),
+        "daily_at": (
+            recurrence.daily_at.isoformat(timespec="minutes")
             if recurrence and recurrence.daily_at
             else None
         ),
+        "timezone": recurrence.timezone if recurrence else "",
         "on_event": item.on_event,
         "describe": item.describe(),
         "next_due_at": item.next_due_at.isoformat() if item.next_due_at else None,
@@ -727,6 +741,37 @@ def schedule(item: Schedule, *, last_status: str | None = None) -> dict[str, Any
         "model": item.model,
         "approvals": item.approvals.value,
         "created_at": item.created_at.isoformat(),
+        "version": item.version,
+        "recent_runs": recent_runs or [],
+        "consecutive_failures": consecutive_failures,
+        "last_success_at": last_success_at,
+        # Explicit product policies. Every surface can explain delay and
+        # overlap without reverse-engineering scheduler timing.
+        "overlap_policy": "SKIP",
+        "misfire_policy": "COALESCE",
+    }
+
+
+def schedule_run(event: Any, objective: Objective | None) -> dict[str, Any]:
+    """One completed firing, distinct from the instruction that produced it."""
+    result = objective.result if objective is not None else None
+    return {
+        "id": str(event.id),
+        "objective_id": str(objective.id) if objective is not None else event.payload.get(
+            "objective_id", ""
+        ),
+        "status": objective.status.value if objective is not None else event.payload.get(
+            "status", "FAILED"
+        ),
+        "started_at": objective.created_at.isoformat() if objective is not None else None,
+        "finished_at": (
+            objective.finished_at.isoformat()
+            if objective is not None and objective.finished_at is not None
+            else event.created_at.isoformat()
+        ),
+        "cost_usd": result.cost_usd if result is not None else 0.0,
+        "summary": result.summary if result is not None else "",
+        "schedule_version": int(event.payload.get("schedule_version") or 1),
     }
 
 

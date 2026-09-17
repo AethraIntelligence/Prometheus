@@ -23,6 +23,9 @@ export type ObjectiveStatus =
  */
 export type ApprovalChoice = "ASK" | "AUTO" | "DENY";
 
+/** The promise made by the surface that opened a thread. */
+export type ConversationKind = "ASK" | "TASK";
+
 /** How to go about a request, said beside it rather than inside it. */
 export interface Directions {
   approvals: ApprovalChoice;
@@ -83,6 +86,7 @@ export interface Message {
 export interface Conversation {
   id: string;
   title: string;
+  kind: ConversationKind;
   messages: number;
   /** Where the latest request in it stands, as the runtime says. None before the first. */
   status?: ObjectiveStatus | null;

@@ -101,3 +101,31 @@ async def test_a_call_that_says_nothing_about_its_interface_is_a_direct_call(
     await call_log.record(call(task_id=task_id))
 
     assert (await call_log.list_for_task(task_id))[0].interface is InterfaceLevel.API
+
+
+async def test_a_tool_intent_is_claimed_once_and_completed_in_place(call_log) -> None:
+    from dataclasses import replace
+
+    task_id = uuid4()
+    intent = ToolCallRecord(
+        tool="mail.send",
+        success=False,
+        task_id=task_id,
+        call_id="provider-call-1",
+        completed=False,
+        input_data={"to": "person@example.com"},
+    )
+
+    assert await call_log.reserve(intent)
+    assert not await call_log.reserve(intent)
+    pending = await call_log.get_call(task_id, "provider-call-1")
+    assert pending is not None and not pending.completed
+
+    await call_log.complete(
+        replace(intent, success=True, completed=True, output={"message_id": "m-1"})
+    )
+    completed = await call_log.get_call(task_id, "provider-call-1")
+
+    assert completed is not None and completed.completed and completed.success
+    assert completed.output == {"message_id": "m-1"}
+    assert len(await call_log.list_for_task(task_id)) == 1

@@ -272,6 +272,21 @@ async def test_the_workspace_a_request_names_reaches_the_objective() -> None:
     assert await parts["objectives"].list_recent() == [], "and not in the other one"
 
 
+async def test_an_existing_thread_cannot_be_moved_to_another_workspace_by_a_request() -> None:
+    service, parts = build()
+    thread = await service.create_conversation(workspace_id=WorkspaceId("work"))
+
+    await service.submit(
+        UserRequest(
+            content="Continue",
+            workspace_id=WorkspaceId("personal"),
+            conversation_id=UUID(thread["id"]),
+        )
+    )
+
+    assert parts["manager"].workspaces == ["work"]
+
+
 async def test_an_empty_request_is_refused_before_anything_is_recorded() -> None:
     service, parts = build()
 

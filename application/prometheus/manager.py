@@ -87,6 +87,12 @@ log = structlog.get_logger(__name__)
 #: missed; a third would be told the same thing again.
 MAX_PLAN_REVISIONS = 2
 
+# Recent turns are conversation state, not long-term memory. Keep them exact and
+# bounded: enough for "use the second option" without letting a month-old thread
+# consume every model call. Older durable facts still arrive through memory.
+THREAD_CONTEXT_TURNS = 8
+THREAD_CONTEXT_CHARS = 12_000
+
 
 class PrometheusManager:
     """Implements `domain.workforce.protocols.WorkforceManager`."""
@@ -518,11 +524,14 @@ class PrometheusManager:
         every task in the plan. Reading them per stage would cost the same
         queries three times and could answer them three different ways.
         """
-        remembered: tuple[str, ...] = ()
+        remembered = await self._thread_context(objective)
         documents: tuple[str, ...] = ()
         if self._memory is not None:
-            remembered = await self._memory.context_for(
-                objective.text, workspace_id=objective.workspace_id
+            remembered = (
+                *remembered,
+                *await self._memory.context_for(
+                    objective.text, workspace_id=objective.workspace_id
+                ),
             )
         if self._knowledge is not None:
             documents = await self._knowledge.context_for(
@@ -532,6 +541,40 @@ class PrometheusManager:
         # may be stale; what the user brought is evidence with a source on it,
         # and the two are rendered differently wherever they are shown.
         return remembered, documents
+
+    async def _thread_context(self, objective: Objective) -> tuple[str, ...]:
+        """The nearest answered turns in this thread, newest within a hard budget.
+
+        A conversation used to be only a presentation label. That made a long
+        thread look continuous to a person while "change the second option"
+        reached the manager without either option. This is deliberately not
+        written to semantic memory: it belongs to this thread and nowhere else.
+        """
+        if objective.conversation_id is None:
+            return ()
+        thread = await self._objectives.for_conversation(objective.conversation_id)
+        earlier = [
+            item
+            for item in thread
+            if item.id != objective.id and item.result is not None
+        ][-THREAD_CONTEXT_TURNS:]
+        remaining = THREAD_CONTEXT_CHARS
+        chosen: list[str] = []
+        for item in reversed(earlier):
+            assert item.result is not None
+            turn = f"User: {item.text}\nPrometheus: {item.result.summary}".strip()
+            if not turn:
+                continue
+            if len(turn) > remaining:
+                turn = turn[:remaining].rstrip()
+            if not turn:
+                break
+            chosen.append(turn)
+            remaining -= len(turn)
+            if remaining <= 0:
+                break
+        chosen.reverse()
+        return tuple(f"Earlier in this thread:\n{turn}" for turn in chosen)
 
     @staticmethod
     def _understood(objective: Objective, intent: Intent) -> Objective:

@@ -153,6 +153,8 @@ class ScheduleForm(BaseModel):
     #: they typed it. Converted to UTC by the core, which is where the rule lives.
     daily_at: str = ""
     utc_offset_minutes: int = 0
+    #: IANA zone keeps a wall-clock promise across daylight-saving changes.
+    timezone: str = Field(default="", max_length=64)
     on_event: str = Field(default="", max_length=64)
     #: A catalog entry its runs prefer. Empty: the router decides.
     model: str = Field(default="", max_length=120)
@@ -200,6 +202,7 @@ class ConversationModel(BaseModel):
 
 class NewConversation(BaseModel):
     title: str = ""
+    kind: str = Field(default="TASK", pattern="^(ASK|TASK)$")
 
 
 class NewConnection(BaseModel):
@@ -518,7 +521,9 @@ def _routes(app: FastAPI) -> None:
 
     @app.post("/api/conversations", status_code=201)
     async def open_thread(request: Request, body: NewConversation) -> dict[str, Any]:
-        return await _guarded(_service(request).create_conversation(body.title))
+        return await _guarded(
+            _service(request).create_conversation(body.title, kind=body.kind)
+        )
 
     @app.get("/api/conversations")
     async def threads(request: Request) -> dict[str, Any]:
@@ -836,6 +841,7 @@ def _routes(app: FastAPI) -> None:
                 every_minutes=body.every_minutes,
                 daily_at=body.daily_at,
                 utc_offset_minutes=body.utc_offset_minutes,
+                timezone=body.timezone,
                 on_event=body.on_event,
                 conversation_id=body.conversation_id,
                 model=body.model,
@@ -855,6 +861,7 @@ def _routes(app: FastAPI) -> None:
                 every_minutes=body.every_minutes,
                 daily_at=body.daily_at,
                 utc_offset_minutes=body.utc_offset_minutes,
+                timezone=body.timezone,
                 on_event=body.on_event,
                 model=body.model,
                 approvals=body.approvals,

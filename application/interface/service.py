@@ -27,8 +27,9 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 from dataclasses import dataclass, replace
-from datetime import time
+from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -53,7 +54,7 @@ from domain.approvals.protocols import (
 from domain.capabilities.models import Capability
 from domain.configuration.models import SettingValue
 from domain.configuration.protocols import SettingsEditor
-from domain.conversations.models import Conversation
+from domain.conversations.models import Conversation, ConversationKind
 from domain.conversations.repository import ConversationRepository
 from domain.employees.protocols import EmployeeRegistry
 from domain.errors import (
@@ -79,7 +80,7 @@ from domain.memory.protocols import Memory, MemoryMaintenance
 from domain.policies.models import ActorKind, SimpleActor
 from domain.policies.risk import Effect
 from domain.scheduling.models import MIN_INTERVAL_SECONDS, Recurrence, Schedule
-from domain.scheduling.protocols import ScheduleRepository
+from domain.scheduling.protocols import EventLog, ScheduleRepository
 from domain.secrets.protocols import CredentialStore
 from domain.tasks.repository import TaskRepository
 from domain.tools.protocols import ToolRegistry
@@ -196,6 +197,9 @@ class ServiceDependencies:
     settings: SettingsEditor | None = None
     #: The standing requests. None where a surface was built without them.
     schedules: ScheduleRepository | None = None
+    #: Durable records of individual schedule firings. Kept separate from the
+    #: standing instruction so one failed morning is not reduced to a counter.
+    events: EventLog | None = None
     #: Whether this process is firing schedules. Said rather than inferred: a
     #: schedule shown as "next at 09:00" on a machine that will not fire it is
     #: the one lie this screen must not tell.
@@ -227,10 +231,20 @@ class PrometheusService:
             return DEFAULT_WORKSPACE_ID
         return (await self._d.workspaces.active()).id
 
-    async def create_conversation(self, title: str = "", *, workspace_id=None) -> dict[str, Any]:
+    async def create_conversation(
+        self,
+        title: str = "",
+        *,
+        workspace_id=None,
+        kind: str = ConversationKind.TASK.value,
+    ) -> dict[str, Any]:
         """Open a thread, in the workspace this machine is in unless told which."""
+        try:
+            purpose = ConversationKind(kind)
+        except ValueError as error:
+            raise PrometheusError(f"Unknown conversation kind: {kind}") from error
         conversation = Conversation.create(
-            title, workspace_id=workspace_id or await self._here()
+            title, workspace_id=workspace_id or await self._here(), kind=purpose
         )
         await self._d.conversations.save(conversation)
         log.info("interface.conversation_created", conversation_id=str(conversation.id))
@@ -635,7 +649,12 @@ class PrometheusService:
 
         conversation = await self._thread_for(request)
         directions = request.directions
+        workspace_id = request.workspace_id
         if conversation is not None:
+            # A thread never crosses workspaces. The selector disappears after
+            # creation, and the boundary enforces the same rule for stale or
+            # hand-written clients instead of trusting presentation alone.
+            workspace_id = conversation.workspace_id
             conversation = await self._folder_for(conversation, directions.folder)
             directions = replace(directions, folder=conversation.folder)
         elif directions.folder:
@@ -643,14 +662,14 @@ class PrometheusService:
         objective = await self._d.runs.ask(
             text,
             conversation_id=conversation.id if conversation else None,
-            workspace_id=request.workspace_id,
+            workspace_id=workspace_id,
             directions=directions,
         )
         log.info(
             "interface.request_submitted",
             objective_id=str(objective.id),
             source=request.source.value,
-            workspace_id=str(request.workspace_id),
+            workspace_id=str(workspace_id),
             input_type=request.input_type.value,
             approvals=request.directions.approvals.value,
             model=request.directions.model or None,
@@ -1335,14 +1354,46 @@ class PrometheusService:
         """The standing requests here, and whether anything is firing them."""
         if self._d.schedules is None:
             return {"available": False, "running": False, "schedules": []}
-        found = await self._d.schedules.list(await self._here())
+        workspace = await self._here()
+        found = await self._d.schedules.list(workspace)
+        events = await self._d.events.recent(workspace, limit=200) if self._d.events else []
         listed = []
         for item in found:
             status = None
             if item.last_objective_id is not None:
                 last = await self._d.objectives.get(item.last_objective_id)
                 status = last.status.value if last else None
-            listed.append(views.schedule(item, last_status=status))
+            runs = []
+            for event in events:
+                if event.kind != "objective.finished":
+                    continue
+                if event.payload.get("schedule_id") != str(item.id):
+                    continue
+                raw_objective = str(event.payload.get("objective_id") or "")
+                objective = None
+                if raw_objective:
+                    with suppress(ValueError):
+                        objective = await self._d.objectives.get(UUID(raw_objective))
+                runs.append(views.schedule_run(event, objective))
+                if len(runs) == 5:
+                    break
+            consecutive_failures = 0
+            for run in runs:
+                if run["status"] == "DONE":
+                    break
+                consecutive_failures += 1
+            last_success_at = next(
+                (run["finished_at"] for run in runs if run["status"] == "DONE"), None
+            )
+            listed.append(
+                views.schedule(
+                    item,
+                    last_status=status,
+                    recent_runs=runs,
+                    consecutive_failures=consecutive_failures,
+                    last_success_at=last_success_at,
+                )
+            )
         return {"available": True, "running": self._d.scheduler_running, "schedules": listed}
 
     async def create_schedule(
@@ -1353,6 +1404,7 @@ class PrometheusService:
         every_minutes: int | None = None,
         daily_at: str = "",
         utc_offset_minutes: int = 0,
+        timezone: str = "",
         on_event: str = "",
         conversation_id: UUID | None = None,
         model: str = "",
@@ -1371,7 +1423,9 @@ class PrometheusService:
         text = request.strip()
         if not text:
             raise PrometheusError("A schedule with no request would ask for nothing.")
-        recurrence = _recurrence(every_minutes, daily_at, utc_offset_minutes, on_event)
+        recurrence = _recurrence(
+            every_minutes, daily_at, utc_offset_minutes, on_event, timezone
+        )
         workspace = await self._here()
         model = await self._model_for_schedule(model, workspace)
 
@@ -1408,6 +1462,7 @@ class PrometheusService:
         every_minutes: int | None = None,
         daily_at: str = "",
         utc_offset_minutes: int = 0,
+        timezone: str = "",
         on_event: str = "",
         model: str = "",
         approvals: str = "ASK",
@@ -1422,7 +1477,9 @@ class PrometheusService:
         found = await store.get(schedule_id)
         if found is None:
             raise NotFoundError("No schedule with that id.")
-        recurrence = _recurrence(every_minutes, daily_at, utc_offset_minutes, on_event)
+        recurrence = _recurrence(
+            every_minutes, daily_at, utc_offset_minutes, on_event, timezone
+        )
         chosen = await self._model_for_schedule(model, found.workspace_id)
         try:
             updated = found.edited(
@@ -1477,8 +1534,9 @@ class PrometheusService:
     async def run_schedule_now(self, schedule_id: UUID) -> dict[str, Any]:
         """The request, asked now, in the schedule's thread - through the one way in.
 
-        Not a firing: the schedule's clock and its count stay as they were, and
-        the run is a person asking, with a person there to answer approvals.
+        It is a run like an automatic one for history and health, but it does
+        not move the automatic clock. The request returns immediately so the
+        thread can show progress while a recorder waits in the background.
         """
         found = await self._schedules().get(schedule_id)
         if found is None:
@@ -1492,10 +1550,45 @@ class PrometheusService:
                 directions=found.directions,
             )
         )
+        objective_id = UUID(answer["id"])
+        recorder = asyncio.create_task(
+            self._record_manual_schedule_run(found, objective_id),
+            name=f"prometheus-manual-schedule-{found.id}",
+        )
+        self._background.add(recorder)
+        recorder.add_done_callback(self._background.discard)
         return {
             **answer,
             "conversation_id": str(found.conversation_id) if found.conversation_id else None,
         }
+
+    async def _record_manual_schedule_run(
+        self, schedule: Schedule, objective_id: UUID
+    ) -> None:
+        result = await self._d.runs.wait_objective(objective_id)
+        current = await self._schedules().get(schedule.id)
+        if current is not None:
+            await self._schedules().save(
+                current.manually_fired(datetime.now(UTC), objective_id)
+            )
+        if self._d.events is not None:
+            from domain.scheduling.models import Event
+
+            status = result.status.value if result is not None else "FAILED"
+            await self._d.events.record(
+                Event.create(
+                    "objective.finished",
+                    workspace_id=schedule.workspace_id,
+                    source=schedule.name or str(schedule.id),
+                    payload={
+                        "schedule_id": str(schedule.id),
+                        "schedule_version": schedule.version,
+                        "objective_id": str(objective_id),
+                        "status": status,
+                        "trigger": "MANUAL",
+                    },
+                )
+            )
 
     # --- General settings -----------------------------------------------------
 
@@ -1610,7 +1703,11 @@ def _approval_choice(value: str) -> ApprovalChoice:
 
 
 def _recurrence(
-    every_minutes: int | None, daily_at: str, utc_offset_minutes: int, on_event: str
+    every_minutes: int | None,
+    daily_at: str,
+    utc_offset_minutes: int,
+    on_event: str,
+    timezone: str = "",
 ) -> Recurrence | None:
     chosen = [every_minutes is not None, bool(daily_at.strip()), bool(on_event.strip())]
     if sum(chosen) != 1:
@@ -1619,14 +1716,19 @@ def _recurrence(
         )
     if on_event.strip():
         return None
+    if every_minutes is not None:
+        if every_minutes * 60 < MIN_INTERVAL_SECONDS:
+            raise PrometheusError("The shortest interval is one minute.")
+        return Recurrence(every_seconds=every_minutes * 60)
     try:
-        if every_minutes is not None:
-            if every_minutes * 60 < MIN_INTERVAL_SECONDS:
-                raise PrometheusError("The shortest interval is one minute.")
-            return Recurrence(every_seconds=every_minutes * 60)
         local = time.fromisoformat(daily_at.strip())
     except ValueError as error:
         raise PrometheusError(f"'{daily_at}' is not a time of day (HH:MM).") from error
+    if timezone.strip():
+        try:
+            return Recurrence(daily_at=local, timezone=timezone.strip())
+        except ValueError as error:
+            raise PrometheusError(str(error)) from error
     minutes = (local.hour * 60 + local.minute - utc_offset_minutes) % (24 * 60)
     return Recurrence(daily_at=time(minutes // 60, minutes % 60))
 

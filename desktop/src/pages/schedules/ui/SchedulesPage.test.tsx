@@ -138,6 +138,46 @@ describe("Scheduled", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
+  it("shows each completed firing as a separate recent run", async () => {
+    const { client } = scriptedRuntime({
+      existing: [
+        made({
+          runs: 2,
+          consecutive_failures: 1,
+          recent_runs: [
+            {
+              id: "r2",
+              objective_id: "o2",
+              status: "FAILED",
+              started_at: "2026-09-16T06:29:00+00:00",
+              finished_at: "2026-09-16T06:30:00+00:00",
+              cost_usd: 0.12,
+              summary: "Provider unavailable.",
+              schedule_version: 2,
+            },
+            {
+              id: "r1",
+              objective_id: "o1",
+              status: "DONE",
+              started_at: "2026-09-15T06:29:00+00:00",
+              finished_at: "2026-09-15T06:30:00+00:00",
+              cost_usd: 0.04,
+              summary: "Digest written.",
+              schedule_version: 1,
+            },
+          ],
+        }),
+      ],
+    });
+    show(client);
+
+    const runs = await screen.findByRole("list", { name: "Recent runs" });
+    expect(within(runs).getByText("FAILED")).toBeInTheDocument();
+    expect(within(runs).getByText("DONE")).toBeInTheDocument();
+    expect(within(runs).getByText("$0.12")).toBeInTheDocument();
+    expect(screen.getByText("1 consecutive failure")).toBeInTheDocument();
+  });
+
   it("makes a daily schedule on the person's clock and lists it", async () => {
     const { client, state } = scriptedRuntime();
     show(client);

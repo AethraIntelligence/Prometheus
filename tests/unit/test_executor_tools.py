@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from application.employee_runtime.approvals import ApprovalGate
 from application.employee_runtime.executor import Executor
 from application.employee_runtime.transcript import Transcript
 from domain.approvals.gate import RiskAssessment
-from domain.llm.models import ToolCallRequest
+from domain.llm.models import Message, ToolCallRequest
 from domain.policies.models import RiskLevel
 from domain.tasks.task import Task
 from domain.tools.models import ToolResult
+from domain.tools.telemetry import ToolCallRecord
 from infrastructure.persistence.tool_call_repository import InMemoryToolCallLog
 from infrastructure.tools.registry import InMemoryToolRegistry
 from tests.fakes.approvals import ScriptedApprovalService
@@ -155,6 +158,63 @@ async def test_a_broken_telemetry_log_does_not_fail_the_task() -> None:
     ).run(task, employee, opening(task, employee))
 
     assert outcome.finished
+
+
+async def test_a_completed_pending_call_is_replayed_without_running_the_tool() -> None:
+    """A crash after the action but before transcript save cannot repeat it."""
+    task, employee = Task.create("Send it"), definition(tools=frozenset({"api.send"}))
+    request = ToolCallRequest(id="durable-1", name="api.send", arguments={"message": "hi"})
+    transcript = opening(task, employee).with_message(
+        Message.assistant("", tool_calls=(request,))
+    )
+    log = InMemoryToolCallLog()
+    intent = ToolCallRecord(
+        tool="api.send",
+        success=False,
+        task_id=task.id,
+        call_id=request.id,
+        completed=False,
+        input_data=request.arguments,
+    )
+    assert await log.reserve(intent)
+    await log.complete(
+        replace(intent, success=True, completed=True, output={"message_id": "m-1"})
+    )
+    tool = FakeTool("api.send", result=ToolResult.ok(message_id="m-2"))
+
+    outcome = await Executor(
+        FakeLLM([reply("Done.")]), InMemoryToolRegistry([tool]), call_log=log
+    ).run(task, employee, transcript)
+
+    assert tool.calls == []
+    assert "m-1" in outcome.transcript.observations[0].summary
+
+
+async def test_an_uncertain_pending_call_is_not_repeated() -> None:
+    task, employee = Task.create("Send it"), definition(tools=frozenset({"api.send"}))
+    request = ToolCallRequest(id="durable-1", name="api.send", arguments={"message": "hi"})
+    transcript = opening(task, employee).with_message(Message.assistant("", (request,)))
+    log = InMemoryToolCallLog()
+    await log.reserve(
+        ToolCallRecord(
+            tool="api.send",
+            success=False,
+            task_id=task.id,
+            call_id=request.id,
+            completed=False,
+            input_data=request.arguments,
+        )
+    )
+    tool = FakeTool("api.send")
+
+    outcome = await Executor(
+        FakeLLM([reply("I could not safely confirm it.")]),
+        InMemoryToolRegistry([tool]),
+        call_log=log,
+    ).run(task, employee, transcript)
+
+    assert tool.calls == []
+    assert "outcome is unknown" in outcome.transcript.observations[0].summary
 
 
 # --- A tool that keeps being refused ------------------------------------------

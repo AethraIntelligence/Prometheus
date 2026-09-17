@@ -8,12 +8,14 @@ staying in the manager's own head.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from application.knowledge.workspace import WorkspaceKnowledge
 from application.memory.recorder import MemoryRecorder
 from application.memory.workspace import WorkspaceMemory
 from domain.knowledge.models import Chunk, Document, Passage
 from domain.memory.models import MemoryItem, MemoryKind, MemoryQuery, MemoryScope
-from domain.workforce.protocols import ObjectiveStatus
+from domain.workforce.protocols import ObjectiveResult, ObjectiveStatus
 from infrastructure.memory.in_memory import InMemoryMemory
 from tests.fakes.llm import FakeLLM, reply
 from tests.unit.test_prometheus_manager import build, intent, plan, verdict
@@ -153,6 +155,53 @@ async def test_the_manager_plans_from_what_the_workspace_knows() -> None:
     for stage, request in (("the reading", llm.requests[0]), ("the plan", llm.requests[1])):
         prompt = "\n".join(message.content for message in request.messages)
         assert "summary.md documents them" in prompt, f"{stage} was made without memory"
+
+
+async def test_recent_thread_turns_reach_the_next_request_without_becoming_workspace_memory(
+) -> None:
+    conversation_id = uuid4()
+    llm = FakeLLM(
+        [
+            reply(intent(needs_work=False, answer="Option one is blue; option two is green.")),
+            reply(verdict(True)),
+            reply(intent(needs_work=False, answer="I changed option two to forest green.")),
+            reply(verdict(True)),
+        ]
+    )
+    manager, _, _, _ = build(script=[], llm=llm)
+
+    first = await manager.receive("Give me two colour options", conversation_id=conversation_id)
+    await manager.handle_objective(first)
+    second = await manager.receive("Make the second one darker", conversation_id=conversation_id)
+    await manager.handle_objective(second)
+
+    second_reading = "\n".join(message.content for message in llm.requests[2].messages)
+    assert "Option one is blue; option two is green." in second_reading
+    assert "Give me two colour options" in second_reading
+
+
+async def test_thread_context_is_bounded_to_the_nearest_eight_answered_turns() -> None:
+    conversation_id = uuid4()
+    manager, _, _, _ = build(script=[])
+    for number in range(10):
+        objective = await manager.receive(f"Request {number}", conversation_id=conversation_id)
+        await manager._objectives.save(  # type: ignore[attr-defined]
+            objective.to(
+                ObjectiveStatus.DONE,
+                result=ObjectiveResult(
+                    objective_id=objective.id,
+                    summary=f"Answer {number}",
+                    status=ObjectiveStatus.DONE,
+                ),
+            )
+        )
+    current = await manager.receive("Continue", conversation_id=conversation_id)
+
+    context = await manager._thread_context(current)  # type: ignore[attr-defined]
+
+    assert len(context) == 8
+    assert "Request 2" in context[0]
+    assert "Request 9" in context[-1]
 
 
 # --- What the user brought (§15.6) --------------------------------------------

@@ -35,6 +35,7 @@ import {
   PanelIcon,
   PlugIcon,
   SearchIcon,
+  SparkIcon,
 } from "../../../shared/ui";
 import { groupByDay, markFor } from "../model/presentation";
 import { useThreads } from "../model/useThreads";
@@ -48,6 +49,7 @@ interface Props {
   refresh: number;
   onSelect: (conversationId: string) => void;
   onNew: () => void;
+  onAsk: () => void;
   onSettings: (section?: "plugins") => void;
   onSchedules?: () => void;
   /** Make a schedule out of this thread's request. */
@@ -64,6 +66,7 @@ export function Sidebar({
   refresh,
   onSelect,
   onNew,
+  onAsk,
   onSettings,
   onSchedules,
   onRepeat,
@@ -144,6 +147,10 @@ export function Sidebar({
           <ComposeIcon />
           New task
         </button>
+        <button type="button" className="navrow" onClick={onAsk}>
+          <SparkIcon />
+          Ask
+        </button>
         {onSchedules && (
           <button
             type="button"
@@ -219,7 +226,10 @@ export function Sidebar({
                     onClick={() => onSelect(thread.id)}
                     onDoubleClick={() => setRenaming(thread.id)}
                   >
-                    <span className="thread-title">{thread.title || "Untitled"}</span>
+                    <span className="thread-title">
+                      {thread.kind === "ASK" && <small className="thread-kind">Ask</small>}
+                      {thread.title || "Untitled"}
+                    </span>
                     {mark.tone && (
                       <i className={`pip ${mark.tone}`} aria-label={mark.label} role="img" />
                     )}

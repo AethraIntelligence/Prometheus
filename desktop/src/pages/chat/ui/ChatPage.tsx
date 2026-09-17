@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { ApprovalCard } from "../../../entities/approval";
-import type { Artifact } from "../../../entities/conversation";
+import type { Artifact, ConversationKind } from "../../../entities/conversation";
 import { DirectionChips } from "../../../features/choose-directions";
 import { ComposerMenu, FolderTray } from "../../../features/choose-folder";
 import { ApprovalDecision } from "../../../features/decide-approval";
@@ -42,6 +42,8 @@ interface Props {
   onSwitched?: () => void;
   railOpen?: boolean;
   onOpenRail?: () => void;
+  /** Which promise a new, not-yet-persisted thread makes. */
+  newKind?: ConversationKind;
 }
 
 export function ChatPage({
@@ -52,6 +54,7 @@ export function ChatPage({
   onSwitched,
   railOpen = true,
   onOpenRail,
+  newKind = "TASK",
 }: Props = {}) {
   const client = useRuntime();
   const {
@@ -71,7 +74,7 @@ export function ChatPage({
     chooseFolder,
     stop,
     decide,
-  } = useChat(client, conversationId, { onOpened, onChanged, refresh });
+  } = useChat(client, conversationId, { onOpened, onChanged, refresh }, newKind);
   const { active } = useWorkspaces(client);
 
   // Which file is open beside the conversation. It belongs to a turn in this
@@ -89,6 +92,8 @@ export function ChatPage({
   }, [messages.length, lastActivity, approvals.length]);
 
   const blank = messages.length === 0;
+  const kind = thread?.kind ?? newKind;
+  const asking = kind === "ASK";
 
   // Built once and placed twice. The two layouts differ in where these sit, not
   // in what they are - a second copy would be the empty window quietly drifting
@@ -140,6 +145,7 @@ export function ChatPage({
       <RequestComposer
         onSend={send}
         disabled={!ready}
+        placeholder={asking ? "Ask Prometheus anything." : "Give it a goal."}
         extras={
           <>
             <ComposerMenu {...folderChoice} />
@@ -155,7 +161,11 @@ export function ChatPage({
         stop={busy ? <StopButton onStop={stop} /> : undefined}
       />
       <FolderTray {...folderChoice} />
-      <p className="hint">Irreversible actions wait for you. Everything runs on this machine.</p>
+      <p className="hint">
+        {asking
+          ? "Ask, search and use your workspace knowledge. Turn work into a task when needed."
+          : "Irreversible actions wait for you. Everything runs on this machine."}
+      </p>
     </>
   );
 
@@ -163,7 +173,7 @@ export function ChatPage({
     <div className={preview ? "split previewing" : "split"}>
       <main className="main">
         <PageHead
-          title={thread?.title || "New task"}
+          title={thread?.title || (asking ? "Ask" : "New task")}
           chip={active?.name}
           railOpen={railOpen}
           onOpenRail={onOpenRail}

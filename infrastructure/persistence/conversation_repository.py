@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from domain.conversations.models import Conversation
+from domain.conversations.models import Conversation, ConversationKind
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.workforce.directions import ApprovalChoice
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
@@ -31,6 +31,7 @@ def _to_row(conversation: Conversation) -> dict[str, object]:
         "id": str(conversation.id),
         "workspace_id": str(conversation.workspace_id),
         "title": conversation.title,
+        "kind": conversation.kind.value,
         "folder": conversation.folder,
         "approvals": conversation.approvals.value if conversation.approvals is not None else None,
         "model": conversation.model,
@@ -43,6 +44,7 @@ def _to_conversation(row: ConversationRow) -> Conversation:
     return Conversation(
         id=UUID(row.id),
         title=row.title,
+        kind=ConversationKind(row.kind),
         folder=row.folder or "",
         approvals=ApprovalChoice(row.approvals) if row.approvals else None,
         model=row.model,

@@ -35,7 +35,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -53,6 +53,7 @@ log = structlog.get_logger(__name__)
 #: How often the loop looks. Well under the shortest interval a schedule may
 #: declare, and far enough above zero that an idle machine is idle.
 DEFAULT_TICK_SECONDS = 30.0
+DEFAULT_LEASE_SECONDS = 120
 
 #: The event kind the scheduler writes when a proactive objective ends. It is
 #: an event like any other, so a schedule can be declared to run *on* one - the
@@ -85,6 +86,8 @@ class Scheduler:
         # Where a thread with no folder of its own gets one - the workspace's
         # root. Without it a firing works where the machine's tools point.
         folder_root: Callable[[WorkspaceId], Path] | None = None,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        owner: str | None = None,
     ) -> None:
         self._manager = manager
         self._schedules = schedules
@@ -95,6 +98,8 @@ class Scheduler:
         self._workspaces = workspaces
         self._conversations = conversations
         self._folder_root = folder_root
+        self._lease_seconds = max(30, lease_seconds)
+        self._owner = owner or str(uuid4())
         #: Schedules with an objective in flight. In memory on purpose: it is a
         #: fact about this process, and a process that died is not still running
         #: anything.
@@ -133,10 +138,6 @@ class Scheduler:
             if not schedule.enabled or not schedule.on_event:
                 continue
             for event in await self._events.pending(schedule.on_event, workspace_id):
-                # Claimed before the work, so two passes - or two schedules
-                # racing on one kind - cannot both act on one event.
-                if not await self._events.consume(event.id, now):
-                    continue
                 fired = await self._fire(schedule, now, Trigger.EVENT, event=event)
                 if fired is not None:
                     results.append(fired)
@@ -174,7 +175,27 @@ class Scheduler:
             )
             return None
 
+        try:
+            claimed = await self._schedules.claim(
+                schedule.id, self._owner, now, self._lease_seconds
+            )
+        except Exception as error:
+            log.warning("scheduler.lease_failed", schedule=str(schedule.id), error=str(error))
+            return None
+        if not claimed:
+            log.info("scheduler.leased_elsewhere", schedule=str(schedule.id))
+            return None
+
+        # An event is acknowledged only after this schedule owns the firing.
+        # The old order consumed it first, so a competing process could make
+        # the event disappear and then discover it was not allowed to work.
+        if event is not None and not await self._events.consume(event.id, now):
+            await self._schedules.release(schedule.id, self._owner)
+            return None
+
         self._running.add(schedule.id)
+        lease_stop = asyncio.Event()
+        heartbeat = asyncio.create_task(self._keep_lease(schedule.id, lease_stop))
         try:
             # Carried around the whole objective, as a window request's are, so
             # every task it starts prefers the schedule's model.
@@ -188,24 +209,58 @@ class Scheduler:
                 schedule=schedule.name or str(schedule.id),
                 error=f"{type(error).__name__}: {error}",
             )
-            await self._record(schedule, None, "FAILED")
+            await self._record(
+                schedule, None, "FAILED", trigger=trigger, source_event=event
+            )
             return None
         finally:
+            lease_stop.set()
+            await heartbeat
+            try:
+                await self._schedules.release(schedule.id, self._owner)
+            except Exception as error:
+                log.warning(
+                    "scheduler.lease_not_released", schedule=str(schedule.id), error=str(error)
+                )
             self._running.discard(schedule.id)
+
+    async def _keep_lease(self, schedule_id: UUID, stop: asyncio.Event) -> None:
+        every = max(10.0, self._lease_seconds / 3)
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=every)
+                return
+            except TimeoutError:
+                pass
+            try:
+                if not await self._schedules.renew(
+                    schedule_id, self._owner, self._clock(), self._lease_seconds
+                ):
+                    log.warning("scheduler.lease_lost", schedule=str(schedule_id))
+                    return
+            except Exception as error:
+                log.warning(
+                    "scheduler.lease_renewal_failed",
+                    schedule=str(schedule_id),
+                    error=str(error),
+                )
+                return
 
     async def _run(
         self, schedule: Schedule, now: datetime, trigger: Trigger, event: Event | None
     ) -> ObjectiveResult:
+        # Count and advance the firing before crossing into objective creation.
+        # If creation itself fails, the next polling tick must not retry the
+        # same due moment forever. Event runs were already consumed above.
+        fired = schedule.fired(now)
+        await self._schedules.save(fired)
         objective = await self._manager.receive(
             _request_for(schedule, event),
             workspace_id=schedule.workspace_id,
             conversation_id=schedule.conversation_id,
         )
         await self._touch_thread(schedule, now)
-        # Marked before the work, not after: a crash mid-objective costs
-        # this run and not a loop that keeps re-attempting whatever was
-        # heavy enough to crash.
-        await self._schedules.save(schedule.fired(now, objective.id))
+        await self._schedules.save(fired.with_last_objective(objective.id))
         log.info(
             "scheduler.fired",
             schedule=schedule.name or str(schedule.id),
@@ -215,7 +270,13 @@ class Scheduler:
             approvals=schedule.approvals.value,
         )
         result = await self._manager.handle_objective(objective)
-        await self._record(schedule, objective.id, result.status.value)
+        await self._record(
+            schedule,
+            objective.id,
+            result.status.value,
+            trigger=trigger,
+            source_event=event,
+        )
         return result
 
     async def _touch_thread(self, schedule: Schedule, now: datetime) -> None:
@@ -252,7 +313,15 @@ class Scheduler:
             log.warning("scheduler.thread_folder_unreadable", error=str(error))
             return schedule.directions
 
-    async def _record(self, schedule: Schedule, objective_id: UUID | None, status: str) -> None:
+    async def _record(
+        self,
+        schedule: Schedule,
+        objective_id: UUID | None,
+        status: str,
+        *,
+        trigger: Trigger,
+        source_event: Event | None = None,
+    ) -> None:
         """Say what became of a firing, in the log a person reads afterwards.
 
         Guarded like every other write that is not the work itself: a scheduler
@@ -269,6 +338,10 @@ class Scheduler:
                         "schedule_id": str(schedule.id),
                         "objective_id": str(objective_id) if objective_id else "",
                         "status": status,
+                        "schedule_version": schedule.version,
+                        "trigger": trigger.value,
+                        "source_event_id": str(source_event.id) if source_event else "",
+                        "source_event_kind": source_event.kind if source_event else "",
                     },
                 )
             )

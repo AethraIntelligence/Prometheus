@@ -21,6 +21,7 @@ import {
   NO_DIRECTIONS,
   conversationApi,
   type Directions,
+  type ConversationKind,
   type Message,
   type Thread,
 } from "../../../entities/conversation";
@@ -74,6 +75,7 @@ export function useChat(
   client: RuntimeClient,
   conversationId: string | null = null,
   hooks: ChatHooks = {},
+  newKind: ConversationKind = "TASK",
 ): ChatState {
   const [ready, setReady] = useState(false);
   const [problem, setProblem] = useState("");
@@ -251,7 +253,7 @@ export function useChat(
         let current = thread;
         let fresh = false;
         if (!current) {
-          const opened = await conversationApi.open(client);
+          const opened = await conversationApi.open(client, "", newKind);
           current = { ...opened, messages: [] };
           adopt(current);
           told.current.onOpened?.(opened.id);
@@ -276,7 +278,7 @@ export function useChat(
         fail(error);
       }
     },
-    [client, thread, directions, adopt, fail, reread],
+    [client, thread, directions, adopt, fail, reread, newKind],
   );
 
   const chooseFolder = useCallback(

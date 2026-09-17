@@ -15,10 +15,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -44,7 +44,9 @@ def _to_schedule(row: ScheduleRow) -> Schedule:
     if row.every_seconds is not None:
         recurrence = Recurrence(every_seconds=row.every_seconds)
     elif row.daily_at:
-        recurrence = Recurrence(daily_at=time.fromisoformat(row.daily_at))
+        recurrence = Recurrence(
+            daily_at=time.fromisoformat(row.daily_at), timezone=row.timezone or ""
+        )
     return Schedule(
         id=UUID(row.id),
         request=row.request,
@@ -61,6 +63,7 @@ def _to_schedule(row: ScheduleRow) -> Schedule:
         conversation_id=UUID(row.conversation_id) if row.conversation_id else None,
         model=row.model or "",
         approvals=_approvals(row.approvals),
+        version=row.version or 1,
     )
 
 
@@ -118,6 +121,7 @@ class SqlScheduleRepository(_SqliteBase):
                 if schedule.recurrence and schedule.recurrence.daily_at
                 else None
             ),
+            "timezone": schedule.recurrence.timezone if schedule.recurrence else "",
             "on_event": schedule.on_event,
             "enabled": schedule.enabled,
             "next_due_at": _naive(schedule.next_due_at),
@@ -132,6 +136,7 @@ class SqlScheduleRepository(_SqliteBase):
             ),
             "model": schedule.model,
             "approvals": schedule.approvals.value,
+            "version": schedule.version,
         }
         async with self._session() as session:
             statement = upsert(session, ScheduleRow).values(**values)
@@ -176,6 +181,47 @@ class SqlScheduleRepository(_SqliteBase):
         async with self._session() as session:
             result = await session.execute(
                 delete(ScheduleRow).where(ScheduleRow.id == str(schedule_id))
+            )
+            return bool(result.rowcount)
+
+    async def claim(
+        self, schedule_id: UUID, owner: str, now: datetime, lease_seconds: int
+    ) -> bool:
+        stamp = _naive(now)
+        expires = _naive(now + timedelta(seconds=lease_seconds))
+        async with self._session() as session:
+            result = await session.execute(
+                ScheduleRow.__table__.update()
+                .where(
+                    ScheduleRow.id == str(schedule_id),
+                    or_(
+                        ScheduleRow.lease_owner.is_(None),
+                        ScheduleRow.lease_expires_at.is_(None),
+                        ScheduleRow.lease_expires_at <= stamp,
+                        ScheduleRow.lease_owner == owner,
+                    ),
+                )
+                .values(lease_owner=owner, lease_expires_at=expires)
+            )
+            return bool(result.rowcount)
+
+    async def renew(
+        self, schedule_id: UUID, owner: str, now: datetime, lease_seconds: int
+    ) -> bool:
+        async with self._session() as session:
+            result = await session.execute(
+                ScheduleRow.__table__.update()
+                .where(ScheduleRow.id == str(schedule_id), ScheduleRow.lease_owner == owner)
+                .values(lease_expires_at=_naive(now + timedelta(seconds=lease_seconds)))
+            )
+            return bool(result.rowcount)
+
+    async def release(self, schedule_id: UUID, owner: str) -> bool:
+        async with self._session() as session:
+            result = await session.execute(
+                ScheduleRow.__table__.update()
+                .where(ScheduleRow.id == str(schedule_id), ScheduleRow.lease_owner == owner)
+                .values(lease_owner=None, lease_expires_at=None)
             )
             return bool(result.rowcount)
 
@@ -247,6 +293,7 @@ class InMemoryScheduleRepository:
 
     def __init__(self) -> None:
         self._schedules: dict[UUID, Schedule] = {}
+        self._leases: dict[UUID, tuple[str, datetime]] = {}
 
     async def save(self, schedule: Schedule) -> None:
         self._schedules[schedule.id] = deepcopy(schedule)
@@ -270,7 +317,33 @@ class InMemoryScheduleRepository:
         ]
 
     async def delete(self, schedule_id: UUID) -> bool:
+        self._leases.pop(schedule_id, None)
         return self._schedules.pop(schedule_id, None) is not None
+
+    async def claim(
+        self, schedule_id: UUID, owner: str, now: datetime, lease_seconds: int
+    ) -> bool:
+        lease = self._leases.get(schedule_id)
+        if lease is not None and lease[0] != owner and lease[1] > now:
+            return False
+        self._leases[schedule_id] = (owner, now + timedelta(seconds=lease_seconds))
+        return True
+
+    async def renew(
+        self, schedule_id: UUID, owner: str, now: datetime, lease_seconds: int
+    ) -> bool:
+        lease = self._leases.get(schedule_id)
+        if lease is None or lease[0] != owner:
+            return False
+        self._leases[schedule_id] = (owner, now + timedelta(seconds=lease_seconds))
+        return True
+
+    async def release(self, schedule_id: UUID, owner: str) -> bool:
+        lease = self._leases.get(schedule_id)
+        if lease is None or lease[0] != owner:
+            return False
+        del self._leases[schedule_id]
+        return True
 
 
 class InMemoryEventLog:

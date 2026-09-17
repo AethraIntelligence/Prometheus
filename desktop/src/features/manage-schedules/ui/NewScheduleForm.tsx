@@ -53,7 +53,12 @@ function initialFrom(schedule?: Schedule): Initial {
       minutes % UNIT_MINUTES.days === 0 ? "days" : minutes % UNIT_MINUTES.hours === 0 ? "hours" : "minutes";
     return { ...fresh, when: "every", unit, count: String(minutes / UNIT_MINUTES[unit]) };
   }
-  if (schedule.daily_at_utc) return { ...fresh, when: "daily", time: localClock(schedule.daily_at_utc) };
+  if (schedule.daily_at && schedule.timezone) {
+    return { ...fresh, when: "daily", time: schedule.daily_at };
+  }
+  if (schedule.daily_at_utc) {
+    return { ...fresh, when: "daily", time: localClock(schedule.daily_at_utc) };
+  }
   return { ...fresh, when: "event", event: schedule.on_event };
 }
 
@@ -118,6 +123,7 @@ export function NewScheduleForm({
       // getTimezoneOffset is minutes *behind* UTC; the core wants ahead. Subtracting
       // from zero rather than negating, because negating UTC's 0 gives -0.
       chosen.utc_offset_minutes = 0 - new Date().getTimezoneOffset();
+      chosen.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     }
     if (when === "event") chosen.on_event = event.trim();
     setBusy(true);

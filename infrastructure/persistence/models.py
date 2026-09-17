@@ -212,14 +212,19 @@ class ToolCallRow(Base):
     """
 
     __tablename__ = "tool_calls"
-    __table_args__ = (Index("ix_tool_calls_task_id", "task_id", "id"),)
+    __table_args__ = (
+        Index("ix_tool_calls_task_id", "task_id", "id"),
+        UniqueConstraint("task_id", "call_id", name="uq_tool_calls_task_call"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    call_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     tool: Mapped[str] = mapped_column(String(64), nullable=False)
     input: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     output: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     success: Mapped[bool] = mapped_column(nullable=False, default=True)
+    completed: Mapped[bool] = mapped_column(nullable=False, default=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     #: Which level of the interface hierarchy the call went through. Stored so
@@ -320,6 +325,7 @@ class ConversationRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, default="TASK")
     folder: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
     approvals: Mapped[str | None] = mapped_column(String(8), nullable=True)
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -553,6 +559,7 @@ class ScheduleRow(Base):
     request: Mapped[str] = mapped_column(Text, nullable=False)
     every_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     daily_at: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     on_event: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     next_due_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -566,6 +573,9 @@ class ScheduleRow(Base):
     model: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     #: ASK, AUTO or DENY - what its runs do about an action that needs approval.
     approvals: Mapped[str] = mapped_column(String(8), nullable=False, default="ASK")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 

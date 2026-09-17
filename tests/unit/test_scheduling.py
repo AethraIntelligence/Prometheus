@@ -91,6 +91,16 @@ def test_a_missed_run_is_not_made_up() -> None:
     assert moved.runs == 1
 
 
+def test_a_daily_wall_clock_time_survives_daylight_saving_changes() -> None:
+    morning = Recurrence(daily_at=time(9, 0), timezone="Europe/Rome")
+
+    spring = morning.next_after(datetime(2026, 3, 28, 12, 0, tzinfo=UTC))
+    autumn = morning.next_after(datetime(2026, 10, 24, 12, 0, tzinfo=UTC))
+
+    assert spring == datetime(2026, 3, 29, 7, 0, tzinfo=UTC)
+    assert autumn == datetime(2026, 10, 25, 8, 0, tzinfo=UTC)
+
+
 def test_an_interval_shorter_than_a_minute_is_refused() -> None:
     with pytest.raises(ValueError, match="shortest interval"):
         Recurrence(every_seconds=5)
@@ -180,6 +190,38 @@ async def test_a_schedule_still_running_does_not_start_again() -> None:
     assert manager.requests == ["check"], "it was asked once"
 
 
+async def test_a_persistent_lease_prevents_two_scheduler_processes_from_firing() -> None:
+    schedules, events = InMemoryScheduleRepository(), InMemoryEventLog()
+    await schedules.save(
+        Schedule.create("check", recurrence=Recurrence(every_seconds=60), created_at=NOON)
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowReceive(RecordingManager):
+        async def receive(self, request, workspace_id=None, conversation_id=None):
+            entered.set()
+            await release.wait()
+            return await super().receive(request, workspace_id, conversation_id)
+
+    manager = SlowReceive()
+    first_scheduler = Scheduler(
+        manager=manager, schedules=schedules, events=events, clock=lambda: NOON, owner="one"
+    )
+    second_scheduler = Scheduler(
+        manager=manager, schedules=schedules, events=events, clock=lambda: NOON, owner="two"
+    )
+
+    first = asyncio.create_task(first_scheduler.tick())
+    async with asyncio.timeout(5):
+        await entered.wait()
+    await second_scheduler.tick()
+    release.set()
+    await first
+
+    assert manager.requests == ["check"]
+
+
 async def test_an_event_fires_its_schedule_once() -> None:
     schedules, events = InMemoryScheduleRepository(), InMemoryEventLog()
     await schedules.save(Schedule.create("Triage the inbox", on_event="inbox.arrived"))
@@ -220,6 +262,30 @@ async def test_a_failing_objective_does_not_stop_the_loop() -> None:
     recorded = await events.recent()
     assert recorded[0].kind == OBJECTIVE_FINISHED
     assert recorded[0].payload["status"] == "FAILED"
+
+
+async def test_a_failure_before_objective_creation_does_not_retry_every_tick() -> None:
+    schedules, events = InMemoryScheduleRepository(), InMemoryEventLog()
+    await schedules.save(
+        Schedule.create("check", recurrence=Recurrence(every_seconds=3600), created_at=NOON)
+    )
+
+    class FailingReceive(RecordingManager):
+        async def receive(self, request, workspace_id=None, conversation_id=None):
+            self.requests.append(request)
+            raise RuntimeError("database briefly unavailable")
+
+    manager = FailingReceive()
+    loop = scheduler(manager, schedules, events)
+
+    await loop.tick()
+    await loop.tick()
+
+    assert manager.requests == ["check"]
+    stored = (await schedules.list())[0]
+    assert stored.runs == 1
+    assert stored.next_due_at == NOON + timedelta(hours=1)
+    assert (await events.recent())[0].payload["status"] == "FAILED"
 
 
 async def test_what_a_firing_produced_is_itself_an_event() -> None:
@@ -336,6 +402,7 @@ def test_editing_the_timing_counts_the_next_run_from_now_and_keeps_the_history()
     assert edited.id == hourly.id and edited.runs == 1
     assert edited.next_due_at == NOON + timedelta(minutes=10, hours=2)
     assert (edited.request, edited.name, edited.model) == ("check twice as rarely", "rare", "fast")
+    assert edited.version == hourly.version + 1
 
 
 def test_editing_only_the_words_keeps_the_next_run() -> None:
