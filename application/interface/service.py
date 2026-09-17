@@ -960,6 +960,11 @@ class PrometheusService:
                 "lease_id": str(record.lease_id) if record.lease_id else None,
             }
 
+        if record.request.requires_explicit_confirmation and grant is not ApprovalGrant.ONCE:
+            raise ApprovalsDisabledError(
+                "A security step-up can approve only this exact action."
+            )
+
         lease: CapabilityLease | None = None
         if approved and grant is not ApprovalGrant.ONCE:
             if self._d.leases is None or record.request.scope is None:

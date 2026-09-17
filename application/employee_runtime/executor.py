@@ -54,6 +54,7 @@ from domain.computer.interfaces import InterfaceLevel, describe, select
 from domain.employees.definition import EmployeeDefinition
 from domain.employees.limits import ExecutionLimits, LimitKind
 from domain.errors import PermissionDeniedError, ToolNotFoundError
+from domain.integrations.untrusted import PLATFORM_POLICY, Provenance
 from domain.llm.models import (
     LLMRequest,
     Message,
@@ -71,6 +72,7 @@ from domain.tasks.task import Task
 from domain.tools.models import ToolResult
 from domain.tools.protocols import Tool, ToolRegistry
 from domain.tools.refusals import REFUSAL_LIMIT, REFUSED, refusal_counts, withheld
+from domain.tools.results import ContextResult, for_context
 from domain.tools.telemetry import ToolCallLog, ToolCallRecord
 
 log = structlog.get_logger(__name__)
@@ -235,7 +237,13 @@ class Executor:
                     step=transcript.steps,
                     payload={"tool": call.name, "arguments": redact(call.arguments)},
                 )
-                result, refused = await self._invoke(call, definition, task, on_status)
+                result, refused = await self._invoke(
+                    call,
+                    definition,
+                    task,
+                    on_status,
+                    untrusted_context=transcript.untrusted_sources,
+                )
                 observation = self._observe(
                     transcript.steps,
                     call,
@@ -314,6 +322,8 @@ class Executor:
         definition: EmployeeDefinition,
         task: Task,
         on_status: StatusSink | None = None,
+        *,
+        untrusted_context: tuple[Provenance, ...] = (),
     ) -> tuple[ToolResult, bool]:
         """Run the call, and say whether it was refused rather than merely failed.
 
@@ -334,7 +344,12 @@ class Executor:
             return ToolResult.failure(str(error)), True
 
         gate = await self._approvals.check(
-            tool, call.arguments, task, definition, status=on_status
+            tool,
+            call.arguments,
+            task,
+            definition,
+            status=on_status,
+            untrusted_context=tuple(untrusted_context),
         )
         if not gate.allowed:
             log.info("tool.not_approved", tool=call.name, task_id=str(task.id))
@@ -518,13 +533,8 @@ class Executor:
         """Interpret what just happened, explicitly, before deciding anything."""
         # Redacted here, not at the log: this summary goes back into the
         # transcript, which is persisted and sent to the model on the next step.
-        output = redact(result.output)
-        if not result.success:
-            summary = f"{call.name} failed: {result.error}"
-        elif not output:
-            summary = f"{call.name} returned nothing."
-        else:
-            summary = f"{call.name} returned: {output}"
+        contextual = self._context_result(call.name, result, definition)
+        summary = contextual.render(call.name)
 
         if refused and refusals_so_far + 1 >= REFUSAL_LIMIT:
             # Said here rather than in a message of its own, because this line
@@ -546,11 +556,13 @@ class Executor:
         observation = Observation(
             step=step,
             summary=summary,
-            succeeded=result.success,
+            succeeded=contextual.result.success,
             details={
                 "tool": call.name,
                 "arguments": redact(call.arguments),
                 "interface": interface.value,
+                "provenance": contextual.provenance.to_dict(),
+                "result_truncated": contextual.truncated,
                 **({REFUSED: True} if refused else {}),
             },
         )
@@ -559,10 +571,26 @@ class Executor:
             step=step,
             tool=call.name,
             interface=interface.value,
-            succeeded=result.success,
+            succeeded=contextual.result.success,
             refused=refused,
         )
         return observation
+
+    def _context_result(
+        self,
+        name: str,
+        result: ToolResult,
+        definition: EmployeeDefinition,
+    ) -> ContextResult:
+        """Apply the result contract at the one path into model context."""
+        try:
+            spec = self._tools.get(name, definition).spec
+        except (ToolNotFoundError, PermissionDeniedError):
+            # Refused and unknown tools carry an error, not external content.
+            from domain.tools.models import ToolSpec
+
+            spec = ToolSpec.of(name, "Unavailable tool")
+        return for_context(replace(result, output=redact(result.output)), spec)
 
     def _interface_of(self, name: str, definition: EmployeeDefinition) -> InterfaceLevel:
         """How this call reached the world. A refused call reached it not at all."""
@@ -598,6 +626,7 @@ class Executor:
     ) -> tuple[Message, ...]:
         """The transcript a fresh run starts from."""
         system = system_prompt or f"You are a {definition.role.title}."
+        system += f"\n\n# Data boundary\n\n{PLATFORM_POLICY}"
         if definition.goals:
             system += "\n\nYour standing goals:\n" + "\n".join(
                 f"- {goal.text}" for goal in definition.goals

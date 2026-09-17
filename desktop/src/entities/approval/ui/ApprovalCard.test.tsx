@@ -88,4 +88,19 @@ describe("ApprovalCard", () => {
 
     expect(onDecide).toHaveBeenCalledWith("a1", true, "PERSISTENT", 86400);
   });
+
+  it("allows only the exact action for an untrusted-context step-up", async () => {
+    const onDecide = vi.fn();
+    render(
+      <ApprovalCard
+        approval={approval({ requires_explicit_confirmation: true })}
+        actions={<ApprovalDecision approvalId="a1" exactOnly onDecide={onDecide} />}
+      />,
+    );
+
+    expect(screen.getByText(/Security step-up/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Permission")).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onDecide).toHaveBeenCalledWith("a1", true, "ONCE", undefined);
+  });
 });

@@ -120,13 +120,16 @@ class LocalApprovalService:
         return decision
 
     async def _decide(self, action: ApprovalRequest) -> tuple[ApprovalState, str]:
-        if self._mode is ApprovalMode.ALLOW:
+        if self._mode is ApprovalMode.ALLOW and not action.requires_explicit_confirmation:
             return ApprovalState.APPROVED, "configuration"
         if self._mode is ApprovalMode.DENY or not self._is_interactive():
             return ApprovalState.REJECTED, "no-approver"
         # Only here, where this machine would have asked somebody: a request
         # cannot talk a machine configured to refuse into doing the thing.
-        if directions.current().approvals is ApprovalChoice.AUTO:
+        if (
+            directions.current().approvals is ApprovalChoice.AUTO
+            and not action.requires_explicit_confirmation
+        ):
             return ApprovalState.APPROVED, "request"
         answer = self._confirmer(action.redacted())
         if not inspect.isawaitable(answer):

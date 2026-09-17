@@ -220,6 +220,11 @@ class ApprovalRequest:
     #: tool or derived from its declaration before anything runs.
     preview: dict[str, Any] = field(default_factory=dict)
     policy_source: str = "risk_threshold"
+    #: True when external data preceded this action. Such a request must be
+    #: answered by a person for this exact call; AUTO and reusable grants are
+    #: intentionally insufficient authority.
+    requires_explicit_confirmation: bool = False
+    context_sources: tuple[dict[str, str], ...] = ()
     #: When this question stops being worth answering. None means it waits
     #: forever, which is the right default for a terminal prompt and the wrong
     #: one for a page nobody has open.

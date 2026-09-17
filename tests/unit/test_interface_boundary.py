@@ -460,6 +460,30 @@ async def test_a_scoped_decision_creates_visible_revocable_authority() -> None:
     assert await service.list_capability_leases() == []
 
 
+async def test_a_security_step_up_cannot_be_saved_as_reusable_authority() -> None:
+    question = ApprovalRequest.create(
+        uuid4(),
+        "fs.write(path='report.md')",
+        tool="fs.write",
+        scope=scope_for("employee-1", "fs.write", {"path": "report.md"}),
+        requires_explicit_confirmation=True,
+    )
+    waiter = NoWaiter(question)
+    approvals = InMemoryApprovalRepository()
+    leases = InMemoryCapabilityLeaseRepository()
+    await approvals.save(Approval(request=question))
+    service, _ = build(waiter=waiter, approvals=approvals, leases=leases)
+
+    with pytest.raises(ApprovalsDisabledError, match="only this exact action"):
+        await service.decide_approval(
+            question.id,
+            approved=True,
+            grant=ApprovalGrant.PERSISTENT,
+        )
+
+    assert await service.list_capability_leases() == []
+
+
 async def test_what_is_waiting_says_which_questions_a_run_is_still_parked_on() -> None:
     question = ApprovalRequest.create(uuid4(), "send an email")
     service, _ = build(waiter=NoWaiter(question))

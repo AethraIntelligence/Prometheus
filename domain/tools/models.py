@@ -5,6 +5,7 @@ from typing import Any
 
 from domain.capabilities.models import Capability
 from domain.computer.interfaces import InterfaceLevel
+from domain.integrations.untrusted import TrustLevel
 from domain.policies.models import RiskLevel
 from domain.policies.risk import Effect, highest, risk_of
 from domain.tools.schema import Param, ParameterSet, parameters_from_json_schema
@@ -32,6 +33,14 @@ class ToolSpec:
     #: The declared parameters, kept alongside the rendered schema so the same
     #: declaration both describes the tool and validates the call.
     parameters: ParameterSet = field(default_factory=ParameterSet)
+    #: Authority carried by successful output when it is shown to a model.
+    #: External pages, documents, mail, integrations and screen text are data,
+    #: never instructions, and must opt into UNTRUSTED explicitly.
+    result_trust: TrustLevel = TrustLevel.INTERNAL
+    result_kind: str = "tool"
+    #: Required output fields and their JSON types. Empty means the tool has no
+    #: more specific contract than a bounded JSON object.
+    result_schema: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def of(
@@ -44,6 +53,9 @@ class ToolSpec:
         capabilities: frozenset[Capability] = frozenset(),
         reversible: bool = True,
         interface_level: InterfaceLevel = InterfaceLevel.API,
+        result_trust: TrustLevel = TrustLevel.INTERNAL,
+        result_kind: str = "tool",
+        result_schema: dict[str, str] | None = None,
     ) -> ToolSpec:
         """Declare a tool once; the JSON Schema is derived, never hand-written.
 
@@ -61,6 +73,9 @@ class ToolSpec:
             reversible=reversible,
             interface_level=interface_level,
             parameters=parameter_set,
+            result_trust=result_trust,
+            result_kind=result_kind,
+            result_schema=dict(result_schema or {}),
         )
 
 
@@ -76,6 +91,9 @@ class ToolSpec:
         capabilities: frozenset[Capability] = frozenset(),
         reversible: bool = True,
         interface_level: InterfaceLevel = InterfaceLevel.INTEGRATION,
+        result_trust: TrustLevel = TrustLevel.UNTRUSTED,
+        result_kind: str = "integration",
+        result_schema: dict[str, str] | None = None,
     ) -> ToolSpec:
         """Declare a tool whose shape was written elsewhere.
 
@@ -104,6 +122,9 @@ class ToolSpec:
             capabilities=capabilities,
             reversible=reversible,
             interface_level=interface_level,
+            result_trust=result_trust,
+            result_kind=result_kind,
+            result_schema=result_schema,
         )
 
 @dataclass(frozen=True, slots=True)

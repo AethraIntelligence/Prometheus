@@ -20,6 +20,8 @@ export interface Approval {
   } | null;
   preview?: Record<string, unknown>;
   policy_source?: string;
+  requires_explicit_confirmation?: boolean;
+  context_sources?: Array<{ source: string; kind: string; trust: string }>;
   grant?: ApprovalGrant;
   lease_id?: string | null;
 }

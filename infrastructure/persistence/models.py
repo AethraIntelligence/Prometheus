@@ -272,6 +272,12 @@ class ApprovalRow(Base):
     limits: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     preview: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     policy_source: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    requires_explicit_confirmation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    context_sources: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     requested_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
     #: When the question stops being worth answering. NULL waits forever.
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)

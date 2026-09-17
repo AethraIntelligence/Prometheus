@@ -29,6 +29,7 @@ from domain.computer.interfaces import InterfaceLevel
 from domain.computer.models import ComputerAction, Screenshot, ScreenView, Surface
 from domain.computer.protocols import Computer, ScreenReader
 from domain.errors import ConfigurationError
+from domain.integrations.untrusted import TrustLevel
 from domain.policies.models import RiskLevel
 from domain.policies.risk import Effect
 from domain.tools.models import ToolResult, ToolSpec
@@ -92,6 +93,8 @@ class ComputerTool(BaseTool):
                 risk_level=_risk_of(surface, changes_state),
                 capabilities=frozenset({Capability.COMPUTER_USE}),
                 interface_level=_LEVELS[surface],
+                result_trust=TrustLevel.UNTRUSTED,
+                result_kind="screen",
             )
         )
         self._computer = computer

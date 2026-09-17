@@ -45,6 +45,12 @@ export function ApprovalCard({ approval, actions }: Props) {
         Prometheus wants to {approval.action}
       </h4>
       {approval.reason && <p>{approval.reason}</p>}
+      {approval.requires_explicit_confirmation && (
+        <p className="note">
+          Security step-up: approve only this exact action. Auto approval and saved permissions
+          do not apply because untrusted content preceded it.
+        </p>
+      )}
       {approval.scope && (
         <p className="note">
           Exact scope: <code>{approval.scope.subject_name || approval.scope.subject}</code> may{" "}

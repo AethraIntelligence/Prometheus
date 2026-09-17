@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from domain.computer.interfaces import InterfaceLevel
+from domain.integrations.untrusted import TrustLevel
 from domain.policies.models import RiskLevel
 from domain.policies.risk import Effect, highest, risk_of
 from domain.tools.models import ToolResult, ToolSpec
@@ -26,6 +27,8 @@ class FakeTool:
         effect: Effect = Effect.READ,
         risk_level: RiskLevel = RiskLevel.LOW,
         reversible: bool = True,
+        result_trust: TrustLevel = TrustLevel.INTERNAL,
+        result_kind: str = "tool",
     ) -> None:
         self._spec = ToolSpec(
             name=name,
@@ -37,6 +40,8 @@ class FakeTool:
             # less risky than the real declaration of the same effect would be.
             risk_level=highest(risk_level, risk_of(effect)),
             reversible=reversible,
+            result_trust=result_trust,
+            result_kind=result_kind,
         )
         self._result = result or ToolResult.ok(value="ok")
         self._handler = handler

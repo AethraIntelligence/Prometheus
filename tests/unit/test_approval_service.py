@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from domain.approvals.models import ApprovalRequest, ApprovalState
 from domain.tasks.task import Task
+from domain.workforce.directions import ApprovalChoice, Directions, given
 from infrastructure.approvals.service import ApprovalMode, LocalApprovalService
 from infrastructure.persistence.approval_repository import InMemoryApprovalRepository
 
@@ -69,6 +72,23 @@ async def test_allow_mode_is_still_recorded(repository) -> None:
     stored = await repository.get(action.id)
     assert stored.state is ApprovalState.APPROVED
     assert stored.resolved_by == "configuration"
+
+
+@pytest.mark.parametrize("automatic", ["configuration", "request"])
+async def test_security_step_up_is_never_approved_automatically(repository, automatic) -> None:
+    asked: list[ApprovalRequest] = []
+    service = LocalApprovalService(
+        repository,
+        mode=ApprovalMode.ALLOW if automatic == "configuration" else ApprovalMode.PROMPT,
+        confirmer=lambda item: asked.append(item) or True,
+        is_interactive=lambda: True,
+    )
+    action = replace(request(), requires_explicit_confirmation=True)
+
+    with given(Directions(approvals=ApprovalChoice.AUTO)):
+        assert await service.request(action) is ApprovalState.APPROVED
+
+    assert asked == [action.redacted()]
 
 
 async def test_the_question_is_written_down_before_it_is_answered(repository) -> None:

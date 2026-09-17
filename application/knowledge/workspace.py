@@ -61,7 +61,7 @@ class WorkspaceKnowledge:
         if passages:
             log.info("knowledge.recalled", passages=len(passages))
         return tuple(
-            frame(passage.chunk.content.strip(), origin=passage.citation)
+            frame(passage.chunk.content.strip(), origin=passage.citation, kind="document")
             for passage in passages
             if passage.chunk.content.strip()
         )

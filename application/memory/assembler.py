@@ -83,7 +83,7 @@ class AssembledContext:
         deliberately not one.
         """
         return tuple(
-            frame(passage.chunk.content.strip(), origin=passage.citation)
+            frame(passage.chunk.content.strip(), origin=passage.citation, kind="document")
             for passage in self.retrieved
             if passage.chunk.content.strip()
         )

@@ -10,6 +10,7 @@ import type { ApprovalGrant } from "../../../entities/approval";
 
 interface Props {
   approvalId: string;
+  exactOnly?: boolean;
   onDecide: (
     approvalId: string,
     approved: boolean,
@@ -18,7 +19,7 @@ interface Props {
   ) => void | Promise<void>;
 }
 
-export function ApprovalDecision({ approvalId, onDecide }: Props) {
+export function ApprovalDecision({ approvalId, exactOnly = false, onDecide }: Props) {
   const [grant, setGrant] = useState<ApprovalGrant>("ONCE");
   const [duration, setDuration] = useState("86400");
   const durationSeconds = grant === "PERSISTENT" && duration ? Number(duration) : undefined;
@@ -26,13 +27,17 @@ export function ApprovalDecision({ approvalId, onDecide }: Props) {
     <>
       <label className="gate-scope">
         Permission
-        <select value={grant} onChange={(event) => setGrant(event.target.value as ApprovalGrant)}>
+        <select
+          value={exactOnly ? "ONCE" : grant}
+          disabled={exactOnly}
+          onChange={(event) => setGrant(event.target.value as ApprovalGrant)}
+        >
           <option value="ONCE">Only this action</option>
           <option value="TASK">This exact action for this task</option>
           <option value="PERSISTENT">Remember this exact rule</option>
         </select>
       </label>
-      {grant === "PERSISTENT" && (
+      {!exactOnly && grant === "PERSISTENT" && (
         <label className="gate-scope">
           Expires
           <select value={duration} onChange={(event) => setDuration(event.target.value)}>
@@ -46,7 +51,7 @@ export function ApprovalDecision({ approvalId, onDecide }: Props) {
       <button
         type="button"
         className="btn btn-wait"
-        onClick={() => void onDecide(approvalId, true, grant, durationSeconds)}
+        onClick={() => void onDecide(approvalId, true, exactOnly ? "ONCE" : grant, durationSeconds)}
       >
         Approve
       </button>

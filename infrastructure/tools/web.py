@@ -19,6 +19,7 @@ from __future__ import annotations
 from domain.browser.protocols import Browser
 from domain.capabilities.models import Capability
 from domain.computer.interfaces import InterfaceLevel
+from domain.integrations.untrusted import TrustLevel
 from domain.search.models import SearchQuery
 from domain.search.protocols import SearchEngine
 from domain.tools.models import ToolResult, ToolSpec
@@ -41,6 +42,9 @@ class WebSearchTool(BaseTool):
                       description=f"How many results to return, at most {MAX_RESULT_LIMIT}."),
                 capabilities=frozenset({Capability.WEB_BROWSING}),
                 interface_level=InterfaceLevel.API,
+                result_trust=TrustLevel.UNTRUSTED,
+                result_kind="web_search",
+                result_schema={"query": "string", "count": "integer", "results": "array"},
             )
         )
         self._engine = engine
@@ -90,6 +94,9 @@ class BrowserExtractTool(BaseTool):
                 "and final URL.",
                 capabilities=frozenset({Capability.WEB_BROWSING}),
                 interface_level=InterfaceLevel.BROWSER,
+                result_trust=TrustLevel.UNTRUSTED,
+                result_kind="web_page",
+                result_schema={"url": "string", "title": "string", "text": "string"},
             )
         )
         self._browser = browser

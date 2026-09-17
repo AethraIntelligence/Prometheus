@@ -114,7 +114,13 @@ export function ChatPage({
         <ApprovalCard
           key={approval.id}
           approval={approval}
-          actions={<ApprovalDecision approvalId={approval.id} onDecide={decide} />}
+          actions={
+            <ApprovalDecision
+              approvalId={approval.id}
+              exactOnly={approval.requires_explicit_confirmation}
+              onDecide={decide}
+            />
+          }
         />
       ))}
       {problem && (

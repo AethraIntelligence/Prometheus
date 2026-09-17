@@ -154,6 +154,8 @@ def approval(
         ),
         "preview": safe.preview,
         "policy_source": safe.policy_source,
+        "requires_explicit_confirmation": safe.requires_explicit_confirmation,
+        "context_sources": list(safe.context_sources),
         "requested_at": safe.requested_at.isoformat(),
         "live": live,
         "conversation_id": str(conversation_id) if conversation_id else None,

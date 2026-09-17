@@ -90,7 +90,7 @@ class MCPTool(BaseTool):
         return ToolResult.ok(
             source=f"{self._integration.name} (external service)",
             note=NOTE,
-            content=frame(content, origin=self._integration.name),
+            content=frame(content, origin=self._integration.name, kind="integration"),
         )
 
 

@@ -73,14 +73,15 @@ async def test_an_employee_sorts_a_folder_with_the_tools_it_declares(tmp_path: P
     outcome = await Executor(
         llm,
         build_registry(file_root=workspace, code_execution=False),
-        approvals=ApprovalGate(ScriptedApprovalService.rejecting()),
+        approvals=ApprovalGate(ScriptedApprovalService.approving()),
         call_log=log,
     ).run(task, employee, opening(task, employee))
 
     assert outcome.finished
     assert (workspace / "invoices/acme-invoice-March.txt").exists()
     assert (workspace / "personal/holiday.txt").exists()
-    # Nothing was destroyed, and nothing had to be approved to get here.
+    # Nothing was destroyed. Moving after reading external document content is
+    # still confirmed exactly, even though the move itself is reversible.
     assert (workspace / "summary.md").read_text() == "the old summary"
     assert all(call.success for call in await log.list_for_task(task.id))
 

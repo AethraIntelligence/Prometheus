@@ -40,8 +40,10 @@ from domain.approvals.models import ApprovalRequest, ApprovalState, scope_for
 from domain.approvals.protocols import ApprovalService, CapabilityLeaseRepository
 from domain.audit.protocols import AuditLog, AuditRecord
 from domain.employees.definition import EmployeeDefinition
+from domain.integrations.untrusted import Provenance
 from domain.policies.engine import PolicyEngine, PolicyRequest
-from domain.policies.models import Decision
+from domain.policies.models import Decision, RiskLevel
+from domain.policies.risk import Effect
 from domain.policies.rules import RuleBasedPolicyEngine
 from domain.secrets.models import redact
 from domain.tasks.task import Task, TaskStatus
@@ -98,6 +100,7 @@ class ApprovalGate:
         definition: EmployeeDefinition,
         *,
         status: StatusSink | None = None,
+        untrusted_context: tuple[Provenance, ...] = (),
     ) -> GateOutcome:
         assessment = tool.assess(input_data) if isinstance(tool, RiskAssessor) else None
         action = describe(tool.spec, input_data)
@@ -115,9 +118,6 @@ class ApprovalGate:
             )
         )
 
-        if decision.decision is Decision.ALLOW:
-            return ALLOWED
-
         if decision.decision is Decision.DENY:
             log.info("policy.denied", tool=tool.spec.name, reason=decision.reason)
             await self._record(
@@ -132,6 +132,10 @@ class ApprovalGate:
             return GateOutcome(
                 allowed=False, reason=_DENIED.format(action=action, reason=decision.reason)
             )
+
+        step_up = bool(untrusted_context) and tool.spec.effect is not Effect.READ
+        if decision.decision is Decision.ALLOW and not step_up:
+            return ALLOWED
 
         if directions.current().approvals is ApprovalChoice.DENY:
             # Checked before the approver, because refusing needs nobody: it is
@@ -150,7 +154,7 @@ class ApprovalGate:
 
         safe_payload = redact(input_data)
         scope = scope_for(definition.actor_id, tool.spec.name, safe_payload)
-        if self._leases is not None:
+        if self._leases is not None and not step_up:
             lease = await self._leases.find_match(
                 scope,
                 workspace_id=task.workspace_id,
@@ -182,7 +186,7 @@ class ApprovalGate:
                 action,
                 "DENIED",
                 reason,
-                policy_source=decision.source,
+                policy_source=("untrusted_context_step_up" if step_up else decision.source),
             )
             return GateOutcome(allowed=False, reason=reason)
 
@@ -197,18 +201,36 @@ class ApprovalGate:
             except Exception as error:
                 log.warning("approval.preview_failed", tool=tool.spec.name, error=str(error))
 
+        reason = decision.reason
+        policy_source = decision.source
+        if step_up:
+            source_names = ", ".join(sorted({item.source for item in untrusted_context}))
+            reason = (
+                "This action was proposed after reading untrusted external data "
+                f"from {source_names}. Confirm this exact action; external text may "
+                "contain prompt injection."
+            )
+            policy_source = "untrusted_context_step_up"
+            preview = {
+                **preview,
+                "security": "untrusted context influenced this action",
+                "context_sources": [item.to_dict() for item in untrusted_context],
+            }
+
         request = ApprovalRequest.create(
             task_id=task.id,
             action=action,
             tool=tool.spec.name,
             payload=safe_payload,
-            risk_level=decision.risk_level,
+            risk_level=RiskLevel.HIGH if step_up else decision.risk_level,
             workspace_id=task.workspace_id,
             requested_by_employee_id=definition.id,
-            reason=decision.reason,
+            reason=reason,
             scope=scope,
             preview=preview,
-            policy_source=decision.source,
+            policy_source=policy_source,
+            requires_explicit_confirmation=step_up,
+            context_sources=tuple(item.to_dict() for item in untrusted_context),
         )
         log.info(
             "approval.requested",
@@ -224,8 +246,8 @@ class ApprovalGate:
                 tool,
                 action,
                 "SUCCESS",
-                decision.reason,
-                policy_source=decision.source,
+                reason,
+                policy_source=policy_source,
             )
             return ALLOWED
         await self._record(
@@ -234,12 +256,12 @@ class ApprovalGate:
             tool,
             action,
             "DENIED",
-            decision.reason,
-            policy_source=decision.source,
+            reason,
+            policy_source=policy_source,
         )
         return GateOutcome(
             allowed=False,
-            reason=_NOT_APPROVED.format(state=state.value.lower(), reason=decision.reason),
+            reason=_NOT_APPROVED.format(state=state.value.lower(), reason=reason),
         )
 
     async def _ask(

@@ -20,6 +20,7 @@ from pathlib import Path
 from domain.approvals.gate import RiskAssessment
 from domain.capabilities.models import Capability
 from domain.errors import PermissionDeniedError, ToolInputError
+from domain.integrations.untrusted import TrustLevel
 from domain.policies.models import RiskLevel
 from domain.policies.risk import Effect
 from domain.tools.models import ToolResult, ToolSpec
@@ -99,6 +100,9 @@ class FileListTool(FileRootTool):
                 Param("recursive", type="boolean", description="Descend into subdirectories.",
                       required=False, default=False),
                 capabilities=frozenset({Capability.FILE_ACCESS}),
+                result_trust=TrustLevel.UNTRUSTED,
+                result_kind="document",
+                result_schema={"path": "string", "entries": "array", "count": "integer"},
             ),
             root,
         )
@@ -132,6 +136,15 @@ class FileReadTool(FileRootTool):
                 Param("offset", type="integer", description="Byte to start reading from, for "
                       "a file too large to read at once.", required=False, default=0),
                 capabilities=frozenset({Capability.FILE_ACCESS}),
+                result_trust=TrustLevel.UNTRUSTED,
+                result_kind="document",
+                result_schema={
+                    "path": "string",
+                    "content": "string",
+                    "bytes_read": "integer",
+                    "total_bytes": "integer",
+                    "truncated": "boolean",
+                },
             ),
             root,
         )

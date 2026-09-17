@@ -63,6 +63,28 @@ async def test_a_question_survives_the_process_that_asked_it(
     assert reloaded.request.payload == {"path": "notes.txt"}
 
 
+async def test_step_up_provenance_survives_the_process_that_asked(
+    repository, sqlite_repository
+) -> None:
+    task = await stored_task(sqlite_repository)
+    approval = Approval(
+        request=ApprovalRequest.create(
+            task.id,
+            "mail.send(to='client@example.com')",
+            requires_explicit_confirmation=True,
+            context_sources=(
+                {"source": "mail.read", "kind": "integration", "trust": "untrusted"},
+            ),
+        )
+    )
+
+    await repository.save(approval)
+    reloaded = await repository.get(approval.id)
+
+    assert reloaded.request.requires_explicit_confirmation
+    assert reloaded.request.context_sources == approval.request.context_sources
+
+
 async def test_a_decision_replaces_the_pending_row(repository, sqlite_repository) -> None:
     task = await stored_task(sqlite_repository)
     approval = pending(task)

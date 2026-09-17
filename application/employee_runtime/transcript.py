@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from domain.integrations.untrusted import Provenance, TrustLevel
 from domain.llm.models import Message, Role, ToolCallRequest
 from domain.tasks.plan import Observation
 
@@ -104,6 +105,23 @@ class Transcript:
     @property
     def last_observation(self) -> Observation | None:
         return self.observations[-1] if self.observations else None
+
+    @property
+    def untrusted_sources(self) -> tuple[Provenance, ...]:
+        """External inputs currently capable of influencing the next action.
+
+        Derived from the durable transcript so a restart cannot forget that an
+        action was proposed after reading untrusted data.
+        """
+        found: dict[tuple[str, str], Provenance] = {}
+        for observation in self.observations:
+            raw = observation.details.get("provenance")
+            if not isinstance(raw, dict) or raw.get("trust") != TrustLevel.UNTRUSTED.value:
+                continue
+            source = str(raw.get("source", "unknown"))
+            kind = str(raw.get("kind", "external"))
+            found[(source, kind)] = Provenance(source, kind, TrustLevel.UNTRUSTED)
+        return tuple(found.values())
 
     # --- Persistence ----------------------------------------------------------
 

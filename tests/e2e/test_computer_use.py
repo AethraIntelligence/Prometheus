@@ -117,12 +117,19 @@ async def test_an_employee_operates_a_screen_and_confirms_what_it_did(
         ]
     )
 
-    outcome = await Executor(llm, tools, call_log=log).run(
+    approvals = ScriptedApprovalService.approving()
+    outcome = await Executor(
+        llm,
+        tools,
+        call_log=log,
+        approvals=ApprovalGate(approvals),
+    ).run(
         task, employee, opening(task, employee, tools)
     )
 
     assert outcome.finished
     assert computer.names() == ["screenshot", "click", "screenshot", "type", "screenshot"]
+    assert all(request.requires_explicit_confirmation for request in approvals.requests)
     # Every action was established by looking, not assumed.
     assert all(
         call.output.get("verified") is True
