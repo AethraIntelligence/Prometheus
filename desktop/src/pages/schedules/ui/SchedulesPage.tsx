@@ -49,6 +49,7 @@ export function SchedulesPage({
   const page = useSchedules(client);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editing, setEditing] = useState<Schedule | null>(null);
+  const [workflowNotice, setWorkflowNotice] = useState("");
 
   useEffect(() => {
     if (!repeat) return;
@@ -137,6 +138,43 @@ export function SchedulesPage({
             <p className="note">This runtime was started without schedules.</p>
           )}
 
+          {page.workflows.length > 0 && (
+            <section className="workflow-catalog" aria-label="Workflow catalog">
+              <div className="section-title">
+                <div><h2>Workflow catalog</h2><p>Versioned processes that run the same way now or on a schedule.</p></div>
+              </div>
+              {workflowNotice && <p className="note" role="status">{workflowNotice}</p>}
+              <div className="workflow-grid">
+                {page.workflows.map((workflow) => (
+                  <article className="workflow-card" key={`${workflow.name}@${workflow.version}`}>
+                    <div className="schedule-head">
+                      <strong>{workflow.name} · v{workflow.version}</strong>
+                      <span className={workflow.readiness.ready ? "badge" : "badge danger"}>
+                        {workflow.readiness.ready ? "Ready" : "Not ready"}
+                      </span>
+                    </div>
+                    <p>{workflow.description}</p>
+                    <p className="note">
+                      {workflow.steps.length} step(s) · {workflow.metrics.runs} run(s) · {workflow.metrics.success_rate === null ? "no quality history" : `${Math.round(workflow.metrics.success_rate * 100)}% success`}
+                      {workflow.metrics.average_cost_usd === null ? "" : ` · $${workflow.metrics.average_cost_usd.toFixed(3)} average`}
+                    </p>
+                    {workflow.readiness.issues.map((issue) => <p className="work-muted" key={issue}>{issue}</p>)}
+                    <div className="actions">
+                      <button type="button" disabled={!workflow.readiness.ready || workflow.inputs.some((input) => input.required && input.default == null)} onClick={async () => {
+                        const preview = await page.dryRun(workflow);
+                        if (preview) setWorkflowNotice(`${workflow.name} v${workflow.version}: ${preview.steps.length} ordered steps are ready; nothing was executed.`);
+                      }}>Dry run</button>
+                      <button type="button" className="primary" disabled={!workflow.readiness.ready || workflow.inputs.some((input) => input.required && input.default == null)} onClick={async () => {
+                        const run = await page.runWorkflow(workflow);
+                        if (run) setWorkflowNotice(`${workflow.name} v${workflow.version}: ${run.status.toLowerCase()} at $${run.cost_usd.toFixed(3)}.`);
+                      }}>Run now</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
           {page.available && (
             <div className="card">
               {page.ready && page.schedules.length === 0 ? (
@@ -189,6 +227,8 @@ export function SchedulesPage({
             >
               <NewScheduleForm
                 models={page.models}
+                workflows={page.workflows}
+                onDryRun={page.dryRun}
                 initialRequest={draft.request}
                 initialName={draft.name}
                 onCreate={async (schedule) => {
@@ -211,6 +251,8 @@ export function SchedulesPage({
                 key={editing.id}
                 schedule={editing}
                 models={page.models}
+                workflows={page.workflows}
+                onDryRun={page.dryRun}
                 onCreate={async (changed) => {
                   if (await page.update(editing.id, changed)) setEditing(null);
                 }}

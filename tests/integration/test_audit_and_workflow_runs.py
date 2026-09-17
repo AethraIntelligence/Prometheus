@@ -102,7 +102,10 @@ async def test_a_workflow_run_round_trips_with_what_each_step_produced(
     runs = SqlWorkflowRunRepository(session_factory)
     task_id = uuid4()
     run = WorkflowRun.create(
-        "weekly-report", trigger=WorkflowTrigger.MANUAL, inputs={"folder": "sales"}
+        "weekly-report",
+        workflow_version=3,
+        trigger=WorkflowTrigger.MANUAL,
+        inputs={"folder": "sales"},
     ).with_step(StepOutcome("survey", "organizer", task_id=task_id, succeeded=True, attempts=1))
 
     await runs.save(run)
@@ -112,6 +115,7 @@ async def test_a_workflow_run_round_trips_with_what_each_step_produced(
     assert stored is not None
     assert stored.status is RunStatus.COMPLETED
     assert stored.inputs == {"folder": "sales"}
+    assert stored.workflow_version == 3
     assert stored.steps[0].task_id == task_id
     assert stored.summary == "1 step(s) completed."
 

@@ -32,6 +32,7 @@ def _to_values(run: WorkflowRun) -> dict[str, Any]:
         "id": str(run.id),
         "workspace_id": str(run.workspace_id),
         "workflow": run.workflow,
+        "workflow_version": run.workflow_version,
         "trigger": run.trigger.value,
         "input": dict(run.inputs),
         "status": run.status.value,
@@ -51,12 +52,14 @@ def _to_run(row: WorkflowRunRow) -> WorkflowRun:
             succeeded=bool(entry.get("succeeded", False)),
             attempts=int(entry.get("attempts", 0)),
             summary=str(entry.get("summary", "")),
+            cost_usd=float(entry.get("cost_usd", 0.0)),
         )
         for entry in result.get("steps", [])
     )
     return WorkflowRun(
         id=UUID(row.id),
         workflow=row.workflow,
+        workflow_version=row.workflow_version or int(result.get("workflow_version", 1)),
         trigger=WorkflowTrigger(row.trigger),
         inputs=row.input or {},
         status=RunStatus(row.status),

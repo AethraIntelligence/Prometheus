@@ -34,6 +34,11 @@ export function ScheduleCard({
         )}
       </div>
       {schedule.name && <p className="schedule-request">{schedule.request}</p>}
+      {schedule.workflow_name && (
+        <p className="note schedule-workflow">
+          Workflow <b>{schedule.workflow_name}</b> · pinned version {schedule.workflow_version}
+        </p>
+      )}
       <p className="note">
         {describeWhen(schedule)}
         {schedule.enabled && running && next && ` · next ${next}`}
@@ -45,7 +50,7 @@ export function ScheduleCard({
         {schedule.runs > 0 && ` · ${schedule.runs} ${schedule.runs === 1 ? "run" : "runs"}`}
       </p>
       <p className="note schedule-policy">
-        Overlapping runs are skipped · missed times are combined into one current run
+        Declared step retries · overlapping runs are skipped · missed times are combined into one current run
       </p>
       {(schedule.recent_runs?.length ?? 0) > 0 && (
         <ol className="schedule-runs" aria-label="Recent runs">
@@ -54,6 +59,8 @@ export function ScheduleCard({
               <span className={`run-state ${run.status.toLowerCase()}`}>{run.status}</span>
               <time dateTime={run.finished_at}>{formatMoment(run.finished_at)}</time>
               <span>${run.cost_usd.toFixed(2)}</span>
+              {run.workflow_version && <span>workflow v{run.workflow_version}</span>}
+              {run.quality !== undefined && <span>{Math.round(run.quality * 100)}% quality</span>}
             </li>
           ))}
         </ol>

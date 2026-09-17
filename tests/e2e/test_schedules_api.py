@@ -67,6 +67,48 @@ def test_a_schedule_is_made_listed_paused_and_removed(client: TestClient) -> Non
     assert client.get(f"/api/conversations/{schedule['conversation_id']}").status_code == 200
 
 
+def test_a_workflow_is_checked_and_pinned_before_it_is_scheduled(
+    client: TestClient,
+) -> None:
+    catalog = client.get("/api/workflows")
+    assert catalog.status_code == 200
+    workflow = next(
+        item for item in catalog.json()["workflows"] if item["name"] == "weekly-report"
+    )
+    assert workflow["version"] == 1
+    assert workflow["readiness"] == {"ready": True, "issues": []}
+    assert workflow["inputs"][0]["kind"] == "STRING"
+    assert workflow["budget"]["max_steps"] == 4
+
+    preview = client.post(
+        "/api/workflows/weekly-report/dry-run",
+        json={"version": 1, "inputs": {"folder": "sales", "report": "week.md"}},
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["executable"] is True
+    assert preview.json()["steps"][0]["instruction"].startswith("List everything under sales")
+
+    made = client.post(
+        "/api/schedules",
+        json={
+            "workflow_name": "weekly-report",
+            "workflow_version": 1,
+            "workflow_inputs": {"folder": "sales", "report": "week.md"},
+            "daily_at": "09:00",
+            "name": "Weekly sales report",
+        },
+    )
+    assert made.status_code == 201, made.text
+    schedule = made.json()
+    assert schedule["workflow_name"] == "weekly-report"
+    assert schedule["workflow_version"] == 1
+    assert schedule["workflow_inputs"] == {"folder": "sales", "report": "week.md"}
+    assert schedule["conversation_id"] is None
+    assert schedule["retry_policy"] == "DECLARED"
+    assert schedule["misfire_policy"] == "COALESCE"
+    assert schedule["overlap_policy"] == "SKIP"
+
+
 @pytest.mark.parametrize(
     "body",
     [

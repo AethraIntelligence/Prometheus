@@ -50,6 +50,18 @@ class Trigger(StrEnum):
     EVENT = "EVENT"
 
 
+class RetryPolicy(StrEnum):
+    DECLARED = "DECLARED"
+
+
+class MisfirePolicy(StrEnum):
+    COALESCE = "COALESCE"
+
+
+class ConcurrencyPolicy(StrEnum):
+    SKIP = "SKIP"
+
+
 #: The shortest interval a schedule may declare. Not a technical limit - the
 #: poll loop could go faster - but a statement that this is a platform for work
 #: an employee does, and an employee run takes minutes. A schedule that fires
@@ -161,6 +173,15 @@ class Schedule:
     #: Incremented whenever the standing instruction is edited. A run records
     #: this value so its exact configuration remains explainable afterwards.
     version: int = 1
+    #: A pinned workflow snapshot. Legacy schedules have an empty name and keep
+    #: asking their original free-text request through the manager.
+    workflow_name: str = ""
+    workflow_version: int | None = None
+    workflow_inputs: dict[str, Any] = field(default_factory=dict)
+    workflow_snapshot: dict[str, Any] = field(default_factory=dict)
+    retry_policy: RetryPolicy = RetryPolicy.DECLARED
+    misfire_policy: MisfirePolicy = MisfirePolicy.COALESCE
+    concurrency_policy: ConcurrencyPolicy = ConcurrencyPolicy.SKIP
 
     @classmethod
     def create(cls, request: str, **extra: Any) -> Schedule:
@@ -189,6 +210,10 @@ class Schedule:
     def trigger(self) -> Trigger:
         return Trigger.SCHEDULED if self.recurrence is not None else Trigger.EVENT
 
+    @property
+    def is_workflow(self) -> bool:
+        return bool(self.workflow_name and self.workflow_version and self.workflow_snapshot)
+
     def is_due(self, now: datetime) -> bool:
         """Time-based only. An event-driven schedule is due when an event says so."""
         if not self.enabled or self.recurrence is None or self.next_due_at is None:
@@ -210,7 +235,7 @@ class Schedule:
             next_due_at=self.recurrence.next_after(now) if self.recurrence else None,
         )
 
-    def manually_fired(self, now: datetime, objective_id: UUID) -> Schedule:
+    def manually_fired(self, now: datetime, objective_id: UUID | None = None) -> Schedule:
         """Record a person-triggered run without moving the automatic clock."""
         return replace(
             self,

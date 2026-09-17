@@ -7,6 +7,7 @@
 # it costs nothing, and a step whose failure is survivable.
 
 name: weekly-report
+version: 1
 description: >
   Collect what changed this week in one folder, work out the numbers, and leave
   a short report next to the data.
@@ -16,8 +17,23 @@ trigger: MANUAL
 # Defaults for the placeholders below. `prometheus run-workflow weekly-report
 # --input folder=sales` overrides one without editing the file.
 inputs:
-  folder: "."
-  report: weekly-report.md
+  folder:
+    type: STRING
+    default: "."
+    description: Folder containing the source material.
+  report:
+    type: STRING
+    default: weekly-report.md
+    description: Output file written by the final step.
+
+profile:
+  approvals: ASK
+  model: ""
+
+budget:
+  max_steps: 4
+  max_cost_usd: 3
+  max_wall_time_seconds: 900
 
 steps:
   - name: survey

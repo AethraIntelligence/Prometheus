@@ -430,6 +430,19 @@ def build_service(
             settings=_settings_editor(container),
             schedules=container.schedule_repository,
             events=container.event_log,
+            workflows=(
+                build_workflow_engine(container)
+                if container.settings.workflows_enabled
+                else None
+            ),
+            workflow_registry=(
+                container.workflow_registry
+                if container.settings.workflows_enabled
+                else None
+            ),
+            workflow_runs=(
+                container.workflow_runs if container.settings.workflows_enabled else None
+            ),
             scheduler_running=scheduler_running,
             history_limit=history_limit,
         )

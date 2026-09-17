@@ -411,7 +411,7 @@ def employees(
         typer.echo("No employees declared.")
         return
     for definition in declared:
-        typer.secho(f"{definition.name}", fg="cyan", nl=False)
+        typer.secho(f"{definition.name}@{definition.version}", fg="cyan", nl=False)
         typer.echo(f"  {definition.role.title}")
         typer.echo(f"  tools:  {', '.join(sorted(definition.allowed_tools)) or 'none'}")
         can_do = ", ".join(sorted(c.value for c in definition.capabilities))
@@ -806,6 +806,7 @@ _INPUT_OPTION = typer.Option(
 def run_workflow(
     name: str = typer.Argument(..., help="The workflow to run, from `prometheus workflows`."),
     inputs: list[str] = _INPUT_OPTION,
+    version: int | None = typer.Option(None, "--version", min=1, help="Exact workflow version."),
 ) -> None:
     """Run a predefined process and report what each step produced."""
 
@@ -825,7 +826,7 @@ def run_workflow(
                     raise typer.Exit(code=1)
                 values[key.strip()] = value
             engine = build_workflow_engine(container)
-            run = await engine.run(name, inputs=values)
+            run = await engine.run(name, version=version, inputs=values)
             colour = "green" if run.succeeded else "red"
             typer.secho(f"\n{run.status.value}: {run.workflow}", fg=colour)
             for step in run.steps:

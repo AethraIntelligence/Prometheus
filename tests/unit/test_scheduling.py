@@ -14,12 +14,16 @@ from datetime import UTC, datetime, time, timedelta
 import pytest
 
 from application.scheduling.scheduler import OBJECTIVE_FINISHED, Scheduler
+from application.workflows.engine import WorkflowEngine
 from domain.scheduling.models import Event, Recurrence, Schedule, Trigger
+from domain.tasks.task import Task, TaskResult, TaskStatus
+from domain.workflows.definition import WorkflowDefinition, WorkflowStep
 from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
 from infrastructure.persistence.schedule_repository import (
     InMemoryEventLog,
     InMemoryScheduleRepository,
 )
+from infrastructure.persistence.workflow_repository import InMemoryWorkflowRunRepository
 
 NOON = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
 
@@ -145,6 +149,61 @@ async def test_a_due_schedule_becomes_an_objective() -> None:
     assert stored.runs == 1
     assert stored.next_due_at == NOON + timedelta(hours=1)
     assert stored.last_objective_id is not None
+
+
+async def test_a_schedule_runs_its_pinned_workflow_snapshot() -> None:
+    class Registry:
+        def list_all(self):
+            return []
+
+        def get(self, name, version=None):
+            raise AssertionError("A pinned schedule must not re-read the mutable registry")
+
+    class Steps:
+        def __init__(self) -> None:
+            self.goals: list[str] = []
+
+        async def submit_and_run(self, goal, employee_name, **kwargs):
+            self.goals.append(goal)
+            task = Task.create(goal).transition_to(TaskStatus.RUNNING)[0]
+            task = task.transition_to(TaskStatus.VERIFYING)[0]
+            return task.complete(TaskResult(summary="done"))[0]
+
+    definition = WorkflowDefinition(
+        name="daily-report",
+        version=4,
+        inputs={"folder": "sales"},
+        steps=(WorkflowStep("report", "organizer", "Report on {folder}"),),
+    )
+    schedules, events = InMemoryScheduleRepository(), InMemoryEventLog()
+    await schedules.save(
+        Schedule.create(
+            "Run daily-report workflow version 4",
+            recurrence=Recurrence(every_seconds=3600),
+            created_at=NOON,
+            workflow_name=definition.name,
+            workflow_version=definition.version,
+            workflow_inputs={"folder": "sales"},
+            workflow_snapshot=definition.to_snapshot(),
+        )
+    )
+    steps = Steps()
+    workflows = WorkflowEngine(Registry(), steps, InMemoryWorkflowRunRepository())
+    loop = Scheduler(
+        manager=RecordingManager(),
+        schedules=schedules,
+        events=events,
+        workflows=workflows,
+        clock=lambda: NOON,
+    )
+
+    [run] = await loop.tick()
+
+    assert run.workflow_version == 4
+    assert steps.goals == ["Report on sales"]
+    recorded = (await events.recent())[0]
+    assert recorded.payload["workflow_version"] == 4
+    assert recorded.payload["workflow_run_id"] == str(run.id)
 
 
 async def test_a_paused_schedule_does_not_fire() -> None:

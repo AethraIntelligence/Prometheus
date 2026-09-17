@@ -119,3 +119,39 @@ def test_reloading_picks_up_a_file_added_since(tmp_path: Path) -> None:
     registry.reload()
 
     assert [d.name for d in registry.list_all()] == ["nightly", "weekly"]
+
+
+def test_versions_are_addressable_and_latest_is_explicit(tmp_path: Path) -> None:
+    declare(tmp_path, "nightly", GOOD)
+    (tmp_path / "nightly.v2.yaml").write_text(
+        GOOD.replace("name: nightly", "name: nightly\nversion: 2"),
+        encoding="utf-8",
+    )
+    registry = YamlWorkflowRegistry(tmp_path)
+
+    assert registry.get("nightly").version == 2
+    assert registry.get("nightly", 1).version == 1
+    assert registry.get("nightly", 2).version == 2
+
+
+def test_typed_inputs_profiles_and_budgets_are_checked(tmp_path: Path) -> None:
+    body = """
+name: typed
+version: 1
+inputs:
+  count: {type: INTEGER, required: true, description: Number of reports.}
+profile: {approvals: DENY, model: careful}
+budget: {max_steps: 2, max_cost_usd: 1.5, max_wall_time_seconds: 60}
+steps:
+  - {name: run, employee: organizer, instruction: "Make {count} reports"}
+"""
+    definition = declare(tmp_path, "typed", body).get("typed", 1)
+
+    assert definition.values({"count": 2}) == {"count": 2}
+    assert definition.profile.approvals.value == "DENY"
+    assert definition.profile.model == "careful"
+    assert definition.budget.max_cost_usd == 1.5
+    with pytest.raises(ValueError, match="whole number"):
+        definition.values({"count": "two"})
+    with pytest.raises(ValueError, match="required"):
+        definition.values()

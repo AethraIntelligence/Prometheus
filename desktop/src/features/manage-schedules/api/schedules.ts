@@ -24,6 +24,9 @@ export interface NewSchedule {
   model?: string;
   /** ASK, AUTO or DENY. */
   approvals?: "ASK" | "AUTO" | "DENY";
+  workflow_name?: string;
+  workflow_version?: number;
+  workflow_inputs?: Record<string, unknown>;
 }
 
 export async function createSchedule(client: RuntimeClient, schedule: NewSchedule): Promise<Schedule> {

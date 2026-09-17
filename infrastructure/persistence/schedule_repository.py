@@ -23,7 +23,14 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.errors import StorageError, StorageNotInitializedError
-from domain.scheduling.models import Event, Recurrence, Schedule
+from domain.scheduling.models import (
+    ConcurrencyPolicy,
+    Event,
+    MisfirePolicy,
+    Recurrence,
+    RetryPolicy,
+    Schedule,
+)
 from domain.workforce.directions import ApprovalChoice
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.persistence.dialect import upsert
@@ -64,6 +71,13 @@ def _to_schedule(row: ScheduleRow) -> Schedule:
         model=row.model or "",
         approvals=_approvals(row.approvals),
         version=row.version or 1,
+        workflow_name=row.workflow_name or "",
+        workflow_version=row.workflow_version,
+        workflow_inputs=dict(row.workflow_inputs or {}),
+        workflow_snapshot=dict(row.workflow_snapshot or {}),
+        retry_policy=RetryPolicy(row.retry_policy or "DECLARED"),
+        misfire_policy=MisfirePolicy(row.misfire_policy or "COALESCE"),
+        concurrency_policy=ConcurrencyPolicy(row.concurrency_policy or "SKIP"),
     )
 
 
@@ -137,6 +151,13 @@ class SqlScheduleRepository(_SqliteBase):
             "model": schedule.model,
             "approvals": schedule.approvals.value,
             "version": schedule.version,
+            "workflow_name": schedule.workflow_name,
+            "workflow_version": schedule.workflow_version,
+            "workflow_inputs": dict(schedule.workflow_inputs),
+            "workflow_snapshot": dict(schedule.workflow_snapshot),
+            "retry_policy": schedule.retry_policy.value,
+            "misfire_policy": schedule.misfire_policy.value,
+            "concurrency_policy": schedule.concurrency_policy.value,
         }
         async with self._session() as session:
             statement = upsert(session, ScheduleRow).values(**values)

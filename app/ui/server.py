@@ -55,6 +55,7 @@ from app.config.container import (
     build_container,
     build_manager,
     build_service,
+    build_workflow_engine,
     prepare,
 )
 from app.config.settings import Settings, get_settings
@@ -146,7 +147,7 @@ class SettingsChange(BaseModel):
 class ScheduleForm(BaseModel):
     """A schedule as the window's form holds it. Exactly one "when" is checked by the core."""
 
-    request: str = Field(min_length=1)
+    request: str = ""
     name: str = Field(default="", max_length=120)
     every_minutes: int | None = None
     #: HH:MM in the person's own clock, with the offset their clock had when
@@ -160,6 +161,9 @@ class ScheduleForm(BaseModel):
     model: str = Field(default="", max_length=120)
     #: ASK, AUTO or DENY, checked by the core.
     approvals: str = Field(default="ASK", max_length=8)
+    workflow_name: str = Field(default="", max_length=64)
+    workflow_version: int | None = Field(default=None, ge=1)
+    workflow_inputs: dict[str, Any] = Field(default_factory=dict)
 
 
 class NewSchedule(ScheduleForm):
@@ -169,6 +173,11 @@ class NewSchedule(ScheduleForm):
 
 class ScheduleEdit(BaseModel):
     enabled: bool
+
+
+class WorkflowInvocation(BaseModel):
+    version: int | None = Field(default=None, ge=1)
+    inputs: dict[str, Any] = Field(default_factory=dict)
 
 
 class SetupChoice(BaseModel):
@@ -410,6 +419,9 @@ def create_app(
                 workspaces=every_workspace,
                 conversations=container.conversation_repository,
                 folder_root=container.workspaces.root_for,
+                workflows=(
+                    build_workflow_engine(container) if resolved.workflows_enabled else None
+                ),
             )
             scheduler_task = asyncio.create_task(scheduler.run_forever(stop_scheduler))
 
@@ -901,6 +913,30 @@ def _routes(app: FastAPI) -> None:
 
     # --- Work that starts on its own --------------------------------------------
 
+    @app.get("/api/workflows")
+    async def workflows(request: Request) -> dict[str, Any]:
+        return await _settings_change(_service(request).list_workflows())
+
+    @app.post("/api/workflows/{name}/dry-run")
+    async def dry_run_workflow(
+        request: Request, name: str, body: WorkflowInvocation
+    ) -> dict[str, Any]:
+        return await _settings_change(
+            _service(request).dry_run_workflow(
+                name, version=body.version, inputs=body.inputs
+            )
+        )
+
+    @app.post("/api/workflows/{name}/run", status_code=201)
+    async def run_workflow(
+        request: Request, name: str, body: WorkflowInvocation
+    ) -> dict[str, Any]:
+        return await _settings_change(
+            _service(request).run_workflow_now(
+                name, version=body.version, inputs=body.inputs
+            )
+        )
+
     @app.get("/api/schedules")
     async def schedules(request: Request) -> dict[str, Any]:
         return await _settings_change(_service(request).list_schedules())
@@ -919,6 +955,9 @@ def _routes(app: FastAPI) -> None:
                 conversation_id=body.conversation_id,
                 model=body.model,
                 approvals=body.approvals,
+                workflow_name=body.workflow_name,
+                workflow_version=body.workflow_version,
+                workflow_inputs=body.workflow_inputs,
             )
         )
 
@@ -938,6 +977,9 @@ def _routes(app: FastAPI) -> None:
                 on_event=body.on_event,
                 model=body.model,
                 approvals=body.approvals,
+                workflow_name=body.workflow_name,
+                workflow_version=body.workflow_version,
+                workflow_inputs=body.workflow_inputs,
             )
         )
 

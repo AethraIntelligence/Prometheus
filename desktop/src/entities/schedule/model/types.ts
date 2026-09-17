@@ -15,6 +15,9 @@ export interface ScheduleRun {
   cost_usd: number;
   summary: string;
   schedule_version: number;
+  workflow_name?: string;
+  workflow_version?: number | null;
+  quality?: number;
 }
 
 export interface Schedule {
@@ -43,6 +46,9 @@ export interface Schedule {
   approvals: "ASK" | "AUTO" | "DENY";
   created_at: string;
   version?: number;
+  workflow_name?: string;
+  workflow_version?: number | null;
+  workflow_inputs?: Record<string, unknown>;
   /** The nearest completed firings, newest first. */
   recent_runs?: ScheduleRun[];
   consecutive_failures?: number;
@@ -51,6 +57,7 @@ export interface Schedule {
   overlap_policy?: "SKIP";
   /** Missed times collapse into one current run, never a catch-up burst. */
   misfire_policy?: "COALESCE";
+  retry_policy?: "DECLARED";
 }
 
 export interface ScheduleList {

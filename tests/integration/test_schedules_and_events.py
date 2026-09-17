@@ -11,6 +11,7 @@ from datetime import UTC, datetime, time, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.scheduling.models import Event, Recurrence, Schedule
+from domain.workflows.definition import WorkflowDefinition, WorkflowStep
 from infrastructure.persistence.schedule_repository import (
     SqlEventLog,
     SqlScheduleRepository,
@@ -79,6 +80,33 @@ async def test_a_zoned_schedule_and_its_version_survive_storage(
     assert read is not None
     assert read.recurrence == Recurrence(daily_at=time(9, 0), timezone="Europe/Rome")
     assert read.version == 2
+
+
+async def test_a_schedule_keeps_the_exact_workflow_version_and_inputs(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    definition = WorkflowDefinition(
+        name="weekly-report",
+        version=3,
+        steps=(WorkflowStep("write", "researcher", "Write {report}"),),
+    )
+    created = Schedule.create(
+        "Run weekly-report workflow version 3",
+        recurrence=Recurrence(every_seconds=3600),
+        workflow_name=definition.name,
+        workflow_version=definition.version,
+        workflow_inputs={"report": "week.md"},
+        workflow_snapshot=definition.to_snapshot(),
+    )
+    store = SqlScheduleRepository(session_factory)
+
+    await store.save(created)
+    read = await store.get(created.id)
+
+    assert read is not None and read.is_workflow
+    assert read.workflow_version == 3
+    assert read.workflow_inputs == {"report": "week.md"}
+    assert WorkflowDefinition.from_snapshot(read.workflow_snapshot) == definition
 
 
 async def test_a_schedule_lease_is_atomic_and_can_be_recovered_after_expiry(

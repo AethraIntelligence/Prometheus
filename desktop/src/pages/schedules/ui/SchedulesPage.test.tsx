@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Schedule } from "../../../entities/schedule";
+import type { Workflow } from "../../../entities/workflow";
 import { RuntimeClient, RuntimeProvider } from "../../../shared/api";
 import { SchedulesPage } from "./SchedulesPage";
 
@@ -38,7 +39,7 @@ function made(overrides: Partial<Schedule> = {}): Schedule {
   };
 }
 
-function scriptedRuntime({ running = true, saved = false, locked = "", existing = [] as unknown[] } = {}) {
+function scriptedRuntime({ running = true, saved = false, locked = "", existing = [] as unknown[], workflows = [] as Workflow[] } = {}) {
   const state = {
     schedules: [...existing] as Schedule[],
     running,
@@ -53,11 +54,18 @@ function scriptedRuntime({ running = true, saved = false, locked = "", existing 
     const method = init?.method ?? "GET";
     if (method === "POST" && path === "/api/schedules") {
       state.posted.push({ path, body });
-      const created = made({ id: "s2", name: body.name, request: body.request });
+      const created = made({
+        id: "s2",
+        name: body.name,
+        request: body.request,
+        workflow_name: body.workflow_name,
+        workflow_version: body.workflow_version,
+        workflow_inputs: body.workflow_inputs,
+      });
       state.schedules.push(created);
       return json(created);
     }
-    if (method === "POST" && path.endsWith("/run")) {
+    if (method === "POST" && path.startsWith("/api/schedules/") && path.endsWith("/run")) {
       state.posted.push({ path, body });
       return json({ id: "o1", conversation_id: "t1" });
     }
@@ -92,6 +100,13 @@ function scriptedRuntime({ running = true, saved = false, locked = "", existing 
           { name: "embedder", model: "some-embedder", generates_text: false },
         ],
       });
+    }
+    if (path === "/api/workflows") return json({ available: true, workflows });
+    if (method === "POST" && path.endsWith("/dry-run")) {
+      return json({ workflow: "weekly-report", version: 2, executable: true, readiness: { ready: true, issues: [] }, inputs: body.inputs, steps: [{ name: "write", employee: "researcher", instruction: "Write sales", depends_on: [], max_attempts: 1 }] });
+    }
+    if (method === "POST" && path.startsWith("/api/workflows/") && path.endsWith("/run")) {
+      return json({ id: "wr1", workflow: "weekly-report", workflow_version: 2, trigger: "MANUAL", status: "COMPLETED", summary: "Done", cost_usd: 0.1, quality: 1, started_at: "2026-09-17T08:00:00Z", finished_at: "2026-09-17T08:01:00Z" });
     }
     if (path === "/api/schedules") {
       return json({ available: true, running: state.running, schedules: state.schedules });
@@ -130,6 +145,20 @@ function show(client: RuntimeClient, props: Parameters<typeof SchedulesPage>[0] 
 }
 
 describe("Scheduled", () => {
+  const workflow: Workflow = {
+    name: "weekly-report",
+    version: 2,
+    description: "Write a repeatable weekly report.",
+    trigger: "MANUAL",
+    inputs: [{ name: "folder", kind: "STRING", required: true, default: "sales", description: "Source folder" }],
+    profile: { approvals: "ASK", model: "" },
+    budget: { max_steps: 3, max_cost_usd: 2, max_wall_time_seconds: 300 },
+    steps: [{ name: "write", employee: "researcher", depends_on: [], max_attempts: 1, on_failure: "STOP" }],
+    readiness: { ready: true, issues: [] },
+    metrics: { runs: 4, success_rate: 0.75, average_cost_usd: 0.12 },
+    recent_runs: [],
+  };
+
   it("offers a first schedule when there is none", async () => {
     const { client } = scriptedRuntime();
     show(client);
@@ -176,6 +205,28 @@ describe("Scheduled", () => {
     expect(within(runs).getByText("DONE")).toBeInTheDocument();
     expect(within(runs).getByText("$0.12")).toBeInTheDocument();
     expect(screen.getByText("1 consecutive failure")).toBeInTheDocument();
+  });
+
+  it("dry-runs and schedules an exact workflow version with typed inputs", async () => {
+    const { client, state } = scriptedRuntime({ workflows: [workflow] });
+    show(client);
+
+    expect(await screen.findByText("weekly-report · v2")).toBeInTheDocument();
+    expect(screen.getByText(/75% success/)).toBeInTheDocument();
+    await userEvent.click((await screen.findAllByRole("button", { name: "New schedule" }))[0]);
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.selectOptions(within(dialog).getByLabelText("Process"), "weekly-report@2");
+    expect(within(dialog).getByLabelText(/folder/)).toHaveValue("sales");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Check dry run" }));
+    expect(await within(dialog).findByText(/no action executed/)).toBeInTheDocument();
+    await userEvent.type(within(dialog).getByLabelText(/Name/), "Sales workflow");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Schedule" }));
+
+    await waitFor(() => expect(state.posted[0]?.body).toMatchObject({
+      workflow_name: "weekly-report",
+      workflow_version: 2,
+      workflow_inputs: { folder: "sales" },
+    }));
   });
 
   it("makes a daily schedule on the person's clock and lists it", async () => {

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from infrastructure.persistence.models import Base
 
@@ -51,3 +51,50 @@ def test_migration_creates_the_declared_tables(tmp_path: Path) -> None:
     for name, table in Base.metadata.tables.items():
         migrated = {column["name"] for column in inspector.get_columns(name)}
         assert migrated == set(table.columns.keys()), f"column drift in {name}"
+
+
+def test_workflow_schedule_migration_keeps_legacy_schedule_and_history(
+    tmp_path: Path,
+) -> None:
+    from alembic import command
+
+    database = tmp_path / "legacy-schedule.db"
+    config = _alembic_config(f"sqlite+aiosqlite:///{database}")
+    command.upgrade(config, "037")
+    engine = create_engine(f"sqlite:///{database}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO schedules "
+                "(id, workspace_id, name, request, on_event, enabled, runs, created_at, "
+                "timezone, model, approvals, version) VALUES "
+                "(:id, 'default', 'Digest', 'Summarise notes', 'inbox.arrived', 1, 7, "
+                ":created, '', '', 'ASK', 3)"
+            ),
+            {"id": "00000000-0000-0000-0000-000000000001", "created": "2026-09-17"},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO events "
+                "(id, workspace_id, kind, payload, source, created_at) VALUES "
+                "(:id, 'default', 'objective.finished', :payload, 'Digest', :created)"
+            ),
+            {
+                "id": "00000000-0000-0000-0000-000000000002",
+                "payload": '{"schedule_version": 3}',
+                "created": "2026-09-17",
+            },
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        schedule = connection.execute(
+            text(
+                "SELECT request, runs, version, workflow_name, workflow_version "
+                "FROM schedules"
+            )
+        ).one()
+        events = connection.execute(text("SELECT count(*) FROM events")).scalar_one()
+    assert tuple(schedule) == ("Summarise notes", 7, 3, "", None)
+    assert events == 1

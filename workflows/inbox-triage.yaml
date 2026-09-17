@@ -8,6 +8,7 @@
 # failure of the workflow.
 
 name: inbox-triage
+version: 1
 description: >
   Read everything in the inbox, decide what actually needs an answer, draft the
   answers, and stop before sending anything.
@@ -15,8 +16,23 @@ description: >
 trigger: MANUAL
 
 inputs:
-  inbox: inbox
-  drafts: drafts
+  inbox:
+    type: STRING
+    default: inbox
+    description: Folder containing messages to triage.
+  drafts:
+    type: STRING
+    default: drafts
+    description: Folder where draft replies are written.
+
+profile:
+  approvals: ASK
+  model: ""
+
+budget:
+  max_steps: 3
+  max_cost_usd: 3
+  max_wall_time_seconds: 900
 
 steps:
   - name: triage

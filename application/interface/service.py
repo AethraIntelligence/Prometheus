@@ -43,6 +43,7 @@ from application.interface.contracts import RequestSource, UserRequest
 from application.interface.runs import Runs
 from application.knowledge.service import KnowledgeService
 from application.providers.service import ProviderService
+from application.workflows.engine import WorkflowEngine
 from application.workspaces import folders
 from application.workspaces.service import WorkspaceService
 from domain.approvals.models import (
@@ -93,6 +94,9 @@ from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Task
 from domain.tools.protocols import ToolRegistry
 from domain.tools.telemetry import ToolCallLog
+from domain.workflows.definition import WorkflowDefinition, WorkflowTrigger
+from domain.workflows.protocols import WorkflowRegistry
+from domain.workflows.run import WorkflowRunRepository
 from domain.workforce.directions import ApprovalChoice, Directions
 from domain.workforce.protocols import Objective, ObjectiveStatus
 from domain.workforce.repository import ObjectiveRepository, PlanRepository
@@ -209,6 +213,9 @@ class ServiceDependencies:
     #: Durable records of individual schedule firings. Kept separate from the
     #: standing instruction so one failed morning is not reduced to a counter.
     events: EventLog | None = None
+    workflows: WorkflowEngine | None = None
+    workflow_registry: WorkflowRegistry | None = None
+    workflow_runs: WorkflowRunRepository | None = None
     #: Whether this process is firing schedules. Said rather than inferred: a
     #: schedule shown as "next at 09:00" on a machine that will not fire it is
     #: the one lie this screen must not tell.
@@ -1737,6 +1744,89 @@ class PrometheusService:
 
     # --- Work that starts on its own -------------------------------------------
 
+    async def list_workflows(self) -> dict[str, Any]:
+        """Versioned processes, their readiness and comparable run history."""
+        if self._d.workflow_registry is None:
+            return {"available": False, "workflows": []}
+        workspace = await self._here()
+        runs = (
+            await self._d.workflow_runs.recent(workspace, limit=200)
+            if self._d.workflow_runs is not None
+            else []
+        )
+        listed = []
+        for definition in self._d.workflow_registry.list_all():
+            matching = [
+                run
+                for run in runs
+                if run.workflow == definition.name
+                and run.workflow_version == definition.version
+            ]
+            readiness = await self._workflow_readiness(definition, workspace)
+            listed.append(
+                views.workflow_definition(
+                    definition,
+                    readiness=readiness,
+                    runs=matching,
+                )
+            )
+        return {"available": True, "workflows": listed}
+
+    async def dry_run_workflow(
+        self, name: str, *, version: int | None = None, inputs: dict[str, object] | None = None
+    ) -> dict[str, Any]:
+        engine, registry = self._workflow_components()
+        definition = registry.get(name, version)
+        readiness = await self._workflow_readiness(definition, await self._here())
+        preview = engine.dry_run(name, version=definition.version, inputs=inputs)
+        return {**preview, "readiness": readiness, "executable": readiness["ready"]}
+
+    async def run_workflow_now(
+        self, name: str, *, version: int | None = None, inputs: dict[str, object] | None = None
+    ) -> dict[str, Any]:
+        engine, registry = self._workflow_components()
+        definition = registry.get(name, version)
+        workspace = await self._here()
+        readiness = await self._workflow_readiness(definition, workspace)
+        if not readiness["ready"]:
+            raise PrometheusError("Workflow is not ready: " + "; ".join(readiness["issues"]))
+        run = await engine.run(
+            name,
+            version=definition.version,
+            inputs=inputs,
+            trigger=WorkflowTrigger.MANUAL,
+            workspace_id=workspace,
+        )
+        return views.workflow_run(run)
+
+    def _workflow_components(self) -> tuple[WorkflowEngine, WorkflowRegistry]:
+        if self._d.workflows is None or self._d.workflow_registry is None:
+            raise ConfigurationError("This interface was built without workflows.")
+        return self._d.workflows, self._d.workflow_registry
+
+    async def _workflow_readiness(
+        self, definition: WorkflowDefinition, workspace: WorkspaceId
+    ) -> dict[str, Any]:
+        employees = {item.name for item in self._d.employees.list(workspace)}
+        missing = sorted(definition.employees - employees)
+        issues = [f"Employee '{name}' is not declared." for name in missing]
+        model = definition.profile.model
+        if model and self._d.providers is not None:
+            models = {
+                item.name: item for item in await self._d.providers.list_models(workspace)
+            }
+            if model not in models:
+                issues.append(f"Model '{model}' is not in the catalog.")
+            elif not models[model].generates_text:
+                issues.append(f"Model '{model}' cannot generate text.")
+        attempts = sum(max(1, step.max_attempts) for step in definition.steps)
+        maximum = definition.budget.max_steps
+        if maximum is not None and attempts > maximum:
+            issues.append(
+                f"Declared retries may use {attempts} steps, above the budget of {maximum}."
+            )
+        return {"ready": not issues, "issues": issues}
+
     def _schedules(self) -> ScheduleRepository:
         if self._d.schedules is None:
             raise ConfigurationError("This interface was built without schedules.")
@@ -1757,25 +1847,35 @@ class PrometheusService:
                 status = last.status.value if last else None
             runs = []
             for event in events:
-                if event.kind != "objective.finished":
+                if event.kind not in {"objective.finished", "workflow.finished"}:
                     continue
                 if event.payload.get("schedule_id") != str(item.id):
                     continue
                 raw_objective = str(event.payload.get("objective_id") or "")
                 objective = None
+                workflow_run = None
                 if raw_objective:
                     with suppress(ValueError):
                         objective = await self._d.objectives.get(UUID(raw_objective))
-                runs.append(views.schedule_run(event, objective))
+                raw_workflow_run = str(event.payload.get("workflow_run_id") or "")
+                if raw_workflow_run and self._d.workflow_runs is not None:
+                    with suppress(ValueError):
+                        workflow_run = await self._d.workflow_runs.get(UUID(raw_workflow_run))
+                runs.append(views.schedule_run(event, objective, workflow_run=workflow_run))
                 if len(runs) == 5:
                     break
             consecutive_failures = 0
             for run in runs:
-                if run["status"] == "DONE":
+                if run["status"] in {"DONE", "COMPLETED"}:
                     break
                 consecutive_failures += 1
             last_success_at = next(
-                (run["finished_at"] for run in runs if run["status"] == "DONE"), None
+                (
+                    run["finished_at"]
+                    for run in runs
+                    if run["status"] in {"DONE", "COMPLETED"}
+                ),
+                None,
             )
             listed.append(
                 views.schedule(
@@ -1801,6 +1901,9 @@ class PrometheusService:
         conversation_id: UUID | None = None,
         model: str = "",
         approvals: str = "ASK",
+        workflow_name: str = "",
+        workflow_version: int | None = None,
+        workflow_inputs: dict[str, object] | None = None,
     ) -> dict[str, Any]:
         """A standing request, with a thread its runs are written into.
 
@@ -1813,18 +1916,35 @@ class PrometheusService:
         """
         store = self._schedules()
         text = request.strip()
+        definition = None
+        values: dict[str, object] = {}
+        if workflow_name.strip():
+            _, registry = self._workflow_components()
+            definition = registry.get(workflow_name.strip(), workflow_version)
+            readiness = await self._workflow_readiness(definition, await self._here())
+            if not readiness["ready"]:
+                raise PrometheusError(
+                    "Workflow is not ready: " + "; ".join(readiness["issues"])
+                )
+            try:
+                values = definition.values(workflow_inputs)
+            except ValueError as error:
+                raise PrometheusError(str(error)) from error
+            text = text or f"Run {definition.name} workflow version {definition.version}"
         if not text:
             raise PrometheusError("A schedule with no request would ask for nothing.")
         recurrence = _recurrence(
             every_minutes, daily_at, utc_offset_minutes, on_event, timezone
         )
         workspace = await self._here()
-        model = await self._model_for_schedule(model, workspace)
+        model = await self._model_for_schedule(
+            definition.profile.model if definition else model, workspace
+        )
 
         thread = None
         if conversation_id is not None:
             thread = await self._d.conversations.get(conversation_id)
-        if thread is None:
+        if thread is None and definition is None:
             thread = Conversation.create(name.strip() or text, workspace_id=workspace)
             await self._d.conversations.save(thread)
 
@@ -1835,9 +1955,17 @@ class PrometheusService:
                 recurrence=recurrence,
                 on_event=on_event.strip(),
                 workspace_id=workspace,
-                conversation_id=thread.id,
+                conversation_id=thread.id if thread else None,
                 model=model,
-                approvals=_approval_choice(approvals),
+                approvals=(
+                    definition.profile.approvals
+                    if definition
+                    else _approval_choice(approvals)
+                ),
+                workflow_name=definition.name if definition else "",
+                workflow_version=definition.version if definition else None,
+                workflow_inputs=values,
+                workflow_snapshot=definition.to_snapshot() if definition else {},
             )
         except ValueError as error:
             raise PrometheusError(str(error)) from error
@@ -1858,6 +1986,9 @@ class PrometheusService:
         on_event: str = "",
         model: str = "",
         approvals: str = "ASK",
+        workflow_name: str = "",
+        workflow_version: int | None = None,
+        workflow_inputs: dict[str, object] | None = None,
     ) -> dict[str, Any]:
         """Say a schedule differently: what, when, with which model and approvals.
 
@@ -1872,7 +2003,29 @@ class PrometheusService:
         recurrence = _recurrence(
             every_minutes, daily_at, utc_offset_minutes, on_event, timezone
         )
-        chosen = await self._model_for_schedule(model, found.workspace_id)
+        definition = None
+        values = dict(found.workflow_inputs)
+        if workflow_name.strip():
+            _, registry = self._workflow_components()
+            definition = registry.get(workflow_name.strip(), workflow_version)
+            readiness = await self._workflow_readiness(definition, found.workspace_id)
+            if not readiness["ready"]:
+                raise PrometheusError(
+                    "Workflow is not ready: " + "; ".join(readiness["issues"])
+                )
+            try:
+                values = definition.values(workflow_inputs)
+            except ValueError as error:
+                raise PrometheusError(str(error)) from error
+        elif found.is_workflow:
+            definition = WorkflowDefinition.from_snapshot(found.workflow_snapshot)
+            try:
+                values = definition.values(workflow_inputs or found.workflow_inputs)
+            except ValueError as error:
+                raise PrometheusError(str(error)) from error
+        chosen = await self._model_for_schedule(
+            definition.profile.model if definition else model, found.workspace_id
+        )
         try:
             updated = found.edited(
                 request=request,
@@ -1880,10 +2033,22 @@ class PrometheusService:
                 recurrence=recurrence,
                 on_event=on_event,
                 model=chosen,
-                approvals=_approval_choice(approvals),
+                approvals=(
+                    definition.profile.approvals
+                    if definition
+                    else _approval_choice(approvals)
+                ),
             )
         except ValueError as error:
             raise PrometheusError(str(error)) from error
+        if definition is not None:
+            updated = replace(
+                updated,
+                workflow_name=definition.name,
+                workflow_version=definition.version,
+                workflow_inputs=values,
+                workflow_snapshot=definition.to_snapshot(),
+            )
         await store.save(updated)
         log.info("schedule.edited", schedule_id=str(updated.id), when=updated.describe())
         return views.schedule(updated)
@@ -1912,6 +2077,13 @@ class PrometheusService:
         found = await store.get(schedule_id)
         if found is None:
             raise NotFoundError("No schedule with that id.")
+        if enabled and found.is_workflow:
+            definition = WorkflowDefinition.from_snapshot(found.workflow_snapshot)
+            readiness = await self._workflow_readiness(definition, found.workspace_id)
+            if not readiness["ready"]:
+                raise PrometheusError(
+                    "Workflow is not ready: " + "; ".join(readiness["issues"])
+                )
         updated = found.set_enabled(enabled)
         await store.save(updated)
         return views.schedule(updated)
@@ -1933,6 +2105,50 @@ class PrometheusService:
         found = await self._schedules().get(schedule_id)
         if found is None:
             raise NotFoundError("No schedule with that id.")
+        if found.is_workflow:
+            if self._d.workflows is None:
+                raise ConfigurationError("This interface was built without workflows.")
+            definition = WorkflowDefinition.from_snapshot(found.workflow_snapshot)
+            readiness = await self._workflow_readiness(definition, found.workspace_id)
+            if not readiness["ready"]:
+                raise PrometheusError(
+                    "Workflow is not ready: " + "; ".join(readiness["issues"])
+                )
+            run = await self._d.workflows.run_definition(
+                definition,
+                inputs=found.workflow_inputs,
+                trigger=WorkflowTrigger.MANUAL,
+                workspace_id=found.workspace_id,
+            )
+            current = await self._schedules().get(found.id)
+            if current is not None:
+                await self._schedules().save(current.manually_fired(datetime.now(UTC)))
+            if self._d.events is not None:
+                from domain.scheduling.models import Event
+
+                await self._d.events.record(
+                    Event.create(
+                        "workflow.finished",
+                        workspace_id=found.workspace_id,
+                        source=found.name or str(found.id),
+                        payload={
+                            "schedule_id": str(found.id),
+                            "schedule_version": found.version,
+                            "objective_id": "",
+                            "status": run.status.value,
+                            "trigger": "MANUAL",
+                            "workflow_run_id": str(run.id),
+                            "workflow_name": run.workflow,
+                            "workflow_version": run.workflow_version,
+                            "cost_usd": run.cost_usd,
+                            "quality": run.quality,
+                        },
+                    )
+                )
+            return {
+                **views.workflow_run(run),
+                "conversation_id": None,
+            }
         answer = await self.submit(
             UserRequest(
                 content=found.request,

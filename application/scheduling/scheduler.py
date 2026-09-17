@@ -39,10 +39,13 @@ from uuid import UUID, uuid4
 
 import structlog
 
+from application.workflows.engine import WorkflowEngine
 from application.workspaces import folders
 from domain.conversations.repository import ConversationRepository
 from domain.scheduling.models import Event, Schedule, Trigger
 from domain.scheduling.protocols import EventLog, ScheduleRepository
+from domain.workflows.definition import WorkflowDefinition, WorkflowTrigger
+from domain.workflows.run import WorkflowRun
 from domain.workforce import directions as carried
 from domain.workforce.directions import Directions
 from domain.workforce.protocols import ObjectiveResult, WorkforceManager
@@ -60,6 +63,7 @@ DEFAULT_LEASE_SECONDS = 120
 #: cheapest possible way to have one piece of work follow another without
 #: inventing a second kind of dependency.
 OBJECTIVE_FINISHED = "objective.finished"
+WORKFLOW_FINISHED = "workflow.finished"
 
 
 class Scheduler:
@@ -88,6 +92,7 @@ class Scheduler:
         folder_root: Callable[[WorkspaceId], Path] | None = None,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         owner: str | None = None,
+        workflows: WorkflowEngine | None = None,
     ) -> None:
         self._manager = manager
         self._schedules = schedules
@@ -100,6 +105,7 @@ class Scheduler:
         self._folder_root = folder_root
         self._lease_seconds = max(30, lease_seconds)
         self._owner = owner or str(uuid4())
+        self._workflows = workflows
         #: Schedules with an objective in flight. In memory on purpose: it is a
         #: fact about this process, and a process that died is not still running
         #: anything.
@@ -107,10 +113,10 @@ class Scheduler:
 
     # --- One pass -------------------------------------------------------------
 
-    async def tick(self) -> tuple[ObjectiveResult, ...]:
+    async def tick(self) -> tuple[ObjectiveResult | WorkflowRun, ...]:
         """Fire everything that is due or triggered, once. Never raises."""
         now = self._clock()
-        results: list[ObjectiveResult] = []
+        results: list[ObjectiveResult | WorkflowRun] = []
         for workspace_id in await self._workspaces_to_look_in():
             results.extend(await self._tick_in(workspace_id, now))
         return tuple(results)
@@ -127,8 +133,10 @@ class Scheduler:
         # were others belongs to it, and a listing that missed it would stop them.
         return list(dict.fromkeys([self._workspace_id, *found]))
 
-    async def _tick_in(self, workspace_id: WorkspaceId, now: datetime) -> list[ObjectiveResult]:
-        results: list[ObjectiveResult] = []
+    async def _tick_in(
+        self, workspace_id: WorkspaceId, now: datetime
+    ) -> list[ObjectiveResult | WorkflowRun]:
+        results: list[ObjectiveResult | WorkflowRun] = []
         for schedule in await self._schedules.due(now, workspace_id):
             fired = await self._fire(schedule, now, Trigger.SCHEDULED)
             if fired is not None:
@@ -164,7 +172,7 @@ class Scheduler:
         trigger: Trigger,
         *,
         event: Event | None = None,
-    ) -> ObjectiveResult | None:
+    ) -> ObjectiveResult | WorkflowRun | None:
         if schedule.id in self._running:
             # The period is shorter than the work. Said out loud, because the
             # alternative symptom is a machine that is quietly always busy.
@@ -248,12 +256,42 @@ class Scheduler:
 
     async def _run(
         self, schedule: Schedule, now: datetime, trigger: Trigger, event: Event | None
-    ) -> ObjectiveResult:
+    ) -> ObjectiveResult | WorkflowRun:
         # Count and advance the firing before crossing into objective creation.
         # If creation itself fails, the next polling tick must not retry the
         # same due moment forever. Event runs were already consumed above.
         fired = schedule.fired(now)
         await self._schedules.save(fired)
+        if schedule.is_workflow:
+            if self._workflows is None:
+                raise RuntimeError("This scheduler was built without workflow execution.")
+            definition = WorkflowDefinition.from_snapshot(schedule.workflow_snapshot)
+            run = await self._workflows.run_definition(
+                definition,
+                inputs=schedule.workflow_inputs,
+                trigger=(
+                    WorkflowTrigger.SCHEDULED
+                    if trigger is Trigger.SCHEDULED
+                    else WorkflowTrigger.EVENT
+                ),
+                workspace_id=schedule.workspace_id,
+            )
+            log.info(
+                "scheduler.workflow_fired",
+                schedule=schedule.name or str(schedule.id),
+                workflow=schedule.workflow_name,
+                workflow_version=schedule.workflow_version,
+                run_id=str(run.id),
+            )
+            await self._record(
+                schedule,
+                None,
+                run.status.value,
+                trigger=trigger,
+                source_event=event,
+                workflow_run=run,
+            )
+            return run
         objective = await self._manager.receive(
             _request_for(schedule, event),
             workspace_id=schedule.workspace_id,
@@ -321,6 +359,7 @@ class Scheduler:
         *,
         trigger: Trigger,
         source_event: Event | None = None,
+        workflow_run: WorkflowRun | None = None,
     ) -> None:
         """Say what became of a firing, in the log a person reads afterwards.
 
@@ -331,7 +370,7 @@ class Scheduler:
         try:
             await self._events.record(
                 Event.create(
-                    OBJECTIVE_FINISHED,
+                    WORKFLOW_FINISHED if workflow_run else OBJECTIVE_FINISHED,
                     workspace_id=schedule.workspace_id,
                     source=schedule.name or str(schedule.id),
                     payload={
@@ -342,6 +381,11 @@ class Scheduler:
                         "trigger": trigger.value,
                         "source_event_id": str(source_event.id) if source_event else "",
                         "source_event_kind": source_event.kind if source_event else "",
+                        "workflow_run_id": str(workflow_run.id) if workflow_run else "",
+                        "workflow_name": schedule.workflow_name,
+                        "workflow_version": schedule.workflow_version or 0,
+                        "cost_usd": workflow_run.cost_usd if workflow_run else 0.0,
+                        "quality": workflow_run.quality if workflow_run else 0.0,
                     },
                 )
             )

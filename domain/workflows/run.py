@@ -38,6 +38,7 @@ class StepOutcome:
     succeeded: bool = False
     attempts: int = 0
     summary: str = ""
+    cost_usd: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -47,6 +48,7 @@ class StepOutcome:
             "succeeded": self.succeeded,
             "attempts": self.attempts,
             "summary": self.summary,
+            "cost_usd": self.cost_usd,
         }
 
 
@@ -54,6 +56,7 @@ class StepOutcome:
 class WorkflowRun:
     id: UUID
     workflow: str
+    workflow_version: int = 1
     trigger: WorkflowTrigger = WorkflowTrigger.MANUAL
     inputs: dict[str, Any] = field(default_factory=dict)
     status: RunStatus = RunStatus.RUNNING
@@ -62,6 +65,16 @@ class WorkflowRun:
     workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
+
+    @property
+    def cost_usd(self) -> float:
+        return round(sum(step.cost_usd for step in self.steps), 6)
+
+    @property
+    def quality(self) -> float:
+        if not self.steps:
+            return 0.0
+        return round(sum(step.succeeded for step in self.steps) / len(self.steps), 4)
 
     @classmethod
     def create(cls, workflow: str, **extra: Any) -> WorkflowRun:
@@ -84,7 +97,13 @@ class WorkflowRun:
 
     def to_result(self) -> dict[str, Any]:
         """The stored shape of what happened, readable without the domain."""
-        return {"summary": self.summary, "steps": [step.to_dict() for step in self.steps]}
+        return {
+            "summary": self.summary,
+            "steps": [step.to_dict() for step in self.steps],
+            "workflow_version": self.workflow_version,
+            "cost_usd": self.cost_usd,
+            "quality": self.quality,
+        }
 
 
 class WorkflowRunRepository(Protocol):

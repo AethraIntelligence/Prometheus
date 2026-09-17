@@ -19,9 +19,17 @@ Everything below the decomposition is the same as for work Prometheus planned
 itself: the same employees, the same limits, the same approval gate. A workflow
 cannot do anything an employee could not have been asked to do directly.
 
+Every declaration has an integer `version`. Published versions are immutable:
+a changed process is a new `<name>.v<version>.yaml` file. Schedules pin the full
+selected version, so a later file edit cannot silently alter work already
+activated. Inputs may declare `type`, `required`, `default`, and `description`;
+`profile` fixes approvals and preferred model, while `budget` bounds attempts,
+cost, and wall time. The API exposes readiness and dry-run checks before a
+version is run or scheduled.
+
 Two ship as examples. `inbox-triage` is Phase 10's validation task - read what
 came in, draft the replies, and stop before sending anything. `weekly-report` is
 the shape most workflows have: gather, compute, write up.
 
-Scheduled and event triggers are Phase 12; the vocabulary is already in
-`domain/workflows/definition.py`, and only `MANUAL` runs today.
+The same version can run manually or from a time/event schedule. Schedules use
+declared per-step retry, coalesce missed times, and skip overlapping firings.

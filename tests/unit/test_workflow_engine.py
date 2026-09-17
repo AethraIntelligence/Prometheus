@@ -42,11 +42,16 @@ class Runner:
 
     def __init__(self, *, failing: set[str] | None = None, raising: set[str] | None = None) -> None:
         self.goals: list[tuple[str, str]] = []
+        self.directions: list[tuple[str, str]] = []
         self._failing = failing or set()
         self._raising = raising or set()
 
     async def submit_and_run(self, goal: str, employee_name: str, **kwargs: object) -> Task:
+        from domain.workforce import directions
+
         self.goals.append((employee_name, goal))
+        current = directions.current()
+        self.directions.append((current.approvals.value, current.model))
         if employee_name in self._raising:
             raise RuntimeError(f"{employee_name} is not declared here")
         task = Task.create(goal)
@@ -234,3 +239,54 @@ async def test_the_trigger_is_recorded_on_the_run():
     engine_, _ = engine(flow(step("one")), Runner())
     run = await engine_.run("flow", trigger=WorkflowTrigger.MANUAL)
     assert run.trigger is WorkflowTrigger.MANUAL
+
+
+async def test_a_run_and_dry_run_use_the_same_typed_version() -> None:
+    from domain.workflows.definition import InputKind, WorkflowInput
+
+    runner = Runner()
+    definition = flow(
+        step("one", instruction="Make {count} reports"),
+        version=3,
+        input_schema={"count": WorkflowInput(InputKind.INTEGER, required=True)},
+    )
+    engine_, _ = engine(definition, runner)
+
+    preview = engine_.dry_run("flow", inputs={"count": 2})
+    run = await engine_.run("flow", inputs={"count": 2})
+
+    assert preview["version"] == 3
+    assert preview["steps"][0]["instruction"] == "Make 2 reports"
+    assert run.workflow_version == 3
+    assert runner.goals == [("worker", "Make 2 reports")]
+
+
+async def test_a_workflow_budget_stops_later_work() -> None:
+    from domain.workflows.definition import WorkflowBudget
+
+    runner = Runner()
+    engine_, _ = engine(
+        flow(step("one", max_attempts=2), budget=WorkflowBudget(max_steps=1)),
+        runner,
+    )
+
+    with pytest.raises(ConfigurationError, match="above its budget"):
+        await engine_.run("flow")
+
+
+async def test_the_workflow_profile_reaches_every_step() -> None:
+    from domain.workflows.definition import WorkflowProfile
+    from domain.workforce.directions import ApprovalChoice
+
+    runner = Runner()
+    engine_, _ = engine(
+        flow(
+            step("one"),
+            profile=WorkflowProfile(approvals=ApprovalChoice.DENY, model="careful"),
+        ),
+        runner,
+    )
+
+    await engine_.run("flow")
+
+    assert runner.directions == [("DENY", "careful")]

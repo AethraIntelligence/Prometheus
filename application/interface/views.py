@@ -42,6 +42,8 @@ from domain.scheduling.models import Schedule
 from domain.tasks.task import Task, TaskEvent
 from domain.tools.models import ToolSpec
 from domain.tools.telemetry import ToolCallRecord
+from domain.workflows.definition import WorkflowDefinition
+from domain.workflows.run import WorkflowRun
 from domain.workforce.protocols import Objective, Plan
 from domain.workspace.models import Workspace
 
@@ -1016,17 +1018,26 @@ def schedule(
         "approvals": item.approvals.value,
         "created_at": item.created_at.isoformat(),
         "version": item.version,
+        "workflow_name": item.workflow_name,
+        "workflow_version": item.workflow_version,
+        "workflow_inputs": dict(item.workflow_inputs),
         "recent_runs": recent_runs or [],
         "consecutive_failures": consecutive_failures,
         "last_success_at": last_success_at,
         # Explicit product policies. Every surface can explain delay and
         # overlap without reverse-engineering scheduler timing.
-        "overlap_policy": "SKIP",
-        "misfire_policy": "COALESCE",
+        "retry_policy": item.retry_policy.value,
+        "overlap_policy": item.concurrency_policy.value,
+        "misfire_policy": item.misfire_policy.value,
     }
 
 
-def schedule_run(event: Any, objective: Objective | None) -> dict[str, Any]:
+def schedule_run(
+    event: Any,
+    objective: Objective | None,
+    *,
+    workflow_run: WorkflowRun | None = None,
+) -> dict[str, Any]:
     """One completed firing, distinct from the instruction that produced it."""
     result = objective.result if objective is not None else None
     return {
@@ -1034,18 +1045,121 @@ def schedule_run(event: Any, objective: Objective | None) -> dict[str, Any]:
         "objective_id": str(objective.id) if objective is not None else event.payload.get(
             "objective_id", ""
         ),
-        "status": objective.status.value if objective is not None else event.payload.get(
-            "status", "FAILED"
+        "status": (
+            objective.status.value
+            if objective is not None
+            else workflow_run.status.value
+            if workflow_run is not None
+            else event.payload.get("status", "FAILED")
         ),
-        "started_at": objective.created_at.isoformat() if objective is not None else None,
+        "started_at": (
+            objective.created_at.isoformat()
+            if objective is not None
+            else workflow_run.started_at.isoformat()
+            if workflow_run is not None
+            else None
+        ),
         "finished_at": (
             objective.finished_at.isoformat()
             if objective is not None and objective.finished_at is not None
+            else workflow_run.finished_at.isoformat()
+            if workflow_run is not None and workflow_run.finished_at is not None
             else event.created_at.isoformat()
         ),
-        "cost_usd": result.cost_usd if result is not None else 0.0,
-        "summary": result.summary if result is not None else "",
+        "cost_usd": (
+            result.cost_usd
+            if result is not None
+            else workflow_run.cost_usd
+            if workflow_run is not None
+            else float(event.payload.get("cost_usd") or 0.0)
+        ),
+        "quality": (
+            workflow_run.quality
+            if workflow_run is not None
+            else float(event.payload.get("quality") or 0.0)
+        ),
+        "summary": (
+            result.summary
+            if result is not None
+            else workflow_run.summary
+            if workflow_run is not None
+            else ""
+        ),
         "schedule_version": int(event.payload.get("schedule_version") or 1),
+        "workflow_name": str(event.payload.get("workflow_name") or ""),
+        "workflow_version": int(event.payload.get("workflow_version") or 0) or None,
+    }
+
+
+def workflow_run(run: WorkflowRun) -> dict[str, Any]:
+    return {
+        "id": str(run.id),
+        "workflow": run.workflow,
+        "workflow_version": run.workflow_version,
+        "trigger": run.trigger.value,
+        "inputs": dict(run.inputs),
+        "status": run.status.value,
+        "summary": run.summary,
+        "cost_usd": run.cost_usd,
+        "quality": run.quality,
+        "started_at": run.started_at.isoformat(),
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "steps": [step.to_dict() for step in run.steps],
+    }
+
+
+def workflow_definition(
+    definition: WorkflowDefinition,
+    *,
+    readiness: dict[str, Any],
+    runs: list[WorkflowRun],
+) -> dict[str, Any]:
+    succeeded = sum(run.succeeded for run in runs)
+    return {
+        "name": definition.name,
+        "version": definition.version,
+        "description": definition.description,
+        "trigger": definition.trigger.value,
+        "inputs": [
+            {
+                "name": name,
+                "kind": spec.kind.value,
+                "required": spec.required,
+                "default": definition.inputs.get(name, spec.default),
+                "description": spec.description,
+            }
+            for name, spec in definition.input_schema.items()
+        ],
+        "profile": {
+            "approvals": definition.profile.approvals.value,
+            "model": definition.profile.model,
+        },
+        "budget": {
+            "max_steps": definition.budget.max_steps,
+            "max_cost_usd": definition.budget.max_cost_usd,
+            "max_wall_time_seconds": definition.budget.max_wall_time_seconds,
+        },
+        "steps": [
+            {
+                "name": step.name,
+                "employee": step.employee,
+                "depends_on": list(step.depends_on),
+                "max_attempts": step.max_attempts,
+                "on_failure": step.on_failure.value,
+            }
+            for step in definition.steps
+        ],
+        "readiness": readiness,
+        "metrics": {
+            "runs": len(runs),
+            "success_rate": round(succeeded / len(runs), 4) if runs else None,
+            "average_cost_usd": (
+                round(sum(run.cost_usd for run in runs) / len(runs), 6)
+                if runs
+                else None
+            ),
+        },
+        "recent_runs": [workflow_run(run) for run in runs[:5]],
     }
 
 

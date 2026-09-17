@@ -27,8 +27,10 @@ on what the step does, which is why the number lives on the step.
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import structlog
 
@@ -47,6 +49,8 @@ from domain.workflows.run import (
     WorkflowRun,
     WorkflowRunRepository,
 )
+from domain.workforce import directions as carried
+from domain.workforce.directions import Directions
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 log = structlog.get_logger(__name__)
@@ -104,16 +108,47 @@ class WorkflowEngine:
         self,
         name: str,
         *,
+        version: int | None = None,
         inputs: dict[str, object] | None = None,
         trigger: WorkflowTrigger = WorkflowTrigger.MANUAL,
         workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
     ) -> WorkflowRun:
-        definition = self._registry.get(name)
-        values = {**definition.inputs, **(inputs or {})}
+        definition = (
+            self._registry.get(name)
+            if version is None
+            else self._registry.get(name, version)
+        )
+        return await self.run_definition(
+            definition,
+            inputs=inputs,
+            trigger=trigger,
+            workspace_id=workspace_id,
+        )
+
+    async def run_definition(
+        self,
+        definition: WorkflowDefinition,
+        *,
+        inputs: dict[str, object] | None = None,
+        trigger: WorkflowTrigger = WorkflowTrigger.MANUAL,
+        workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
+    ) -> WorkflowRun:
+        try:
+            values = definition.values(inputs)
+        except ValueError as error:
+            raise ConfigurationError(str(error)) from error
         steps = order_steps(definition.steps)
+        if definition.budget.max_steps is not None:
+            attempts = sum(max(1, step.max_attempts) for step in steps)
+            if attempts > definition.budget.max_steps:
+                raise ConfigurationError(
+                    f"Workflow '{definition.name}' can use {attempts} step attempts, "
+                    f"above its budget of {definition.budget.max_steps}."
+                )
 
         run = WorkflowRun.create(
             definition.name,
+            workflow_version=definition.version,
             trigger=trigger,
             inputs=dict(values),
             workspace_id=workspace_id,
@@ -125,9 +160,44 @@ class WorkflowEngine:
 
         produced: dict[str, str] = {}
         for step in steps:
-            outcome = await self._run_step(step, definition, values, produced, workspace_id)
+            wall_limit = definition.budget.max_wall_time_seconds
+            if wall_limit is not None:
+                elapsed = (datetime.now(UTC) - run.started_at).total_seconds()
+                if elapsed >= wall_limit:
+                    run = run.finished(
+                        RunStatus.FAILED,
+                        f"Workflow wall-time budget of {wall_limit:g}s was exhausted.",
+                    )
+                    await self._runs.save(run)
+                    return run
+            try:
+                if wall_limit is None:
+                    outcome = await self._run_step(
+                        step, definition, values, produced, workspace_id
+                    )
+                else:
+                    elapsed = (datetime.now(UTC) - run.started_at).total_seconds()
+                    async with asyncio.timeout(max(0.001, wall_limit - elapsed)):
+                        outcome = await self._run_step(
+                            step, definition, values, produced, workspace_id
+                        )
+            except TimeoutError:
+                run = run.finished(
+                    RunStatus.FAILED,
+                    f"Workflow wall-time budget of {wall_limit:g}s was exhausted.",
+                )
+                await self._runs.save(run)
+                return run
             run = run.with_step(outcome)
             await self._runs.save(run)
+            cost_limit = definition.budget.max_cost_usd
+            if cost_limit is not None and run.cost_usd > cost_limit:
+                run = run.finished(
+                    RunStatus.FAILED,
+                    f"Workflow cost budget of ${cost_limit:g} was exceeded.",
+                )
+                await self._runs.save(run)
+                return run
             if outcome.succeeded:
                 produced[step.name] = outcome.summary
                 continue
@@ -149,6 +219,39 @@ class WorkflowEngine:
         log.info("workflow.finished", workflow=definition.name, run_id=str(run.id))
         return run
 
+    def dry_run(
+        self,
+        name: str,
+        *,
+        version: int | None = None,
+        inputs: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        definition = (
+            self._registry.get(name)
+            if version is None
+            else self._registry.get(name, version)
+        )
+        try:
+            values = definition.values(inputs)
+        except ValueError as error:
+            raise ConfigurationError(str(error)) from error
+        steps = order_steps(definition.steps)
+        return {
+            "workflow": definition.name,
+            "version": definition.version,
+            "inputs": values,
+            "steps": [
+                {
+                    "name": step.name,
+                    "employee": step.employee,
+                    "instruction": self._instruction(step, values, {}),
+                    "depends_on": list(step.depends_on),
+                    "max_attempts": step.max_attempts,
+                }
+                for step in steps
+            ],
+        }
+
     async def _run_step(
         self,
         step: WorkflowStep,
@@ -161,12 +264,18 @@ class WorkflowEngine:
         outcome = StepOutcome(step=step.name, employee=step.employee)
         for attempt in range(1, max(1, step.max_attempts) + 1):
             try:
-                task = await self._execution.submit_and_run(
-                    goal,
-                    step.employee,
-                    created_by=TaskCreatedBy.WORKFLOW,
-                    workspace_id=workspace_id,
-                )
+                with carried.given(
+                    Directions(
+                        approvals=definition.profile.approvals,
+                        model=definition.profile.model,
+                    )
+                ):
+                    task = await self._execution.submit_and_run(
+                        goal,
+                        step.employee,
+                        created_by=TaskCreatedBy.WORKFLOW,
+                        workspace_id=workspace_id,
+                    )
             except Exception as error:
                 # A step that could not even start - an employee that is not
                 # declared here, a provider with no key - is a failed step, not
@@ -186,6 +295,7 @@ class WorkflowEngine:
                 attempts=attempt,
                 succeeded=task.status is TaskStatus.COMPLETED,
                 summary=self._summary_of(task),
+                cost_usd=task.cost_usd,
             )
             if outcome.succeeded:
                 return outcome
