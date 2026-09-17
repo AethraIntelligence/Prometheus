@@ -17,3 +17,6 @@ development/
 .hypothesis/
 coverage.json
 .coverage
+.hypothesis
+.mypy_cache
+.claude
