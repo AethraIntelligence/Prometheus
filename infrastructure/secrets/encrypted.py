@@ -97,6 +97,31 @@ class EncryptedCredentialStore:
         self._sealed = {sealed.name: sealed for sealed in await self._repository.list_all()}
         log.info("credentials.restored", count=len(self._sealed))
 
+    async def retire(self, legacy, names: tuple[str, ...]) -> bool:
+        """Remove the plaintext file once every value in it is safely here.
+
+        Compared value by value against what this store decrypts, never against
+        what it believes it wrote. One mismatch - a name the person changed in
+        the window since, or a value that did not arrive - keeps the file, and
+        says which name, because that is a decision for a person.
+        """
+        for name in names:
+            found = legacy.maybe(name)
+            if found is None:
+                continue
+            sealed = self._sealed.get(name)
+            if sealed is None:
+                log.warning("credentials.legacy_kept", name=name, reason="not imported")
+                return False
+            if self._envelope.open(name, sealed.ciphertext, sealed.nonce) != found.reveal():
+                log.warning("credentials.legacy_kept", name=name, reason="values differ")
+                return False
+        from infrastructure.secrets.encryption import shred
+
+        shred(legacy.path)
+        log.info("credentials.legacy_file_removed", count=len(names))
+        return True
+
     async def import_from(self, resolver: SecretResolver, names: tuple[str, ...]) -> int:
         """Take credentials from an older store, without deleting anything there.
 

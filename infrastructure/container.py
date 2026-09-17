@@ -25,11 +25,12 @@ from domain.browser.protocols import Browser
 from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.computer.constraints import ComputerConstraints
 from domain.computer.models import Region
-from domain.computer.protocols import Computer, ScreenReader, StopSignal
+from domain.computer.protocols import Computer, ScreenReader
 from domain.conversations.repository import ConversationRepository, SessionStateRepository
 from domain.employees.protocols import EmployeeRegistry
 from domain.employees.validation import Issue, check_all
 from domain.errors import PrometheusError
+from domain.integrations.provenance import ArtifactVerifier
 from domain.integrations.repository import IntegrationRepository
 from domain.knowledge.protocols import EmbeddingProvider, KnowledgeStore, Retriever
 from domain.llm.models import ModelChoice, RoutingHints, TaskKind
@@ -38,10 +39,12 @@ from domain.llm.telemetry import LLMCallLog
 from domain.memory.protocols import Memory, MemoryMaintenance
 from domain.memory.usage import MemoryUseLog
 from domain.observability.protocols import TraceRepository
+from domain.safety.effects import EffectGate
+from domain.safety.emergency import EmergencyBrake
 from domain.scheduling.protocols import EventLog, ScheduleRepository
 from domain.search.protocols import SearchEngine
 from domain.secrets.protocols import CredentialStore, SecretResolver
-from domain.tasks.cancellation import Cancellations
+from domain.tasks.cancellation import Cancellations, LiveTasks
 from domain.tasks.repository import TaskRepository
 from domain.tools.protocols import ToolRegistry
 from domain.tools.telemetry import ToolCallLog
@@ -130,6 +133,25 @@ class Container:
         from infrastructure.tasks.cancellation import InMemoryCancellations
 
         return InMemoryCancellations()
+
+    @property
+    def live_tasks(self) -> LiveTasks:
+        """The same per-process registry, as the question of what is running here."""
+        return self.cancellations  # type: ignore[return-value]
+
+    @cached_property
+    def artifact_verifier(self) -> ArtifactVerifier:
+        """What a registry publishes for a pinned plugin artifact."""
+        from infrastructure.integrations.provenance import RegistryArtifactVerifier
+
+        return RegistryArtifactVerifier()
+
+    @cached_property
+    def effect_gate(self) -> EffectGate:
+        """Effects executing in this process, and the hold an update places on them."""
+        from infrastructure.tasks.effects import InMemoryEffectGate
+
+        return InMemoryEffectGate()
 
     # --- Persistence ----------------------------------------------------------
 
@@ -275,14 +297,14 @@ class Container:
             choice = self.model_router.select(
                 task_kind, requirement or CapabilityRequirement(), hints
             )
-            # Debug, not info: clients are built when the runtime is assembled,
-            # so at info level this reads as though the work happened.
+            # Debug, not info: at info level this reads as though the work
+            # happened, and routing is a decision about work, not the work.
             self.logger.debug(
                 "llm.routed", task_kind=str(task_kind), model=choice.model, reason=choice.reason
             )
             return self.llm_factory.for_choice(choice), choice
 
-        return DirectedLLM(route(), route, task_kind=task_kind)
+        return DirectedLLM(None, route, task_kind=task_kind)
 
     # --- Workforce ------------------------------------------------------------
 
@@ -363,10 +385,16 @@ class Container:
         from infrastructure.persistence.secret_repository import SqlSecretRepository
         from infrastructure.secrets.encrypted import EncryptedCredentialStore
         from infrastructure.secrets.encryption import Envelope, resolve_master_key
+        from infrastructure.secrets.keychain import KeychainVault
 
+        vault = (
+            KeychainVault(self.settings.data_dir)
+            if self.settings.secret_backend == "keychain"
+            else None
+        )
         return EncryptedCredentialStore(
             SqlSecretRepository(self.session_factory),
-            Envelope(resolve_master_key(self.settings.data_dir)),
+            Envelope(resolve_master_key(self.settings.data_dir, vault=vault)),
             fallback=EnvSecretResolver(),
         )
 
@@ -374,10 +402,12 @@ class Container:
     def legacy_credentials(self):
         """The 0600 JSON file installations before Phase 17 have.
 
-        Kept only to be read once at start-up. It is never written to again and
-        never deleted: erasing the only copy of a credential the moment
-        something else believes it has written another one is how a recoverable
-        problem becomes a lost key.
+        Kept only to be read at start-up. It is never written to again, and it
+        is removed only after every value in it has been read back out of the
+        encrypted store and compared - erasing the only copy of a credential the
+        moment something else *believes* it has written another is how a
+        recoverable problem becomes a lost key, and leaving plaintext on disk
+        forever is how an encrypted store becomes decoration.
         """
         from infrastructure.secrets.local import LocalCredentialStore
 
@@ -414,7 +444,7 @@ class Container:
     # --- Computer use ---------------------------------------------------------
 
     @cached_property
-    def stop_signal(self) -> StopSignal:
+    def stop_signal(self) -> EmergencyBrake:
         from infrastructure.computer.stop import FileStopSignal
 
         return FileStopSignal(self.settings.stop_file_path)

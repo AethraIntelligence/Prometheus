@@ -28,6 +28,7 @@ import {
   SparkIcon,
   WarningIcon,
 } from "../../../shared/ui";
+import { BackupsSection } from "./sections/BackupsSection";
 import { DocumentsSection } from "./sections/DocumentsSection";
 import { GeneralSection } from "./sections/GeneralSection";
 import { MemorySection } from "./sections/MemorySection";
@@ -42,6 +43,7 @@ type SectionId =
   | "workspaces"
   | "documents"
   | "memory"
+  | "backups"
   | "models"
   | "plugins";
 
@@ -62,6 +64,7 @@ const SECTIONS: Section[] = [
   { id: "workspaces", label: "Workspaces", group: "This machine", icon: FolderIcon },
   { id: "documents", label: "Documents", group: "This machine", icon: BookIcon },
   { id: "memory", label: "Memory", group: "This machine", icon: SparkIcon },
+  { id: "backups", label: "Backups and updates", group: "This machine", icon: BoxIcon },
   { id: "models", label: "Providers and models", group: "Capabilities", icon: BoxIcon },
   { id: "plugins", label: "Plugins", group: "Capabilities", icon: PlugIcon },
 ];
@@ -115,6 +118,7 @@ export function SettingsPage({ onSwitched, onBack, initial }: Props = {}) {
             {open === "workspaces" && <WorkspacesSection onSwitched={onSwitched} />}
             {open === "documents" && <DocumentsSection />}
             {open === "memory" && <MemorySection />}
+            {open === "backups" && <BackupsSection />}
             {open === "models" && <ModelsSection />}
             {open === "plugins" && <PluginsSection />}
           </section>

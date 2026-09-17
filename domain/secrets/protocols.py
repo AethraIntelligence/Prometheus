@@ -17,6 +17,27 @@ class SecretResolver(Protocol):
     def maybe(self, name: str) -> Secret | None: ...
 
 
+class KeyVault(Protocol):
+    """Where the one key that opens every stored credential lives, apart from the store.
+
+    Kept outside the database by construction: a backup, a dump or a copied
+    data directory carries ciphertext and never this. The operating system's
+    credential vault is the implementation a desktop gets; a headless machine
+    says its key in the environment or opts into a file, and never silently
+    falls back to one.
+    """
+
+    name: str
+
+    def available(self) -> bool: ...
+
+    def read(self) -> bytes | None: ...
+
+    def write(self, key: bytes) -> None: ...
+
+    def delete(self) -> None: ...
+
+
 class CredentialStore(Protocol):
     """The side that can *write* a credential, kept apart from the side that reads.
 

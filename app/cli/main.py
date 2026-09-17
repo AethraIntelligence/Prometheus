@@ -244,6 +244,7 @@ def ask_prometheus(
     hands work to a named employee, but choosing the employee is the manager's
     job, not the user's.
     """
+    _own_data_dir("ask-prometheus")
 
     async def _run() -> None:
         container = build_container()
@@ -414,6 +415,7 @@ def run_task(
     employee: str = typer.Option("researcher", "--employee", "-e", help="Who should do it."),
 ) -> None:
     """Give a task to a digital employee and wait for the result."""
+    _own_data_dir("run-task")
 
     async def _run() -> None:
         container = build_container()
@@ -435,12 +437,15 @@ def run_task(
 @app.command()
 def resume() -> None:
     """Pick up every task that was interrupted, from where it stopped."""
+    _own_data_dir("resume")
 
     async def _run() -> None:
         container = build_container()
         try:
             await prepare(container)
             runner = build_task_runner(container)
+            await container.approval_repository.expire_abandoned()
+            await runner.reconcile_abandoned_approvals()
             pending = await runner.resumable()
             if not pending:
                 typer.echo("Nothing to resume.")
@@ -483,7 +488,7 @@ def employees(
         typer.echo("No employees declared.")
         return
     for definition in declared:
-        typer.secho(f"{definition.name}@{definition.version}", fg="cyan", nl=False)
+        typer.secho(definition.name, fg="cyan", nl=False)
         typer.echo(f"  {definition.role.title}")
         typer.echo(f"  tools:  {', '.join(sorted(definition.allowed_tools)) or 'none'}")
         can_do = ", ".join(sorted(c.value for c in definition.capabilities))
@@ -530,27 +535,294 @@ def tools() -> None:
 @app.command()
 def stop(
     reason: str = typer.Option("", "--reason", "-r", help="Why, shown to the employee."),
-    clear: bool = typer.Option(False, "--clear", help="Release the brake instead."),
+    clear: bool = typer.Option(False, "--clear", help="Resume work instead."),
 ) -> None:
-    """Stop anything that is acting on a screen, right now.
+    """Stop all work on this machine, right now, until somebody resumes it.
 
-    Deliberately not a signal to a process: it writes a file that every action
-    on a screen reads before it happens. So it works from a second terminal
-    while the first one is busy, it works when the run has the screen, and a
-    stop set while nothing is running still holds when the next run starts.
+    Deliberately not a signal to a process: it writes a record that every action
+    reads before it happens, so it works from a second terminal while the first
+    one is busy, it works when the run has the screen, and a stop set while
+    nothing is running still holds when the next run starts. A running
+    `prometheus serve` notices it within a second and cancels what it carries.
+    Nothing already done is undone.
     """
+    from domain.safety.emergency import RELEASED
     from infrastructure.computer.stop import FileStopSignal
 
-    signal = FileStopSignal(get_settings().stop_file_path)
+    settings = get_settings()
+    signal = FileStopSignal(settings.stop_file_path)
     if clear:
         released = signal.release()
-        typer.echo(
-            "Computer use released." if released else "Computer use was not stopped."
-        )
+        typer.echo("Work resumed." if released else "Work was not stopped.")
+        if released:
+            _audit_stop("emergency_stop.released", RELEASED)
         return
-    path = signal.engage(reason)
-    typer.secho(f"Computer use stopped: {signal.reason}", fg="yellow")
-    typer.echo(f"Release it with: prometheus stop --clear   ({path})")
+    # The record first, before anything that could fail - opening the database
+    # included. A stop that waited on a healthy store would not be a brake.
+    state = signal.engage(reason, by="cli")
+    typer.secho(f"All work stopped: {state.reason}", fg="yellow")
+    typer.echo(f"Resume with: prometheus stop --clear   ({signal.path})")
+    _audit_stop("emergency_stop.engaged", state)
+
+
+def _own_data_dir(purpose: str, *, url: str = "") -> None:
+    """Become the one process doing work against this data directory, or say who is.
+
+    Held until the process ends; the operating system releases it however that
+    happens, so there is nothing to clean up after a crash.
+    """
+    import atexit
+
+    from domain.safety.ownership import DataDirectoryOwnedError
+    from infrastructure.runtime.lock import FileRuntimeLock, this_process
+
+    data_dir = get_settings().data_dir.resolve()
+    if data_dir in _HELD:
+        # This process already owns it - a command invoked twice in one
+        # interpreter, which is what a test runner does.
+        return
+    lock = FileRuntimeLock(data_dir)
+    try:
+        lock.acquire(this_process(purpose, url=url, version=_version()))
+    except DataDirectoryOwnedError as error:
+        typer.secho(str(error), fg="red", err=True)
+        raise typer.Exit(code=3) from error
+    _HELD[data_dir] = lock
+    atexit.register(lock.release)
+
+
+#: Data directories this process owns, by resolved path.
+_HELD: dict[Path, object] = {}
+
+
+def _restore_between_processes(settings, pending) -> None:
+    """Put a backup in place while no server runs, then let `serve` start again.
+
+    This process still owns the data directory, so nothing else can open the
+    store in between. A failure leaves the installation as it was - the restore
+    checks everything before it changes anything - and the next process starts
+    on it, saying what went wrong.
+    """
+    from app.config.container import restore_installation
+
+    typer.secho(f"Restoring {pending.archive}...", fg="cyan")
+    try:
+        report = restore_installation(
+            settings,
+            pending.archive,
+            passphrase=pending.passphrase,
+            skip_secrets=pending.skip_secrets,
+        )
+    except PrometheusError as error:
+        typer.secho(f"The restore did not happen: {error}", fg="red", err=True)
+        return
+    typer.secho("Restored.", fg="green")
+    for note in report.notes:
+        typer.echo(f"- {note}")
+
+
+def _refuse_unsupported_platform() -> None:
+    from infrastructure.runtime.platform import verdict
+
+    found = verdict()
+    if not found.supported:
+        typer.secho(found.message, fg="red", err=True)
+        raise typer.Exit(code=4)
+
+
+def _prepare_storage_or_exit(settings) -> None:
+    """Bring the store to this version's schema, safely, or say exactly why not."""
+    from infrastructure.runtime.migration import prepare_storage
+
+    try:
+        outcome = prepare_storage(
+            settings.ensure_data_dir(),
+            settings.resolved_database_url,
+            postgres_backup_acknowledged=settings.postgres_backup_acknowledged,
+        )
+    except PrometheusError as error:
+        typer.secho(str(error), fg="red", err=True)
+        raise typer.Exit(code=5) from error
+    if outcome.recovered_from is not None:
+        typer.secho(
+            f"An interrupted upgrade was undone from {outcome.recovered_from}.", fg="yellow"
+        )
+    if outcome.migrated:
+        decision = outcome.decision
+        backup = f" (backup: {outcome.backup})" if outcome.backup else ""
+        typer.echo(f"Database is at schema {decision.head}{backup}.")
+
+
+@app.command()
+def migrate(
+    check: bool = typer.Option(False, "--check", help="Say what would happen; change nothing."),
+) -> None:
+    """Bring the database to this version's schema, with a backup first.
+
+    `serve` does this on every start; this is the same step on its own, for a
+    person who wants to see it happen. A database written by a newer version is
+    refused without a write.
+    """
+    from infrastructure.runtime.migration import decide
+
+    settings = get_settings()
+    if check:
+        decision = decide(settings.resolved_database_url)
+        typer.echo(f"schema:  {decision.current or 'none'} -> {decision.head}")
+        typer.echo(f"verdict: {decision.verdict.value}")
+        if decision.pending:
+            typer.echo(f"pending: {len(decision.pending)} migration(s)")
+        if decision.message:
+            typer.secho(decision.message, fg="red" if not decision.verdict.may_open else None)
+        raise typer.Exit(code=0 if decision.verdict.may_open else 5)
+    _own_data_dir("migrate")
+    _prepare_storage_or_exit(settings)
+    typer.echo("Database is current.")
+
+
+def _passphrase(confirm: bool) -> str:
+    """From the environment for a script, otherwise asked for without echo."""
+    import os
+
+    given = os.environ.get("PROMETHEUS_BACKUP_PASSPHRASE")
+    if given:
+        return given
+    return typer.prompt("Passphrase", hide_input=True, confirmation_prompt=confirm)
+
+
+@app.command()
+def backup(
+    destination: str = typer.Argument("", help="Where to write the archive."),
+    with_secrets: bool = typer.Option(
+        False,
+        "--with-secrets",
+        help="Add the master key, sealed with a passphrase, for moving to another computer.",
+    ),
+) -> None:
+    """Write a backup of this installation: database, settings and the files work produced.
+
+    Safe while `serve` is running - the database is copied through SQLite's own
+    backup API. Secrets stay out unless asked for, and then only sealed.
+    """
+    from app.config.container import build_backups
+    from domain.safety.backup import BackupError
+
+    settings = get_settings()
+    passphrase = None
+    if with_secrets:
+        typer.secho(
+            "Anyone holding this file and its passphrase can read every stored credential.",
+            fg="yellow",
+        )
+        passphrase = _passphrase(confirm=True)
+    try:
+        made = build_backups(settings).create(
+            destination or None, passphrase=passphrase
+        )
+    except (BackupError, PrometheusError) as error:
+        typer.secho(str(error), fg="red", err=True)
+        raise typer.Exit(code=1) from error
+    typer.secho(f"Backup written: {made['path']}", fg="green")
+    typer.echo(
+        f"schema {made['schema_revision']}, {made['bytes']} bytes, "
+        f"secrets {'included (sealed)' if made['includes_secrets'] else 'not included'}"
+    )
+
+
+@app.command()
+def restore(
+    path: str = typer.Argument(..., help="The backup to restore."),
+    check: bool = typer.Option(False, "--check", help="Verify the backup; change nothing."),
+    without_secrets: bool = typer.Option(
+        False, "--without-secrets", help="Restore data only, even if secrets are included."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Do not ask for confirmation."),
+) -> None:
+    """Replace this installation with a backup, after checking all of it.
+
+    Refused while a runtime owns the data directory. The installation being
+    replaced is kept beside it; files that exist with different contents are
+    left alone.
+    """
+    from app.config.container import build_backups, restore_installation
+    from domain.safety.backup import BackupError
+
+    settings = get_settings()
+    archive = Path(path).expanduser()
+    backups = build_backups(settings)
+    try:
+        found = backups.verify(str(archive))
+    except (BackupError, PrometheusError) as error:
+        typer.secho(str(error), fg="red", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        f"backup from {found['created_at']} (version {found['app_version'] or 'unknown'}, "
+        f"schema {found['schema_revision']}, {found['bytes']} bytes)"
+    )
+    passphrase = None
+    if found["includes_secrets"] and not without_secrets:
+        passphrase = _passphrase(confirm=False)
+        try:
+            backups.verify(str(archive), passphrase=passphrase)
+        except BackupError as error:
+            typer.secho(str(error), fg="red", err=True)
+            raise typer.Exit(code=1) from error
+    typer.secho("The backup is complete and every checksum matches.", fg="green")
+    if check:
+        return
+
+    _own_data_dir("restore")
+    if not yes:
+        typer.confirm(
+            f"Replace the installation in {settings.data_dir} with this backup?", abort=True
+        )
+    try:
+        report = restore_installation(
+            settings, archive, passphrase=passphrase, skip_secrets=without_secrets
+        )
+    except (BackupError, PrometheusError) as error:
+        typer.secho(str(error), fg="red", err=True)
+        raise typer.Exit(code=1) from error
+    typer.secho("Restored.", fg="green")
+    typer.echo(f"files put back: {report.restored_files}, already there: {report.unchanged_files}")
+    for note in report.notes:
+        typer.echo(f"- {note}")
+
+
+def _audit_stop(action: str, state) -> None:
+    """Put the CLI's stop on the audit chain. Never fails the stop itself."""
+
+    async def _record() -> None:
+        container = build_container()
+        try:
+            from application.safety.emergency import StopReport
+            from domain.audit.protocols import AuditRecord
+            from domain.workspace.models import DEFAULT_WORKSPACE_ID
+
+            report = StopReport(state=state).to_dict()
+            workspaces = [item.id for item in await container.workspace_repository.list()]
+            for workspace_id in dict.fromkeys([DEFAULT_WORKSPACE_ID, *workspaces]):
+                await container.audit.record(
+                    AuditRecord(
+                        action=action,
+                        actor_kind=ActorKind.USER,
+                        actor_id="cli",
+                        result="SUCCESS",
+                        workspace_id=workspace_id,
+                        details=report,
+                    )
+                )
+        finally:
+            await container.aclose()
+
+    try:
+        asyncio.run(_record())
+    except Exception as error:
+        typer.secho(
+            f"The stop holds, but it could not be written to the audit log: {error}",
+            fg="yellow",
+            err=True,
+        )
 
 
 @app.command()
@@ -570,6 +842,12 @@ def serve(
     settings = get_settings()
     bind = host or settings.ui_host
     on = port or settings.ui_port
+    _refuse_unsupported_platform()
+    _own_data_dir("serve", url=f"http://{bind}:{on}")
+    from infrastructure.runtime.backup import finish_interrupted_restore
+
+    finish_interrupted_restore(settings.data_dir)
+    _prepare_storage_or_exit(settings)
     typer.secho(f"Prometheus on http://{bind}:{on}", fg="cyan")
     if bind not in ("127.0.0.1", "localhost", "::1"):
         # Said once, plainly. The interface starts tasks and approves
@@ -617,6 +895,8 @@ def serve(
     )
     RESTART.attach(server)
     server.run()
+    if RESTART.restore is not None:
+        _restore_between_processes(settings, RESTART.restore)
     if RESTART.requested:
         typer.secho("Restarting Prometheus…", fg="cyan")
         RESTART.replace_process()
@@ -896,6 +1176,7 @@ def run_workflow(
     version: int | None = typer.Option(None, "--version", min=1, help="Exact workflow version."),
 ) -> None:
     """Run a predefined process and report what each step produced."""
+    _own_data_dir("run-workflow")
 
     if not get_settings().workflows_enabled:
         typer.secho("Workflows are switched off (PROMETHEUS_FLAGS__WORKFLOWS=false).", fg="red")
@@ -1024,6 +1305,7 @@ def validate(
     request somebody actually made. It costs money and takes minutes, which is
     why it is a command rather than something CI runs.
     """
+    _own_data_dir("validate")
 
     async def _run() -> None:
         container = build_container()
@@ -2007,6 +2289,7 @@ def storage_migrate(
     the destination and still here - is not a defect: it is the point at which
     the move can still be abandoned.
     """
+    _own_data_dir("storage-migrate")
     from alembic import command
     from alembic.config import Config
 

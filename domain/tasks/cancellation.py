@@ -51,6 +51,22 @@ class Cancellations(CancellationSignal, Protocol):
     async def wait_until_resumed(self, task_id: UUID) -> None: ...
 
 
+class LiveTasks(Protocol):
+    """Which tasks a runtime in this process is carrying right now.
+
+    Asked by the emergency stop before it closes a task in the store: a task
+    something here is running closes itself at its next boundary, and writing a
+    terminal status underneath that loop is the conflation `Runs.cancel` exists
+    to avoid. A task nobody here carries was left by a process that is gone.
+    """
+
+    def begin(self, task_id: UUID) -> None: ...
+
+    def end(self, task_id: UUID) -> None: ...
+
+    def carrying(self, task_id: UUID) -> bool: ...
+
+
 class NeverCancelled:
     """The default: nothing is asking this run to stop."""
 

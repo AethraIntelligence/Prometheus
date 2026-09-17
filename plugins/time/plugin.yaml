@@ -9,7 +9,7 @@ homepage: https://github.com/modelcontextprotocol/servers/tree/main/src/time
 runtime: PYTHON
 command: uvx
 args:
-- mcp-server-time
+- 'mcp-server-time@2026.8.18'
 effects:
   READ:
   - get_current_time

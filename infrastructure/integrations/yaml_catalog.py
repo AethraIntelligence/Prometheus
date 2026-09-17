@@ -5,6 +5,13 @@ held to the same rule: adding a plugin is adding a directory - `plugin.yaml` and
 if it has one, `icon.svg` beside it. If that ever requires touching Python, this
 is the file that would have to change.
 
+**A plugin the lock does not describe is not offered** (Phase 13).
+`catalog.lock.json` beside the declarations holds a digest of each plugin's
+files and the pinned artifact its command runs; a declaration that is not in the
+lock, whose files changed since it was locked, or whose arguments do not run
+exactly the locked artifact is skipped - and cannot be installed, because
+installing starts from this catalog (`domain/integrations/provenance.py`).
+
 It differs from the others in one decision. A malformed employee stops the
 runtime, because a workforce that silently lost a member plans wrongly; a
 malformed plugin is skipped and logged, because a catalog is a shop window and
@@ -19,7 +26,9 @@ dropped, so an icon file is a drawing and cannot be anything else.
 
 from __future__ import annotations
 
+import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -37,12 +46,14 @@ from domain.integrations.catalog import (
     PluginSignIn,
     SetupStep,
 )
+from domain.integrations.provenance import PluginArtifact, declaration_digest, pinned_in
 from domain.policies.risk import Effect
 from infrastructure.observability.logging import get_logger
 
 log = get_logger(__name__)
 
 DEFAULT_PLUGINS_DIR = Path(__file__).resolve().parents[2] / "plugins"
+LOCK_NAME = "catalog.lock.json"
 
 KNOWN_FIELDS = frozenset(
     {
@@ -94,10 +105,11 @@ class YamlPluginCatalog:
     def _discover(self) -> dict[str, Plugin]:
         if not self._directory.is_dir():
             return {}
+        lock = self._lock()
         found: dict[str, Plugin] = {}
         for path in sorted(self._directory.glob("*/plugin.yaml")):
             try:
-                plugin = load(path)
+                plugin = verified(load(path), path.parent, lock)
             except ConfigurationError as error:
                 if self._strict:
                     raise
@@ -105,6 +117,56 @@ class YamlPluginCatalog:
                 continue
             found[plugin.id] = plugin
         return found
+
+    def _lock(self) -> dict[str, dict[str, Any]]:
+        path = self._directory / LOCK_NAME
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            if self._strict:
+                raise ConfigurationError(f"{path}: the plugin catalog has no lock.") from None
+            log.warning("plugins.no_lock", path=str(path))
+            return {}
+        except (OSError, ValueError) as error:
+            if self._strict:
+                raise ConfigurationError(f"{path}: cannot be read: {error}") from error
+            log.warning("plugins.lock_unreadable", path=str(path), error=str(error))
+            return {}
+        if not isinstance(raw, dict) or raw.get("format_version") != 1:
+            if self._strict:
+                raise ConfigurationError(f"{path}: not a lock this version can read.")
+            return {}
+        plugins = raw.get("plugins")
+        return plugins if isinstance(plugins, dict) else {}
+
+
+def plugin_files(directory: Path) -> list[tuple[str, bytes]]:
+    return [
+        (item.name, item.read_bytes()) for item in sorted(directory.iterdir()) if item.is_file()
+    ]
+
+
+def verified(plugin: Plugin, directory: Path, lock: dict[str, dict[str, Any]]) -> Plugin:
+    """The plugin with its locked artifact, or a refusal naming what does not match."""
+    entry = lock.get(plugin.id)
+    if not isinstance(entry, dict):
+        raise ConfigurationError(f"{directory}: '{plugin.id}' is not in the catalog lock.")
+    if entry.get("declaration_sha256") != declaration_digest(plugin_files(directory)):
+        raise ConfigurationError(
+            f"{directory}: '{plugin.id}' changed since it was locked; it is not offered."
+        )
+    raw_artifact = entry.get("artifact")
+    if raw_artifact is None:
+        return plugin
+    try:
+        artifact = PluginArtifact.from_dict(raw_artifact)
+    except (KeyError, ValueError, TypeError) as error:
+        raise ConfigurationError(f"{directory}: the lock's artifact is unreadable.") from error
+    if not pinned_in(plugin.args, artifact):
+        raise ConfigurationError(
+            f"{directory}: '{plugin.id}' does not run the locked {artifact.reference}."
+        )
+    return replace(plugin, artifact=artifact)
 
 
 def load(path: Path) -> Plugin:

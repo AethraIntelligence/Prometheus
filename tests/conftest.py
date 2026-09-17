@@ -97,6 +97,10 @@ def _ignore_the_developers_env_file(
     monkeypatch.setattr("app.config.settings._default_data_dir", lambda: home)
     # Nor does one start a model server on the machine running it.
     monkeypatch.setenv("PROMETHEUS_LOCAL_LLM_AUTOSTART", "false")
+    # Nor touch the login keychain of whoever runs it. The keychain adapter has
+    # its own tests against a fake backend; everything else uses the headless
+    # backend, chosen explicitly, the way a CI machine or a server must.
+    monkeypatch.setenv("PROMETHEUS_SECRET_BACKEND", "file")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

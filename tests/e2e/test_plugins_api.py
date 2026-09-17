@@ -26,6 +26,7 @@ from app.ui.server import create_app
 from infrastructure.persistence.models import Base
 from infrastructure.persistence.session import create_engine
 from tests.fakes.llm import FakeLLM
+from tests.fakes.plugins import ScriptedRegistry, lock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SERVER = REPO_ROOT / "tests" / "fakes" / "mcp_server.py"
@@ -62,6 +63,7 @@ def declare(plugins: Path) -> None:
         )
     )
     (directory / "icon.svg").write_text('<svg viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg>')
+    lock(plugins)
 
 
 def serve(tmp_path: Path, **extra):
@@ -221,3 +223,76 @@ def test_a_credential_the_installation_supplies_is_not_asked_for(tmp_path: Path)
         assert SECRET not in client.get("/api/plugins").text
         # Supplied, not stored: nothing was written to the credential store.
         assert client.get("/api/plugins").json()["plugins"][0]["settings"][0]["stored"] is False
+
+
+
+# --- Provenance (Phase 13) ------------------------------------------------------------
+
+
+def _pinned_catalog(tmp_path: Path, registry) -> TestClient:
+    from domain.integrations.provenance import ArtifactKind, PluginArtifact
+
+    plugins = tmp_path / "plugins"
+    directory = plugins / "pinned"
+    directory.mkdir(parents=True)
+    (directory / "plugin.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "id": "pinned",
+                "name": "Pinned",
+                "description": "A server run from a registry",
+                "category": "Utilities",
+                "runtime": "PYTHON",
+                "command": sys.executable,
+                "args": ["-c", "pass", "pinned-server@1.0.0"],
+                "effects": {"READ": ["look"]},
+            }
+        )
+    )
+    reviewed = PluginArtifact(ArtifactKind.PYPI, "pinned-server", "1.0.0", ("a" * 64,))
+    lock(plugins, {"pinned": reviewed})
+    settings = Settings(
+        data_dir=tmp_path,
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'prometheus.db'}",
+        file_root=tmp_path / "workspace",
+        employees_dir=REPO_ROOT / "employees",
+        plugins_dir=plugins,
+    )
+
+    import asyncio
+
+    async def create() -> None:
+        engine = create_engine(settings.resolved_database_url)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        await engine.dispose()
+
+    asyncio.run(create())
+
+    def build(resolved: Settings):
+        container = build_container(resolved)
+        container.llm_for = lambda *args, **kwargs: FakeLLM([])  # type: ignore[method-assign]
+        container.artifact_verifier = registry  # type: ignore[misc]
+        return container
+
+    return TestClient(create_app(settings, build=build))
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        ScriptedRegistry({"pinned-server@1.0.0": ("b" * 64,)}),
+        ScriptedRegistry(down=True),
+    ],
+    ids=["the registry serves different bytes", "the registry cannot be reached"],
+)
+def test_a_plugin_whose_artifact_cannot_be_shown_to_be_the_reviewed_one_is_not_installed(
+    tmp_path: Path, registry
+) -> None:
+    with _pinned_catalog(tmp_path, registry) as client:
+        refused = client.post("/api/plugins/pinned/install", json={"values": {}})
+
+        assert refused.status_code == 409, refused.json()
+        assert "not installed" in refused.json()["detail"]
+        assert registry.asked == ["pinned-server@1.0.0"]
+        assert client.get("/api/integrations").json()["integrations"] == []

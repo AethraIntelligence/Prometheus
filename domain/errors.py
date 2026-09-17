@@ -42,6 +42,27 @@ class WorkControlError(DomainError):
     """A requested run control would make the execution state ambiguous."""
 
 
+class PluginVerificationError(PrometheusError):
+    """A plugin's declaration or artifact could not be shown to be the reviewed one.
+
+    Raised before anything is stored or started (`domain/integrations/provenance.py`).
+    """
+
+
+class WorkStoppedError(WorkControlError):
+    """Work was asked for while the emergency stop is engaged.
+
+    A control error rather than a failure: nothing went wrong, a person said no
+    work, and the answer to it is to resume rather than to retry.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            f"All work is stopped ({reason}). Resume work before starting anything new."
+        )
+        self.reason = reason
+
+
 class InvalidStateTransitionError(DomainError):
     """A task was asked to move to a status it cannot reach from the current one."""
 

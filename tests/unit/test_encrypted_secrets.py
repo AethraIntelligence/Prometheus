@@ -167,3 +167,150 @@ async def test_the_older_file_is_taken_over_once_and_never_erased() -> None:
     assert await credentials.import_from(old, ("telegram_bot_token",)) == 1
     assert credentials.get("telegram_bot_token").reveal() == "sk-from-the-file"
     assert await credentials.import_from(old, ("telegram_bot_token",)) == 0, "and not again"
+
+
+# --- The operating system's vault (Phase 13) ------------------------------------------
+
+
+class FakeKeyring:
+    """Stands in for a `keyring` backend: a usable priority and a dict."""
+
+    priority = 5
+
+    def __init__(self) -> None:
+        self.values: dict[tuple[str, str], str] = {}
+        self.fail_writes = False
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self.values.get((service, account))
+
+    def set_password(self, service: str, account: str, value: str) -> None:
+        if self.fail_writes:
+            raise RuntimeError("locked")
+        self.values[(service, account)] = value
+
+    def delete_password(self, service: str, account: str) -> None:
+        self.values.pop((service, account), None)
+
+
+class ForgetfulKeyring(FakeKeyring):
+    """Accepts a write and keeps nothing - a vault that must not be trusted."""
+
+    def set_password(self, service: str, account: str, value: str) -> None:
+        return None
+
+
+def _vault(tmp_path: Path, backend: FakeKeyring):
+    from infrastructure.secrets.keychain import KeychainVault
+
+    return KeychainVault(tmp_path, backend=backend)
+
+
+def test_a_new_desktop_key_lives_only_in_the_vault(tmp_path: Path) -> None:
+    backend = FakeKeyring()
+
+    key = resolve_master_key(tmp_path, {}, vault=_vault(tmp_path, backend))
+
+    assert len(key) == 32
+    assert not (tmp_path / "master.key").exists()
+    assert resolve_master_key(tmp_path, {}, vault=_vault(tmp_path, backend)) == key
+
+
+def test_the_file_key_moves_into_the_vault_and_the_plaintext_is_gone(tmp_path: Path) -> None:
+    original = resolve_master_key(tmp_path, {})  # an installation before Phase 13
+    backend = FakeKeyring()
+
+    moved = resolve_master_key(tmp_path, {}, vault=_vault(tmp_path, backend))
+
+    assert moved == original, "credentials sealed with it must still open"
+    assert not (tmp_path / "master.key").exists()
+    assert list(backend.values.values()) == [base64.urlsafe_b64encode(original).decode()]
+
+
+def test_a_move_interrupted_after_the_vault_write_finishes_on_the_next_start(
+    tmp_path: Path,
+) -> None:
+    original = resolve_master_key(tmp_path, {})
+    backend = FakeKeyring()
+    _vault(tmp_path, backend).write(original)  # crashed before the file was removed
+
+    assert resolve_master_key(tmp_path, {}, vault=_vault(tmp_path, backend)) == original
+    assert not (tmp_path / "master.key").exists()
+
+
+def test_two_different_keys_are_never_reconciled_by_guessing(tmp_path: Path) -> None:
+    resolve_master_key(tmp_path, {})
+    backend = FakeKeyring()
+    _vault(tmp_path, backend).write(bytes(32))
+
+    with pytest.raises(StorageError, match="differs"):
+        resolve_master_key(tmp_path, {}, vault=_vault(tmp_path, backend))
+    assert (tmp_path / "master.key").exists(), "nothing was removed"
+
+
+def test_a_vault_that_does_not_keep_the_key_leaves_the_file_where_it_is(tmp_path: Path) -> None:
+    original = resolve_master_key(tmp_path, {})
+
+    with pytest.raises(StorageError, match="did not keep"):
+        resolve_master_key(tmp_path, {}, vault=_vault(tmp_path, ForgetfulKeyring()))
+    assert resolve_master_key(tmp_path, {}) == original
+
+
+def test_a_locked_vault_is_a_refusal_with_what_to_do_not_a_file(tmp_path: Path) -> None:
+    backend = FakeKeyring()
+    backend.fail_writes = True
+
+    with pytest.raises(StorageError, match="Unlock"):
+        resolve_master_key(tmp_path, {}, vault=_vault(tmp_path, backend))
+    assert not (tmp_path / "master.key").exists()
+
+
+def test_no_vault_on_this_machine_names_the_explicit_headless_choice(tmp_path: Path) -> None:
+    class NoBackend(FakeKeyring):
+        priority = 0
+
+    with pytest.raises(ConfigurationError, match="PROMETHEUS_SECRET_BACKEND=file"):
+        resolve_master_key(tmp_path, {}, vault=_vault(tmp_path, NoBackend()))
+    assert not (tmp_path / "master.key").exists(), "no silent fallback to a file"
+
+
+def test_two_data_directories_do_not_share_a_vault_entry(tmp_path: Path) -> None:
+    backend = FakeKeyring()
+    first = resolve_master_key(tmp_path / "a", {}, vault=_vault(tmp_path / "a", backend))
+    second = resolve_master_key(tmp_path / "b", {}, vault=_vault(tmp_path / "b", backend))
+
+    assert first != second
+    assert len(backend.values) == 2
+
+
+# --- The plaintext file from before Phase 17 -------------------------------------------
+
+
+async def test_the_plaintext_credentials_file_is_removed_once_every_value_reads_back(
+    tmp_path: Path,
+) -> None:
+    from infrastructure.secrets.local import LocalCredentialStore
+
+    legacy = LocalCredentialStore(tmp_path / "credentials.json")
+    await legacy.store("gmail_token", "tok-1")
+    await legacy.store("notes_token", "tok-2")
+    encrypted = store(InMemorySecretRepository(), a_key())
+    names = await legacy.names()
+
+    await encrypted.import_from(legacy, names)
+    assert await encrypted.retire(legacy, names)
+
+    assert not (tmp_path / "credentials.json").exists()
+    assert encrypted.get("gmail_token").reveal() == "tok-1"
+
+
+async def test_a_credential_changed_since_the_import_keeps_the_file(tmp_path: Path) -> None:
+    from infrastructure.secrets.local import LocalCredentialStore
+
+    legacy = LocalCredentialStore(tmp_path / "credentials.json")
+    await legacy.store("gmail_token", "old")
+    encrypted = store(InMemorySecretRepository(), a_key())
+    await encrypted.store("gmail_token", "changed in the window")
+
+    assert not await encrypted.retire(legacy, await legacy.names())
+    assert (tmp_path / "credentials.json").exists()

@@ -1,0 +1,19 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "runtime-dist/": "runtime/"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "${PROMETHEUS_UPDATER_PUBKEY}",
+      "endpoints": [
+        "${PROMETHEUS_UPDATE_ENDPOINT}"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

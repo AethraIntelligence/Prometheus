@@ -9,7 +9,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- tavily-mcp
+- 'tavily-mcp@0.2.22'
 settings:
 - key: TAVILY_API_KEY
   label: API key

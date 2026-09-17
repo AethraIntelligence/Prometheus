@@ -372,3 +372,18 @@ def test_the_phase_11_scenario_declares_who_must_do_the_work() -> None:
 
     assert scenario.expect.employees_involved == ("analyst", "writer")
     assert scenario.expect.results_accepted is True
+
+
+def test_a_file_the_run_must_leave_alone_passes_only_when_untouched() -> None:
+    """Phase 13: the evidence of a refused overwrite is the file not moving."""
+    from domain.validation.evidence import Evidence, check
+    from domain.validation.scenario import Expectations
+
+    expect = Expectations(files_unchanged=("notes/plan.md",), must_succeed=False)
+
+    kept = check(expect, Evidence(summary="", succeeded=False, files_untouched=("notes/plan.md",)))
+    moved = check(expect, Evidence(summary="", succeeded=False))
+
+    assert [result.passed for result in kept] == [True]
+    assert [result.passed for result in moved] == [False]
+    assert not expect.is_empty and "notes/plan.md" in expect.named_files

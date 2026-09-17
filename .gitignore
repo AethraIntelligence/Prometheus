@@ -13,4 +13,7 @@ build/
 *.egg-info/
 CLAUDE.md
 development/
-.DS_Store
+.DS_Store.mypy_cache/
+.hypothesis/
+coverage.json
+.coverage

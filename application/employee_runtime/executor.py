@@ -30,6 +30,12 @@ on a conversation with the gate. So the refusals in this task's own transcript
 decide which tools the next request offers, and a tool refused twice is not one
 of them (`domain.tools.refusals`).
 
+**The emergency stop is read twice, and the second time is the one that matters.**
+Between steps it ends the run the way a cancellation does. Then, for every call,
+it is read again after the approval gate has answered and immediately before the
+tool is called: an approval granted in the same instant somebody pulled the brake
+must not carry the action past it (`domain.safety.emergency`).
+
 **The interface hierarchy is decided from what the employee has, and recorded.**
 The tools an employee is allowed to use are what say whether it can reach the
 world through an API, a browser or a screen, so the choice is made here, once,
@@ -64,6 +70,9 @@ from domain.llm.models import (
     ToolCallRequest,
 )
 from domain.llm.protocols import LLM
+from domain.policies.risk import Effect
+from domain.safety.effects import EffectGate
+from domain.safety.emergency import EmergencyStop
 from domain.secrets.models import redact
 from domain.tasks.cancellation import CancellationSignal, NeverCancelled
 from domain.tasks.plan import Observation, TaskPlan
@@ -106,6 +115,8 @@ class Executor:
         audit: AuditLog | None = None,
         progress: ProgressSink | None = None,
         cancellation: CancellationSignal | None = None,
+        stop: EmergencyStop | None = None,
+        effects: EffectGate | None = None,
         # Injected so tests can control time instead of waiting for it.
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -117,6 +128,8 @@ class Executor:
         self._audit = audit
         self._progress = progress or NullProgress()
         self._cancellation = cancellation or NeverCancelled()
+        self._stop = stop
+        self._effects = effects
         self._clock = clock
 
     async def run(
@@ -155,7 +168,7 @@ class Executor:
 
         while True:
             await self._wait_if_paused(task, on_status)
-            if self._cancellation.is_cancelled(task.id):
+            if self._halted(task):
                 log.info("task.cancelled", task_id=str(task.id), steps=transcript.steps)
                 return StepOutcome(
                     transcript=transcript,
@@ -223,7 +236,7 @@ class Executor:
 
             for call in calls:
                 await self._wait_if_paused(task, on_status)
-                if self._cancellation.is_cancelled(task.id):
+                if self._halted(task):
                     # Asked to stop between two calls of the same step: the
                     # remaining calls are not made, and the ones already made
                     # stay in the transcript where the next reader can see them.
@@ -269,6 +282,12 @@ class Executor:
                     step=observation.step,
                     payload={"succeeded": observation.succeeded, **observation.details},
                 )
+
+    def _halted(self, task: Task) -> bool:
+        """Asked to stop: this task by a person, or all work by the emergency stop."""
+        if self._cancellation.is_cancelled(task.id):
+            return True
+        return self._stop is not None and self._stop.engaged()
 
     async def _wait_if_paused(
         self,
@@ -360,6 +379,11 @@ class Executor:
         if replayed is not None:
             return replayed, False
 
+        if self._stop is not None and self._stop.engaged():
+            reason = self._stopped(call)
+            await self._record(task, call, ToolResult.failure(reason))
+            return ToolResult.failure(reason), True
+
         try:
             tool = self._tools.get(call.name, definition)
         except (ToolNotFoundError, PermissionDeniedError) as error:
@@ -388,9 +412,33 @@ class Executor:
                 return replayed, False
             return ToolResult.failure("The tool call could not be reserved safely."), False
 
+        if self._stop is not None and self._stop.engaged():
+            # The approval/effect boundary. The gate may have answered yes a
+            # moment ago; the stop is newer than that answer and wins. The
+            # reservation is closed as not performed, so a later reader of the
+            # ledger does not mistake it for an action whose outcome is unknown.
+            reason = self._stopped(call)
+            stopped = ToolResult.failure(reason)
+            log.warning("tool.stopped_before_effect", tool=call.name, task_id=str(task.id))
+            if reserved is None:
+                await self._record(task, call, stopped, tool.spec.interface_level)
+            else:
+                await self._complete(task, call, stopped, tool.spec.interface_level)
+            await self._audit_stopped(task, definition, tool, call, reason)
+            return stopped, True
+
         started = self._clock()
         try:
-            result = await tool.execute(call.arguments)
+            if self._effects is not None and tool.spec.effect is not Effect.READ:
+                # Through the gate an update holds: an effect is never cut in
+                # half by a restart, and one that waits here resumes cleanly.
+                async with self._effects.entering(task.id, call.name, tool.spec.effect.value):
+                    if self._stop is not None and self._stop.engaged():
+                        result = ToolResult.failure(self._stopped(call))
+                    else:
+                        result = await tool.execute(call.arguments)
+            else:
+                result = await tool.execute(call.arguments)
         except Exception as error:  # a tool must not take the task down with it
             log.warning("tool.failed", tool=call.name, error=str(error))
             result = ToolResult.failure(f"{type(error).__name__}: {error}")
@@ -510,6 +558,44 @@ class Executor:
                         "effect": tool.spec.effect.value,
                         "interface": tool.spec.interface_level.value,
                         **({"error": result.error} if result.error else {}),
+                    },
+                )
+            )
+        except Exception as error:
+            log.warning("audit.not_recorded", tool=call.name, error=str(error))
+
+    def _stopped(self, call: ToolCallRequest) -> str:
+        why = self._stop.reason if self._stop is not None else ""
+        return (
+            f"{call.name} was not performed: all work is stopped ({why}). "
+            "Do not retry it; nothing more can be done until a person resumes work."
+        )
+
+    async def _audit_stopped(
+        self,
+        task: Task,
+        definition: EmployeeDefinition,
+        tool: Tool,
+        call: ToolCallRequest,
+        reason: str,
+    ) -> None:
+        """A refusal the gate never saw: it said yes, and the stop came after."""
+        if self._audit is None:
+            return
+        try:
+            await self._audit.record(
+                AuditRecord(
+                    action=f"{call.name}({self._arguments_of(call)})",
+                    actor_kind=definition.actor_kind,
+                    actor_id=definition.actor_id,
+                    result="DENIED",
+                    workspace_id=task.workspace_id,
+                    task_id=task.id,
+                    tool=call.name,
+                    details={
+                        "effect": tool.spec.effect.value,
+                        "policy_source": "emergency_stop",
+                        "reason": reason,
                     },
                 )
             )

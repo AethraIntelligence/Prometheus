@@ -9,7 +9,7 @@ homepage: https://github.com/blazickjp/arxiv-mcp-server
 runtime: PYTHON
 command: uvx
 args:
-- arxiv-mcp-server
+- 'arxiv-mcp-server@0.7.2'
 capabilities:
 - WEB_BROWSING
 effects:

@@ -36,6 +36,7 @@ from typing import Protocol
 from domain.capabilities.models import Capability
 from domain.employees.definition import EmployeeDefinition
 from domain.errors import PluginConfigurationError
+from domain.integrations.provenance import PluginArtifact
 from domain.policies.risk import Effect
 
 #: What an integration made from a plugin records, so the listing can tell a
@@ -145,6 +146,9 @@ class Plugin:
     env: Mapping[str, str] = field(default_factory=dict)
     setup: tuple[SetupStep, ...] = ()
     sign_in: PluginSignIn | None = None
+    #: The pinned package its command fetches, as the catalog lock describes it.
+    #: None for a server started from a local path, which no registry publishes.
+    artifact: PluginArtifact | None = None
 
     def field_named(self, key: str) -> PluginField | None:
         return next((one for one in self.fields if one.key == key), None)

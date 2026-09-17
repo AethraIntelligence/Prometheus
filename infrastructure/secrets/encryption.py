@@ -7,14 +7,17 @@ reaches the database is unreadable without something the database does not have.
 
 **The master key is that something, and it never goes near the store.**
 `PROMETHEUS_MASTER_KEY` first - that is how a server is configured, and it is the
-only sensible answer for a process with no persistent disk. Without it, a key is
-generated once into a 0600 file beside the data, which is the desktop's answer.
-The code is the same in both; only where the key came from differs.
+only sensible answer for a process with no persistent disk. Without it, the key
+lives in a `KeyVault`: since Phase 13 that is the operating system's credential
+vault on a desktop, and a 0600 file only where a headless machine chose one
+(`PROMETHEUS_SECRET_BACKEND=file`). There is no quiet fallback from one to the
+other - a desktop whose keychain is locked is told so, not handed a file.
 
-Nothing here touches the operating system's own keychain. It would be the
-stronger store on a laptop and it does not exist on the server this same backend
-has to run on, and a platform whose security depends on which machine it was
-started on has two behaviours to reason about instead of one.
+**Moving a key from the file into the vault is repeatable and leaves no copy.**
+Write to the vault, read it back, compare, and only then overwrite and remove the
+file. A crash between any two steps leaves either the file alone, or both copies
+equal - and the next start finishes the move. Two copies that *differ* are never
+resolved by guessing: every stored credential was sealed with one of them.
 
 AES-GCM, 256-bit, a fresh nonce per write, and the credential's own name as
 associated data - so a ciphertext moved to another row stops decrypting rather
@@ -32,6 +35,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from domain.errors import ConfigurationError, StorageError
+from domain.secrets.protocols import KeyVault
 
 log = structlog.get_logger(__name__)
 
@@ -44,7 +48,12 @@ KEY_BITS = 256
 NONCE_BYTES = 12
 
 
-def resolve_master_key(data_dir: Path, environ: dict[str, str] | None = None) -> bytes:
+def resolve_master_key(
+    data_dir: Path,
+    environ: dict[str, str] | None = None,
+    *,
+    vault: KeyVault | None = None,
+) -> bytes:
     """The key, from the environment if it is there and from a file if it is not.
 
     Generating one on first use rather than refusing is deliberate: a desktop
@@ -67,7 +76,88 @@ def resolve_master_key(data_dir: Path, environ: dict[str, str] | None = None) ->
                 f"{MASTER_KEY_ENV} must decode to {KEY_BITS // 8} bytes, got {len(key)}."
             )
         return key
-    return _from_file(data_dir / "master.key")
+    if vault is None:
+        return _from_file(data_dir / "master.key")
+    return _from_vault(vault, data_dir / "master.key")
+
+
+def store_master_key(data_dir: Path, key: bytes, *, vault: KeyVault | None = None) -> None:
+    """Put a key brought from another machine where this one keeps its key.
+
+    Used by a restore that carried sealed secrets. The key replaces whatever key
+    this data directory had, because the database it is restored beside was
+    sealed with it.
+    """
+    if len(key) != KEY_BITS // 8:
+        raise StorageError("A master key must be 32 bytes.")
+    if vault is not None:
+        if not vault.available():
+            raise ConfigurationError(
+                f"The system credential vault ({vault.name}) is not available."
+            )
+        vault.write(key)
+        if vault.read() != key:
+            raise StorageError(f"The {vault.name} did not keep the master key it was given.")
+        return
+    path = data_dir / "master.key"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=DIRECTORY_MODE)
+    temporary = path.with_suffix(".tmp")
+    temporary.touch(mode=FILE_MODE)
+    temporary.chmod(FILE_MODE)
+    temporary.write_text(base64.urlsafe_b64encode(key).decode("ascii"), encoding="utf-8")
+    temporary.replace(path)
+    path.chmod(FILE_MODE)
+
+
+def _from_vault(vault: KeyVault, legacy: Path) -> bytes:
+    if not vault.available():
+        raise ConfigurationError(
+            f"The system credential vault ({vault.name}) is not available, so the key that "
+            "encrypts stored credentials has nowhere safe to live. Unlock or install it "
+            "(the login keychain, Windows Credential Manager, or a Secret Service such as "
+            "GNOME Keyring). On a headless machine, set PROMETHEUS_MASTER_KEY, or choose a "
+            "file on purpose with PROMETHEUS_SECRET_BACKEND=file."
+        )
+    stored = vault.read()
+    on_disk = _from_file(legacy) if legacy.exists() else None
+    if stored is not None and on_disk is not None and stored != on_disk:
+        raise StorageError(
+            f"The master key in the {vault.name} differs from the one in {legacy}. Nothing "
+            "was changed. Credentials were sealed with one of them; move the wrong one away "
+            "and start again."
+        )
+    if stored is None:
+        key = on_disk if on_disk is not None else AESGCM.generate_key(bit_length=KEY_BITS)
+        vault.write(key)
+        if vault.read() != key:
+            raise StorageError(
+                f"The {vault.name} did not keep the master key it was given. Nothing was "
+                "removed; start again once it is unlocked."
+            )
+        log.info("secrets.master_key_in_vault", vault=vault.name, moved=on_disk is not None)
+        stored = key
+    if on_disk is not None:
+        shred(legacy)
+        log.info("secrets.master_key_file_removed", path=str(legacy))
+    return stored
+
+
+def shred(path: Path) -> None:
+    """Overwrite a secret file before removing it.
+
+    Not a guarantee on a journaling or copy-on-write filesystem, and not claimed
+    as one; it keeps the plaintext out of the directory and out of a naive
+    recovery of the freed blocks, and the rest is what full-disk encryption is for.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("r+b") as handle:
+            handle.write(os.urandom(max(size, 1)))
+            handle.flush()
+            os.fsync(handle.fileno())
+    except FileNotFoundError:
+        return
+    path.unlink(missing_ok=True)
 
 
 def _from_file(path: Path) -> bytes:

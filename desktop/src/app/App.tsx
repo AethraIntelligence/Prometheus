@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
 import type { ConversationKind } from "../entities/conversation";
+import { EmergencyStop } from "../features/emergency-stop";
 import { ApprovalInboxPage } from "../pages/approval-inbox";
 import { ChatPage } from "../pages/chat";
 import { ObservabilityPage } from "../pages/observability";
@@ -31,6 +32,9 @@ const narrow = () => typeof window !== "undefined" && window.innerWidth < NARROW
  * Scheduled work is a page beside the conversation, not inside settings: it
  * is read the way the thread list is - what is coming, what happened - and
  * its results open as the threads they were written into.
+ *
+ * The emergency stop is outside every page, on both branches: a brake that is
+ * only on some screens is a brake somebody has to navigate to.
  *
  * Settings take the whole window and bring their own menu. A list of threads
  * beside a screen that has nothing to do with any of them is a column of dead
@@ -64,6 +68,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
   if (showing === "settings") {
     return (
       <RuntimeProvider client={client} baseUrl={baseUrl}>
+        <EmergencyStop />
         <SettingsPage
           key={workspace}
           initial={section}
@@ -76,6 +81,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
 
   return (
     <RuntimeProvider client={client} baseUrl={baseUrl}>
+      <EmergencyStop />
       <div className={railOpen ? "app" : "app rail-closed"}>
         <Sidebar
           key={`rail-${workspace}`}

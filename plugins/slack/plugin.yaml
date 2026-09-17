@@ -11,7 +11,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- slack-mcp-server
+- 'slack-mcp-server@1.3.0'
 - --transport
 - stdio
 settings:

@@ -11,7 +11,7 @@ popular: true
 runtime: PYTHON
 command: uvx
 args:
-- workspace-mcp
+- 'workspace-mcp@1.26.2'
 - --single-user
 - --tools
 - drive

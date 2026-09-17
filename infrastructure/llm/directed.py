@@ -13,6 +13,12 @@ is the bound client and nothing else.
 
 Either way the decision the call is made under is put where the meter reads it,
 so every recorded call says which entry ran and why.
+
+**The bound client is chosen on first use, not at assembly** (Phase 13). An
+installation with no provider configured yet - every fresh one - has nothing a
+router can choose, and choosing at assembly made the runtime refuse to start: the
+window that would let a person add a provider never opened. Chosen on first use,
+the same error arrives when work is asked for, where it can be read and fixed.
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ class DirectedLLM:
 
     def __init__(
         self,
-        bound: tuple[LLM, ModelChoice],
+        bound: tuple[LLM, ModelChoice] | None,
         reroute: Callable[[], tuple[LLM, ModelChoice]],
         *,
         task_kind: TaskKind | None = None,
@@ -39,14 +45,19 @@ class DirectedLLM:
         self._reroute = reroute
         self._task_kind = task_kind
 
+    def _default(self) -> tuple[LLM, ModelChoice]:
+        if self._bound is None:
+            self._bound = self._reroute()
+        return self._bound
+
     @property
     def choice(self) -> ModelChoice:
         """What this client runs on outside any run-specific direction."""
-        return self._bound[1]
+        return self._default()[1]
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         rerouted = directions.current().model or escalation.current().active
-        client, choice = self._reroute() if rerouted else self._bound
+        client, choice = self._reroute() if rerouted else self._default()
         decision = routing.RoutingDecision(
             task_kind=self._task_kind.value if self._task_kind else "",
             entry=choice.entry,

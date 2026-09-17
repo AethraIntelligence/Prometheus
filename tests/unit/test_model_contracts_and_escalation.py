@@ -298,3 +298,26 @@ async def test_no_escalation_without_a_stronger_model_or_for_a_refusal() -> None
     unconfigured = RecordingExecution(rejected)
     await supervisor(unconfigured).run(one_task())
     assert all(not a.context.data.get("escalation") for _, a in unconfigured.started)
+
+
+async def test_a_machine_with_no_usable_model_still_assembles_and_says_so_when_work_arrives(
+    tmp_path,
+) -> None:
+    """Phase 13: a fresh install with no provider must start, or onboarding never opens."""
+    import pytest
+
+    from app.config.container import build_container
+    from app.config.settings import Settings
+    from domain.errors import ConfigurationError
+    from domain.llm.models import LLMRequest, Message
+
+    catalog = tmp_path / "models.toml"
+    catalog.write_text("", encoding="utf-8")
+    container = build_container(
+        Settings(data_dir=tmp_path, model_catalog_path=catalog, llm_api_key=None)
+    )
+
+    llm = container.llm_for(TaskKind.PLANNING)
+
+    with pytest.raises(ConfigurationError):
+        await llm.generate(LLMRequest(messages=(Message.user("hello"),)))

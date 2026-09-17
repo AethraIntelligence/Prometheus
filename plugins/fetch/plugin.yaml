@@ -9,7 +9,7 @@ homepage: https://github.com/modelcontextprotocol/servers/tree/main/src/fetch
 runtime: PYTHON
 command: uvx
 args:
-- mcp-server-fetch
+- 'mcp-server-fetch@2026.8.18'
 capabilities:
 - WEB_BROWSING
 effects:

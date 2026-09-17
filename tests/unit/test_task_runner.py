@@ -288,3 +288,29 @@ async def test_a_task_that_lost_its_assignment_to_a_crash_gets_exactly_one_on_re
     [recovered] = await assignments.for_task(orphan.id)
     assert recovered.decision.code is SelectionCode.UNRECORDED
     assert recovered.outcome is AssignmentOutcome.COMPLETED
+
+
+async def test_a_task_that_died_waiting_on_a_person_is_put_back_where_resume_reaches_it() -> None:
+    """Phase 13: after a crash nobody can answer the question, and nothing had happened yet."""
+    from domain.tasks.task import Task
+
+    tasks = InMemoryTaskRepository()
+    task = Task.create("Overwrite the report")
+    running, event = task.transition_to(TaskStatus.RUNNING)
+    await tasks.save(running, event)
+    waiting, event = running.transition_to(TaskStatus.WAITING_FOR_APPROVAL)
+    await tasks.save(waiting, event)
+    runner = TaskRunner(
+        tasks=tasks,
+        assignments=InMemoryAssignmentRepository(),
+        registry=None,  # type: ignore[arg-type]
+        build_runtime=None,  # type: ignore[arg-type]
+    )
+    assert await runner.resumable() == [], "stuck: neither finished nor resumable"
+
+    assert await runner.reconcile_abandoned_approvals() == 1
+
+    [resumable] = await runner.resumable()
+    assert resumable.id == task.id and resumable.status is TaskStatus.RUNNING
+    [*_, last] = await tasks.events(task.id)
+    assert "expired" in last.payload["reason"]

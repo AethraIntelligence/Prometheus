@@ -9,7 +9,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- exa-mcp-server
+- 'exa-mcp-server@3.4.1'
 settings:
 - key: EXA_API_KEY
   label: API key

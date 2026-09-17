@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 from app.config.general import FileSettingsEditor
 from app.config.settings import Settings, get_settings
@@ -47,6 +48,7 @@ from application.prometheus.supervisor import Supervisor
 from application.prometheus.synthesis import Synthesizer
 from application.prometheus.verification import ObjectiveVerifier
 from application.providers.service import ProviderService
+from application.safety.emergency import EmergencyStopControl
 from application.task_runner import TaskRunner
 from application.validation.harness import ValidationHarness
 from application.workflows.engine import WorkflowEngine
@@ -124,8 +126,9 @@ async def _restore_credentials(container: Container) -> None:
 
     The import runs on every start and does nothing after the first: a name
     already in the store is skipped, so this costs one query on a machine that
-    was never on the old version. The file is left where it is - see
-    `Container.legacy_credentials` for why.
+    was never on the old version. The plaintext file is removed once every value
+    in it reads back identically from the encrypted store - see
+    `EncryptedCredentialStore.retire`.
     """
     credentials = container.credential_store
     restore = getattr(credentials, "restore", None)
@@ -137,6 +140,7 @@ async def _restore_credentials(container: Container) -> None:
         names = await legacy.names()
         if names:
             await credentials.import_from(legacy, names)  # type: ignore[attr-defined]
+            await credentials.retire(legacy, names)  # type: ignore[attr-defined]
     except PrometheusError as error:
         container.logger.warning("credentials.not_restored", error=str(error))
 
@@ -277,6 +281,8 @@ async def build_runtime(container: Container, definition: EmployeeDefinition) ->
                 audit=container.audit,
                 progress=container.progress,
                 cancellation=container.cancellations,
+                stop=container.stop_signal,
+                effects=container.effect_gate,
             ),
             verifier=Verifier(container.llm_for(*Verifier.routing())),
             tasks=container.task_repository,
@@ -440,6 +446,8 @@ def build_task_runner(container: Container) -> TaskRunner:
         progress=container.progress,
         workspaces=container.workspaces,
         traces=container.traces,
+        stop=container.stop_signal,
+        live=container.live_tasks,
     )
 
 
@@ -486,15 +494,25 @@ def build_service(
     arriving later, and whoever built the surface is the only one who knows
     which. Nothing else here differs between one interface and the next.
     """
+    runs = Runs(
+        runner=build_task_runner(container),
+        manager=build_manager(container),
+        tasks=container.task_repository,
+        objectives=container.objective_repository,
+        cancellations=container.cancellations,
+        approvals=waiter,
+        stop=container.stop_signal,
+    )
     return PrometheusService(
         ServiceDependencies(
-            runs=Runs(
-                runner=build_task_runner(container),
-                manager=build_manager(container),
-                tasks=container.task_repository,
-                objectives=container.objective_repository,
-                cancellations=container.cancellations,
-                approvals=waiter,
+            runs=runs,
+            emergency=build_emergency_stop(container, runs),
+            effects=container.effect_gate,
+            artifact_verifier=container.artifact_verifier,
+            backups=(
+                build_backups(container.settings)  # type: ignore[arg-type]
+                if container.settings.storage_backend == "sqlite"
+                else None
             ),
             activity=Activity(
                 container.progress,
@@ -559,6 +577,113 @@ def build_service(
             ),
             observability=_observability(container, scheduler_running),
         )
+    )
+
+
+def build_backups(settings: Settings):
+    """Backups of this installation, described from its settings alone.
+
+    Needs no container: a restore happens while no container is running, and a
+    backup of a store that cannot be opened is exactly when one is wanted.
+    """
+    from infrastructure.runtime.backup import Installation, LocalBackups
+    from infrastructure.runtime.migration import sqlite_path
+
+    def installation() -> Installation:
+        database = sqlite_path(settings.resolved_database_url)
+        if database is None:
+            raise PrometheusError(
+                "Backups cover the SQLite store. A PostgreSQL store is backed up with "
+                "pg_dump or the provider's snapshots."
+            )
+        declarations = {
+            name: path
+            for name, path in (
+                ("employees", settings.employees_dir),
+                ("workflows", settings.workflows_dir),
+                ("plugins", settings.plugins_dir),
+            )
+            if path is not None
+        }
+        return Installation(
+            data_dir=settings.data_dir,
+            database=database,
+            file_roots={"files": settings.resolved_file_root},
+            declaration_roots=declarations,
+            app_version=_app_version(),
+        )
+
+    return LocalBackups(
+        installation,
+        default_dir=settings.default_backup_dir,
+        master_key=lambda: master_key_for(settings),
+    )
+
+
+def restore_installation(
+    settings: Settings,
+    archive: Path,
+    *,
+    passphrase: str | None = None,
+    skip_secrets: bool = False,
+):
+    """Replace this installation with a backup. The caller must own the data directory."""
+    from infrastructure.runtime.backup import restore_backup
+
+    backups = build_backups(settings)
+    return restore_backup(
+        archive,
+        backups._installation(),
+        passphrase=passphrase,
+        skip_secrets=skip_secrets,
+        store_master_key=lambda key: store_master_key_for(settings, key),
+    )
+
+
+def _secret_vault(settings: Settings):
+    from infrastructure.secrets.keychain import KeychainVault
+
+    return KeychainVault(settings.data_dir) if settings.secret_backend == "keychain" else None
+
+
+def master_key_for(settings: Settings) -> bytes:
+    from infrastructure.secrets.encryption import resolve_master_key
+
+    return resolve_master_key(settings.data_dir, vault=_secret_vault(settings))
+
+
+def store_master_key_for(settings: Settings, key: bytes) -> None:
+    from infrastructure.secrets.encryption import store_master_key
+
+    store_master_key(settings.data_dir, key, vault=_secret_vault(settings))
+
+
+def _app_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("prometheus")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
+def build_emergency_stop(container: Container, runs: Runs) -> EmergencyStopControl:
+    """The brake and everything it has to reach, assembled once per interface."""
+    from infrastructure.tools.code import SandboxHalter
+
+    async def every_workspace():
+        return [item.id for item in await container.workspace_repository.list()]
+
+    return EmergencyStopControl(
+        brake=container.stop_signal,
+        runs=runs,
+        tasks=container.task_repository,
+        workspaces=every_workspace,
+        audit=container.audit,
+        leases=container.capability_leases,
+        integrations=container.integrations,
+        halters=(SandboxHalter(),) if container.settings.code_execution_enabled else (),
+        live=container.live_tasks,
     )
 
 
@@ -689,7 +814,7 @@ def build_harness(container: Container, *, baseline: bool = False) -> Validation
     # is an adapter, and the composition root is the one place allowed to hand
     # one to the runtime. The harness is given the same object as a contract it
     # can only open and close around a run.
-    approver = DeclaredApprover()
+    approver = DeclaredApprover(brake=container.stop_signal)
     container.use_approval_confirmer(approver.confirm)
     return ValidationHarness(
         scenarios=container.scenario_registry,

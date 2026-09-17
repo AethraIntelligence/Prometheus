@@ -259,7 +259,8 @@ class ValidationHarness:
         if self._approver is None:
             yield
             return
-        with self._approver.answering(frozenset(scenario.approve)):
+        stop_on = frozenset(scenario.stop_on_approval)
+        with self._approver.answering(frozenset(scenario.approve) | stop_on, stop_on):
             yield
 
 
@@ -424,6 +425,7 @@ class ValidationHarness:
         asked, answered = await self._approval_evidence(task_ids)
 
         present, text = self._files(scenario, before)
+        untouched = self._untouched(scenario, before)
         names, unaccepted, judged = await self._workforce_evidence(tasks)
         return Evidence(
             employee_names=names,
@@ -458,6 +460,7 @@ class ValidationHarness:
             tools_failed=failed,
             tools_denied=denied,
             files_present=present,
+            files_untouched=untouched,
             file_text=text,
             error_type=type(error).__name__ if error else "",
             error_message=str(error) if error else "",
@@ -559,6 +562,18 @@ class ValidationHarness:
             path = self._workspace / relative
             marks[relative] = path.stat().st_mtime if path.exists() else None
         return marks
+
+    def _untouched(
+        self, scenario: Scenario, before: dict[str, float | None]
+    ) -> tuple[str, ...]:
+        """Named files still exactly where the setup left them: there, and not modified."""
+        kept: list[str] = []
+        for relative in scenario.expect.files_unchanged:
+            path = self._workspace / relative
+            was = before.get(relative)
+            if was is not None and path.is_file() and path.stat().st_mtime == was:
+                kept.append(relative)
+        return tuple(kept)
 
     def _files(
         self, scenario: Scenario, before: dict[str, float | None]

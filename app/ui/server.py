@@ -59,7 +59,7 @@ from app.config.container import (
     prepare,
 )
 from app.config.settings import Settings, get_settings
-from app.ui.restart import RESTART, RestartSignal
+from app.ui.restart import RESTART, PendingRestore, RestartSignal
 from application.interface.activity import ActivityEvent
 from application.interface.contracts import (
     ApprovalChoice,
@@ -78,10 +78,12 @@ from domain.errors import (
     IntegrationNotFoundError,
     NotFoundError,
     PluginConfigurationError,
+    PluginVerificationError,
     PrometheusError,
     ProtectedWorkspaceError,
     StorageNotInitializedError,
     WorkspaceNotFoundError,
+    WorkStoppedError,
 )
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.approvals.waiting import WaitingConfirmer
@@ -382,6 +384,30 @@ class Decision(BaseModel):
     duration_seconds: float | None = Field(default=None, gt=0, le=31_536_000)
 
 
+class PrepareUpdate(BaseModel):
+    timeout_seconds: float = Field(default=30.0, ge=0, le=600)
+
+
+class BackupBody(BaseModel):
+    destination: str = ""
+    passphrase: str = ""
+
+
+class BackupCheck(BaseModel):
+    path: str
+    passphrase: str = ""
+
+
+class RestoreBody(BaseModel):
+    path: str
+    passphrase: str = ""
+    without_secrets: bool = False
+
+
+class EmergencyStopBody(BaseModel):
+    reason: str = ""
+
+
 class Cancellation(BaseModel):
     reason: str = ""
 
@@ -437,6 +463,12 @@ def create_app(
             scheduler_running=resolved.scheduler_enabled,
         )
         await app.state.service.recover()
+        # A stop set by `prometheus stop` in another terminal cannot reach this
+        # process's memory; the watcher notices the record and runs the same
+        # sweep. The executor reads the record itself before every effect, so
+        # the watch interval bounds cleanup, not safety.
+        stop_watching = asyncio.Event()
+        watcher = asyncio.create_task(app.state.service.watch_stop(stop_watching))
         # Started on the same loop that serves the requests, for the same
         # reason a task is: one process, one database, and a proactive
         # objective that is watched in the trace exactly like one somebody
@@ -450,6 +482,7 @@ def create_app(
 
             scheduler = Scheduler(
                 manager=build_manager(container),
+                stop=container.stop_signal,
                 schedules=container.schedule_repository,
                 events=container.event_log,
                 tick_seconds=resolved.scheduler_tick_seconds,
@@ -472,6 +505,8 @@ def create_app(
             yield
         finally:
             stop_scheduler.set()
+            stop_watching.set()
+            await watcher
             if scheduler_task is not None:
                 # Awaited rather than cancelled: a firing that is halfway
                 # through an objective should finish the tick it is in, and the
@@ -536,6 +571,96 @@ def _routes(app: FastAPI) -> None:
         asyncio.get_running_loop().call_later(0.3, signal.request)
         return {"restarting": True, "stopping": stopping, "started_at": signal.started_at}
 
+    @app.get("/api/runtime/stop")
+    async def stop_state(request: Request) -> dict[str, Any]:
+        return _service(request).stop_state()
+
+    @app.post("/api/runtime/stop")
+    async def emergency_stop(request: Request, body: EmergencyStopBody) -> dict[str, Any]:
+        """Stop all work on this machine until a person resumes it.
+
+        Answered after the sweep, so the reply says what was reached. The brake
+        itself is the first thing written, before any of it.
+        """
+        try:
+            return await _service(request).emergency_stop(body.reason)
+        except PrometheusError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/runtime/resume")
+    async def release_emergency_stop(request: Request) -> dict[str, Any]:
+        try:
+            return await _service(request).resume_work()
+        except PrometheusError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get("/api/runtime/update-readiness")
+    async def update_readiness(request: Request) -> dict[str, Any]:
+        return _service(request).update_readiness()
+
+    @app.post("/api/runtime/prepare-update")
+    async def prepare_update(request: Request, body: PrepareUpdate) -> dict[str, Any]:
+        return await _service(request).prepare_update(body.timeout_seconds)
+
+    @app.delete("/api/runtime/prepare-update")
+    async def cancel_update(request: Request) -> dict[str, Any]:
+        return _service(request).cancel_update()
+
+    @app.post("/api/backups", status_code=201)
+    async def create_backup(request: Request, body: BackupBody) -> dict[str, Any]:
+        try:
+            return await _service(request).create_backup(
+                body.destination or None, passphrase=body.passphrase or None
+            )
+        except PrometheusError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/backups/verify")
+    async def verify_backup(request: Request, body: BackupCheck) -> dict[str, Any]:
+        try:
+            return await _service(request).verify_backup(
+                body.path, passphrase=body.passphrase or None
+            )
+        except PrometheusError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/runtime/restore", status_code=202)
+    async def restore_backup(request: Request, body: RestoreBody) -> dict[str, Any]:
+        """Check a backup now, and put it in place when this process stops.
+
+        Checked here, completely - passphrase included - so a person learns a
+        backup is unusable before the runtime goes away, not after.
+        """
+        signal: RestartSignal = request.app.state.restart
+        if not signal.available:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This runtime cannot restart itself, so it cannot restore a backup. "
+                    "Stop it and run `prometheus restore`."
+                ),
+            )
+        try:
+            checked = await _service(request).verify_backup(
+                body.path, passphrase=body.passphrase or None
+            )
+        except PrometheusError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        if checked["includes_secrets"] and not body.passphrase and not body.without_secrets:
+            raise HTTPException(
+                status_code=400,
+                detail="This backup includes sealed secrets: give its passphrase, or restore "
+                "without them.",
+            )
+        signal.restore = PendingRestore(
+            archive=Path(body.path).expanduser(),
+            passphrase=body.passphrase or None,
+            skip_secrets=body.without_secrets,
+        )
+        stopping = _service(request).carrying()
+        asyncio.get_running_loop().call_later(0.3, signal.request)
+        return {"restoring": True, "stopping": stopping, "backup": checked}
+
     @app.get("/api/employees")
     async def employees(request: Request) -> dict[str, Any]:
         return {"employees": _service(request).list_employees()}
@@ -598,7 +723,7 @@ def _routes(app: FastAPI) -> None:
     @app.post("/api/tasks", status_code=201)
     async def start(request: Request, body: NewTask) -> dict[str, Any]:
         try:
-            return await _service(request).start_task(body.goal, body.employee)
+            return await _guarded(_service(request).start_task(body.goal, body.employee))
         except PrometheusError as error:
             # An unknown employee is the user asking for something that does not
             # exist, not a server fault: 400, with the reason said plainly.
@@ -1233,6 +1358,10 @@ def _routes(app: FastAPI) -> None:
             )
         except PluginConfigurationError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
+        except PluginVerificationError as error:
+            # Not the request's fault: what the registry serves is not what was
+            # reviewed, or could not be asked. Refused, and said as a conflict.
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except DuplicateIntegrationError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except NotFoundError as error:
@@ -1542,6 +1671,10 @@ async def _guarded(awaitable):
     """Turn "there is no schema yet" into an answer instead of a stack trace."""
     try:
         return await awaitable
+    except WorkStoppedError as error:
+        # Not the request's fault and not the server's: the machine is in a
+        # state that refuses it, which a person changes by resuming work.
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except StorageNotInitializedError as error:
         raise HTTPException(
             status_code=503,

@@ -45,6 +45,7 @@ class LocalCredentialStore:
     """
 
     def __init__(self, path: Path, *, fallback: SecretResolver | None = None) -> None:
+        self.path = path
         self._path = path
         self._fallback = fallback
 

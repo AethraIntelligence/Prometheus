@@ -193,6 +193,47 @@ class DockerSandbox:
         )
 
 
+class SandboxHalter:
+    """Implements `domain.safety.emergency.Halter` for the code sandbox.
+
+    A program running in a container has no step boundary for a cancellation to
+    reach, so the stop kills the containers this platform started - found by the
+    name prefix every one of them is given, and never any other container on the
+    machine. Nothing needs resuming: the next call starts a new container.
+    """
+
+    name = "sandbox"
+
+    def __init__(self, executable: str | None = None) -> None:
+        self._executable = executable if executable is not None else shutil.which("docker") or ""
+
+    async def halt(self) -> int:
+        if not self._executable:
+            return 0
+        listed = await asyncio.to_thread(
+            subprocess.run,
+            [self._executable, "ps", "-q", "--filter", "name=^prometheus-code-"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        ids = [line for line in listed.stdout.split() if line]
+        if ids:
+            await asyncio.to_thread(
+                subprocess.run,
+                [self._executable, "kill", *ids],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                check=False,
+            )
+        return len(ids)
+
+    async def resume(self) -> None:
+        return None
+
+
 def sandbox_backend(
     *, memory_mb: int = DEFAULT_MEMORY_MB, disk_mb: int = DEFAULT_DISK_MB
 ) -> SandboxBackend:

@@ -126,11 +126,17 @@ class Expectations:
     #: COMPLETED, the workflow COMPLETED. Off for a scenario whose whole point
     #: is that the platform refuses.
     must_succeed: bool = True
+    #: Files that must still be exactly as the scenario's setup left them
+    #: (Phase 13). The counterpart of `files_exist`: a refused overwrite leaves
+    #: nothing to find in the output, and the evidence is the file not moving.
+    files_unchanged: tuple[str, ...] = ()
 
     @property
     def named_files(self) -> tuple[str, ...]:
         """Every path this cares about, so a runner knows what to read."""
-        return tuple(dict.fromkeys((*self.files_exist, *self.file_contains)))
+        return tuple(
+            dict.fromkeys((*self.files_exist, *self.file_contains, *self.files_unchanged))
+        )
 
     @property
     def is_empty(self) -> bool:
@@ -139,6 +145,7 @@ class Expectations:
             or self.output_excludes
             or self.files_exist
             or self.file_contains
+            or self.files_unchanged
             or self.tools_denied
             or self.tools_forbidden
             or self.min_employees is not None
@@ -195,6 +202,11 @@ class Scenario:
     #: alternative of leaving it unattended made "write the file you were asked
     #: for" impossible to pass and filled the report with NEEDED_APPROVAL.
     approve: tuple[str, ...] = ()
+    #: Tools whose approval arrives in the same instant somebody pulls the
+    #: emergency stop (Phase 13): the declared person answers yes, and the stop
+    #: is engaged as they do. What the scenario then measures is that the effect
+    #: did not happen anyway - the approval/effect boundary, on a real model.
+    stop_on_approval: tuple[str, ...] = ()
     #: Requests asked first, in order, in the same thread as `request`. Each is
     #: carried to an answer and none is measured: they are the history the
     #: measured request depends on. A thread is what a long session is, and a

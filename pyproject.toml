@@ -40,6 +40,10 @@ dependencies = [
     "markdown-it-py>=3.0",  # writing one: Markdown to the page Chromium prints
     "asyncpg>=0.30",  # the PostgreSQL backend (ADR 0017)
     "pyautogui>=0.9.54",  # the desktop surface, off by a flag
+    # The master key's home on a desktop (Phase 13): the macOS Keychain, the
+    # Windows Credential Locker or the Secret Service. A server says its key in
+    # the environment, and a headless machine opts into the file explicitly.
+    "keyring>=25.5",
 ]
 
 [project.urls]
@@ -56,6 +60,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.8",
     "import-linter>=2.1",
+    "mypy>=1.13",
+    "hypothesis>=6.120",
+    "pytest-cov>=6.0",
 ]
 
 [build-system]
@@ -69,6 +76,18 @@ packages = ["app", "domain", "application", "infrastructure"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-q"
+
+# Phase 13. Type checking against a recorded baseline: the errors that existed
+# when it was switched on are counted per file and code in
+# `typing-baseline.json`, and `scripts/check_types.py` fails on any new one. The
+# first run found `prometheus employees` crashing on an attribute that no
+# employee ever had.
+[tool.mypy]
+python_version = "3.12"
+files = ["app", "application", "domain", "infrastructure"]
+ignore_missing_imports = true
+warn_unused_ignores = false
+show_error_codes = true
 
 [tool.ruff]
 target-version = "py312"

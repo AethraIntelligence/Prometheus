@@ -1,0 +1,22 @@
+# The model catalog the release drill runs under. One entry, served by
+# `scripted_model.py` on loopback, able to do every kind of work the drill asks
+# for. It exists so an installed build can be driven end to end on a machine
+# with no provider key and no model, and costs nothing because nothing is called.
+
+[models.drill]
+provider = "local"
+model = "drill"
+privacy = "LOCAL"
+capabilities = ["TEXT_REASONING", "TOOL_CALLING", "STRUCTURED_OUTPUT", "LONG_CONTEXT", "CODE"]
+context_tokens = 32768
+input_cost_per_1k_usd = 0.0
+output_cost_per_1k_usd = 0.0
+quality = 0.9
+
+[defaults]
+planning = "drill"
+execution = "drill"
+verification = "drill"
+synthesis = "drill"
+extraction = "drill"
+conversation = "drill"

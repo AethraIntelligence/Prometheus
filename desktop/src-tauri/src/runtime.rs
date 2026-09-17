@@ -17,15 +17,21 @@
 //! started it. Killing an engine somebody else launched would take their
 //! running work down with a window they merely closed.
 //!
-//! **The command is configurable and defaults to the repository.** A packaged
-//! application will point `PROMETHEUS_RUNTIME_CMD` at an installed interpreter;
-//! during development the default is what a developer already has working.
+//! **Which runtime is started is decided in one order.** `PROMETHEUS_RUNTIME_CMD`
+//! when somebody set it; otherwise the runtime bundled inside the application
+//! (`resources/runtime`: a relocatable Python with the platform's locked
+//! dependencies and its source), which is what an installed application runs;
+//! otherwise `uv run prometheus serve`, which is what a developer has working.
+//! A packaged build that cannot find its own runtime says so rather than
+//! quietly reaching for a `uv` the person never installed.
 
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use tauri::Manager;
 
 /// Where the runtime listens. The same default as `Settings.ui_host`/`ui_port`.
 pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8765";
@@ -74,7 +80,7 @@ impl RuntimeHandle {
     /// it said no, and a second engine was started that could only fail with
     /// "address already in use". Remembering our own child is what makes this
     /// idempotent.
-    pub fn ensure(&self, base_url: &str) -> RuntimeStatus {
+    pub fn ensure(&self, app: &tauri::AppHandle, base_url: &str) -> RuntimeStatus {
         let started_here = self.child.lock().unwrap().is_some();
         if started_here || answering(base_url) {
             return RuntimeStatus {
@@ -83,7 +89,7 @@ impl RuntimeHandle {
                 ready: answering(base_url),
             };
         }
-        let started = self.spawn();
+        let started = self.spawn(app);
         RuntimeStatus {
             base_url: base_url.to_string(),
             started_here: started,
@@ -91,18 +97,14 @@ impl RuntimeHandle {
         }
     }
 
-    fn spawn(&self) -> bool {
-        let command = std::env::var("PROMETHEUS_RUNTIME_CMD")
-            .unwrap_or_else(|_| "uv run prometheus serve".to_string());
-        let mut parts = command.split_whitespace();
-        let Some(program) = parts.next() else {
+    fn spawn(&self, app: &tauri::AppHandle) -> bool {
+        let Some(mut command) = runtime_command(app) else {
+            eprintln!(
+                "prometheus: this build has no runtime inside it and PROMETHEUS_RUNTIME_CMD is not set"
+            );
             return false;
         };
-        let mut command = Command::new(program);
-        command
-            .args(parts)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
         // Its own process group, so that stopping it reaches the process that
         // actually serves. The default command is `uv run`, which starts the
         // runtime as a child of its own: killing `uv` left that child running,
@@ -138,6 +140,53 @@ impl RuntimeHandle {
             let _ = child.wait();
         }
     }
+}
+
+/// The command that starts the runtime, in the order the module comment gives.
+fn runtime_command(app: &tauri::AppHandle) -> Option<Command> {
+    if let Ok(configured) = std::env::var("PROMETHEUS_RUNTIME_CMD") {
+        let mut parts = configured.split_whitespace();
+        let mut command = Command::new(parts.next()?);
+        command.args(parts);
+        return Some(command);
+    }
+    if let Ok(resources) = app.path().resource_dir() {
+        if let Some(command) = bundled(&resources.join("runtime")) {
+            return Some(command);
+        }
+    }
+    if cfg!(debug_assertions) {
+        let mut command = Command::new("uv");
+        command.args(["run", "prometheus", "serve"]);
+        return Some(command);
+    }
+    None
+}
+
+/// The runtime shipped inside the application, if this build has one.
+///
+/// Started as `python -m app.cli.main serve` from the bundled source root, with
+/// the person's own Python environment kept out: no user site-packages, no
+/// inherited `PYTHONPATH`, no `PYTHONHOME` pointing at somebody else's install.
+fn bundled(root: &Path) -> Option<Command> {
+    let python: PathBuf = if cfg!(windows) {
+        root.join("python").join("python.exe")
+    } else {
+        root.join("python").join("bin").join("python3")
+    };
+    let source = root.join("app-root");
+    if !python.is_file() || !source.join("app").is_dir() {
+        return None;
+    }
+    let mut command = Command::new(python);
+    command
+        .args(["-m", "app.cli.main", "serve"])
+        .current_dir(&source)
+        .env_remove("PYTHONHOME")
+        .env("PYTHONPATH", &source)
+        .env("PYTHONNOUSERSITE", "1")
+        .env("PYTHONDONTWRITEBYTECODE", "1");
+    Some(command)
 }
 
 /// Ask the whole group to stop, then insist.
@@ -180,4 +229,42 @@ fn answering(base_url: &str) -> bool {
         std::time::Duration::from_millis(250),
     )
     .is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundled;
+
+    #[test]
+    fn a_build_without_a_runtime_inside_has_none() {
+        let root = std::env::temp_dir().join(format!("prometheus-none-{}", std::process::id()));
+        assert!(bundled(&root).is_none());
+    }
+
+    #[test]
+    fn a_bundled_runtime_is_started_from_its_own_source_with_the_user_environment_kept_out() {
+        let root = std::env::temp_dir().join(format!("prometheus-bundle-{}", std::process::id()));
+        let python = if cfg!(windows) {
+            root.join("python").join("python.exe")
+        } else {
+            root.join("python").join("bin").join("python3")
+        };
+        std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+        std::fs::write(&python, b"").unwrap();
+        std::fs::create_dir_all(root.join("app-root").join("app")).unwrap();
+
+        let command = bundled(&root).expect("a complete bundle is used");
+
+        assert_eq!(command.get_program(), python.as_os_str());
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, ["-m", "app.cli.main", "serve"]);
+        let environment: Vec<_> = command.get_envs().collect();
+        assert!(environment
+            .iter()
+            .any(|(key, value)| *key == "PYTHONNOUSERSITE" && value.is_some()));
+        assert!(environment
+            .iter()
+            .any(|(key, value)| *key == "PYTHONHOME" && value.is_none()));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

@@ -9,7 +9,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- figma-developer-mcp
+- 'figma-developer-mcp@0.13.2'
 - --stdio
 settings:
 - key: FIGMA_API_KEY

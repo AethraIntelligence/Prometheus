@@ -22,6 +22,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from domain.approvals.models import ApprovalRequest
+from domain.safety.emergency import EmergencyBrake
 from infrastructure.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -30,11 +31,20 @@ log = get_logger(__name__)
 class DeclaredApprover:
     """Implements `domain.validation.protocols.Approver`."""
 
-    def __init__(self) -> None:
+    def __init__(self, brake: EmergencyBrake | None = None) -> None:
         self._allowed: frozenset[str] = frozenset()
+        self._stop_on: frozenset[str] = frozenset()
+        self._brake = brake
+        self._engaged_here = False
 
     def confirm(self, request: ApprovalRequest) -> bool:
         """Answer by tool name, never by reading the rendered action line."""
+        if request.tool in self._stop_on and self._brake is not None:
+            # A second person pulls the brake as the first one says yes.
+            self._brake.engage(
+                f"validation: stopped while {request.tool} was being approved", by="validation"
+            )
+            self._engaged_here = True
         answer = request.tool in self._allowed
         log.info(
             "validation.approval_answered",
@@ -45,10 +55,16 @@ class DeclaredApprover:
         return answer
 
     @contextmanager
-    def answering(self, allowed: frozenset[str]) -> Iterator[None]:
-        previous = self._allowed
-        self._allowed = allowed
+    def answering(
+        self, allowed: frozenset[str], stop_on: frozenset[str] = frozenset()
+    ) -> Iterator[None]:
+        previous, previous_stop = self._allowed, self._stop_on
+        self._allowed, self._stop_on = allowed, stop_on
         try:
             yield
         finally:
-            self._allowed = previous
+            self._allowed, self._stop_on = previous, previous_stop
+            # Released only if this run pulled it: a stop a person set is theirs.
+            if self._engaged_here and self._brake is not None:
+                self._brake.release()
+            self._engaged_here = False

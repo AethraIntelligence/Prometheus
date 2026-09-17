@@ -10,7 +10,7 @@ popular: true
 runtime: PYTHON
 command: uvx
 args:
-- duckduckgo-mcp-server
+- 'duckduckgo-mcp-server@0.7.0'
 capabilities:
 - WEB_BROWSING
 effects:

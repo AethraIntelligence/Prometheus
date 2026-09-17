@@ -26,6 +26,7 @@ from domain.integrations.catalog import (
 from domain.policies.risk import Effect
 from infrastructure.integrations.yaml_catalog import YamlPluginCatalog, load
 from tests.fakes.employees import definition
+from tests.fakes.plugins import lock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -211,7 +212,71 @@ def test_a_plugin_whose_id_is_not_its_directory_is_refused(tmp_path: Path) -> No
 def test_a_broken_plugin_is_skipped_at_runtime_and_named_in_strict_mode(tmp_path: Path) -> None:
     write(tmp_path / "sample", MINIMAL)
     write(tmp_path / "broken", "id: broken\nname: Broken\n")
+    lock(tmp_path)
 
     assert [plugin.id for plugin in YamlPluginCatalog(tmp_path).list()] == ["sample"]
     with pytest.raises(ConfigurationError, match="broken"):
         YamlPluginCatalog(tmp_path, strict=True).list()
+
+
+# --- Provenance (Phase 13) ------------------------------------------------------------
+
+
+def test_every_shipped_plugin_is_locked_and_runs_its_pinned_artifact() -> None:
+    """Strict loading already refuses an unlocked or changed one; this says what that means."""
+    plugins = YamlPluginCatalog(REPO_ROOT / "plugins", strict=True).list()
+
+    assert plugins
+    for plugin in plugins:
+        assert plugin.artifact is not None, f"{plugin.id} runs something no lock describes"
+        assert plugin.artifact.reference in plugin.args
+        version = plugin.artifact.version
+        assert version and version not in {"latest", "*"}, plugin.id
+
+
+def test_a_plugin_edited_after_it_was_locked_is_not_offered(tmp_path: Path) -> None:
+    path = write(tmp_path / "sample", MINIMAL)
+    lock(tmp_path)
+    path.write_text(MINIMAL.replace("sample-server", "someone-elses-server"))
+
+    assert YamlPluginCatalog(tmp_path).list() == []
+    with pytest.raises(ConfigurationError, match="changed since it was locked"):
+        YamlPluginCatalog(tmp_path, strict=True).list()
+
+
+def test_a_plugin_added_without_a_lock_entry_is_not_offered(tmp_path: Path) -> None:
+    write(tmp_path / "sample", MINIMAL)
+    lock(tmp_path)
+    write(tmp_path / "other", MINIMAL.replace("id: sample", "id: other"))
+
+    assert [plugin.id for plugin in YamlPluginCatalog(tmp_path).list()] == ["sample"]
+
+
+def test_a_catalog_with_no_lock_offers_nothing(tmp_path: Path) -> None:
+    write(tmp_path / "sample", MINIMAL)
+
+    assert YamlPluginCatalog(tmp_path).list() == []
+
+
+def test_arguments_that_do_not_run_the_locked_version_are_refused(tmp_path: Path) -> None:
+    from domain.integrations.provenance import ArtifactKind, PluginArtifact
+
+    write(tmp_path / "sample", MINIMAL)
+    reviewed = PluginArtifact(ArtifactKind.PYPI, "sample-server", "1.0.0", ("a" * 64,))
+    lock(tmp_path, {"sample": reviewed})
+
+    with pytest.raises(ConfigurationError, match="does not run the locked"):
+        YamlPluginCatalog(tmp_path, strict=True).list()
+
+
+def test_the_published_digest_must_still_match_the_lock() -> None:
+    from domain.integrations.provenance import ArtifactKind, PluginArtifact, same_published
+
+    npm = PluginArtifact(ArtifactKind.NPM, "tool", "1.0.0", ("sha512-reviewed",))
+    pypi = PluginArtifact(ArtifactKind.PYPI, "tool", "1.0.0", ("a" * 64, "b" * 64))
+
+    assert same_published(npm, ("sha512-reviewed",))
+    assert not same_published(npm, ("sha512-swapped",))
+    assert same_published(pypi, ("a" * 64, "b" * 64, "c" * 64)), "a new wheel may be added"
+    assert not same_published(pypi, ("a" * 64, "d" * 64)), "a published file may not change"
+    assert not same_published(pypi, ())

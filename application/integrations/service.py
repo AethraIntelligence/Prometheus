@@ -376,6 +376,18 @@ class IntegrationService:
         await self._changed()
         return restored
 
+    async def disconnect_all(self) -> int:
+        """Close every live connection and take its tools away. How many there were.
+
+        The emergency stop's half of this service: `restore` is the other, and
+        is how a released stop gets the same connections back.
+        """
+        live = list(self._live.values())
+        for connection in live:
+            await self._disconnect(connection.integration)
+        await self._changed()
+        return len(live)
+
     async def aclose(self) -> None:
         """Close every server this process opened, and none that it did not."""
         for connection in list(self._live.values()):

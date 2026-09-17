@@ -10,7 +10,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- '@sentry/mcp-server'
+- '@sentry/mcp-server@0.39.0'
 settings:
 - key: SENTRY_ACCESS_TOKEN
   label: User auth token

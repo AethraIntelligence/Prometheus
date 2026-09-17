@@ -74,6 +74,18 @@ class SqlTaskRepository:
             )
             return [row_to_task(row) for row in rows]
 
+    async def list_in_status(
+        self, status, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    ) -> list[Task]:
+        async with self._session() as session:
+            rows = await session.scalars(
+                select(TaskRow)
+                .where(TaskRow.workspace_id == str(workspace_id))
+                .where(TaskRow.status == status.value)
+                .order_by(TaskRow.created_at)
+            )
+            return [row_to_task(row) for row in rows]
+
     async def list_recent(
         self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
     ) -> list[Task]:

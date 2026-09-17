@@ -63,4 +63,6 @@ class Approver(Protocol):
     the next scenario, which is the one mistake a validation suite must not make.
     """
 
-    def answering(self, allowed: frozenset[str]) -> AbstractContextManager[None]: ...
+    def answering(
+        self, allowed: frozenset[str], stop_on: frozenset[str] = frozenset()
+    ) -> AbstractContextManager[None]: ...

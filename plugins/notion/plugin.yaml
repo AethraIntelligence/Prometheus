@@ -11,7 +11,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- '@notionhq/notion-mcp-server'
+- '@notionhq/notion-mcp-server@2.5.1'
 settings:
 - key: NOTION_TOKEN
   label: Integration token

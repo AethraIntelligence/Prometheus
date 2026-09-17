@@ -1,0 +1,292 @@
+# Phase 13: a release is built on each supported OS's own runner, signed,
+# verified, installed and driven through the release drill before anything is
+# published. Nothing here is cross-compiled, and nothing is published by a run
+# that lacks the signing identities: the preflight job fails first, by name.
+#
+# Required repository secrets (see docs/release.md):
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD - updater signing
+#   PROMETHEUS_UPDATER_PUBKEY    - the matching public key, embedded in every build
+#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+#   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID                      - signing, notarization
+#   WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD             - Authenticode
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, without the v (a dry run publishes nothing)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        name: Version and channel
+        run: |
+          version="${VERSION#v}"
+          python3 - "$version" <<'EOF'
+          import sys
+          sys.path.insert(0, "scripts/release")
+          from update_manifest import channel_of
+          print(channel_of(sys.argv[1]))
+          EOF
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "channel=beta" >> "$GITHUB_OUTPUT";; *) echo "channel=stable" >> "$GITHUB_OUTPUT";; esac
+          grep -q "\"version\": \"$version\"" desktop/src-tauri/tauri.conf.json \
+            || { echo "tauri.conf.json does not say $version"; exit 1; }
+
+      - name: Signing identities are present
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PROMETHEUS_UPDATER_PUBKEY: ${{ secrets.PROMETHEUS_UPDATER_PUBKEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          missing=""
+          for name in TAURI_SIGNING_PRIVATE_KEY PROMETHEUS_UPDATER_PUBKEY APPLE_CERTIFICATE APPLE_ID APPLE_TEAM_ID WINDOWS_CERTIFICATE; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "Refusing to build a release without:$missing"
+            exit 1
+          fi
+
+  checks:
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
+
+  sbom:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Software bill of materials
+        run: |
+          mkdir -p sbom
+          uv export --frozen --no-dev --no-emit-project --format requirements.txt -o requirements.txt
+          uvx --from cyclonedx-bom cyclonedx-py requirements requirements.txt --output-file sbom/python.cdx.json
+          (cd desktop && npm ci && npx --yes @cyclonedx/cyclonedx-npm --omit dev --output-file ../sbom/window.cdx.json)
+          cargo install cargo-cyclonedx --locked
+          (cd desktop/src-tauri && cargo cyclonedx --format json && mv *.cdx.json ../../sbom/)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+
+  build:
+    needs: [preflight, checks, sbom]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: darwin-aarch64
+          - os: macos-13
+            target: darwin-x86_64
+          - os: windows-2022
+            target: windows-x86_64
+          - os: ubuntu-22.04
+            target: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    env:
+      PROMETHEUS_UPDATER_ENABLED: "1"
+      PROMETHEUS_UPDATER_PUBKEY: ${{ secrets.PROMETHEUS_UPDATER_PUBKEY }}
+      PROMETHEUS_UPDATE_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: System libraries for the webview
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf xvfb
+
+      - name: Windows code-signing certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          [IO.File]::WriteAllBytes("certificate.pfx", $bytes)
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $imported = Import-PfxCertificate -FilePath certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item certificate.pfx
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($imported.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Bundled runtime
+        run: uv run --locked python scripts/release/bundle_runtime.py
+
+      - name: What the runtime ships is licensed to ship
+        shell: bash
+        run: |
+          python_bin=desktop/src-tauri/runtime-dist/python/bin/python3
+          [ -f "$python_bin" ] || python_bin=desktop/src-tauri/runtime-dist/python/python.exe
+          uv run --locked python scripts/release/check_licenses.py "$python_bin"
+
+      - name: Release configuration
+        run: uv run --locked python scripts/release/render_tauri_config.py
+
+      - name: Build, sign and notarize
+        working-directory: desktop
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          npm ci
+          npm run tauri build -- --config src-tauri/tauri.release.conf.json
+
+      - name: Collect packages
+        shell: bash
+        run: |
+          mkdir -p out/${{ matrix.target }}
+          bundle=desktop/src-tauri/target/release/bundle
+          find "$bundle" -maxdepth 2 -type f \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \
+            -o -name "*-setup.exe" -o -name "*-setup.exe.sig" -o -name "*.deb" -o -name "*.rpm" \
+            -o -name "*.AppImage" -o -name "*.AppImage.sig" \) -exec cp {} out/${{ matrix.target }}/ \;
+          ls -la out/${{ matrix.target }}
+
+      # Every signature is checked on the runner before anything leaves it.
+      - name: Signatures verify before publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          for signature in out/${{ matrix.target }}/*.sig; do
+            uv run --locked python scripts/release/verify_minisign.py "${signature%.sig}" "$signature" --pubkey "$PROMETHEUS_UPDATER_PUBKEY"
+            # A corrupted and a truncated copy must both be refused.
+            cp "${signature%.sig}" corrupted && printf 'x' >> corrupted
+            ! uv run --locked python scripts/release/verify_minisign.py corrupted "$signature" --pubkey "$PROMETHEUS_UPDATER_PUBKEY"
+            head -c 1024 "${signature%.sig}" > truncated
+            ! uv run --locked python scripts/release/verify_minisign.py truncated "$signature" --pubkey "$PROMETHEUS_UPDATER_PUBKEY"
+          done
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            app=desktop/src-tauri/target/release/bundle/macos/Prometheus.app
+            codesign --verify --deep --strict --verbose=2 "$app"
+            spctl --assess --type execute --verbose "$app"
+            xcrun stapler validate "$app"
+          fi
+
+      - name: Authenticode signature verifies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem out/${{ matrix.target }}/*-setup.exe | ForEach-Object {
+            $status = (Get-AuthenticodeSignature $_.FullName).Status
+            if ($status -ne "Valid") { throw "$($_.Name): signature $status" }
+          }
+
+      # The installed artifact, not a development server, goes through the drill.
+      - name: Install and run the release drill
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            macOS)
+              mount=$(hdiutil attach out/${{ matrix.target }}/*.dmg -nobrowse | tail -1 | cut -f3-)
+              mkdir -p installed && cp -R "$mount/Prometheus.app" installed/
+              hdiutil detach "$mount"
+              launch="'$PWD/installed/Prometheus.app/Contents/MacOS/prometheus-desktop'"
+              ;;
+            Windows)
+              installer=$(ls out/${{ matrix.target }}/*-setup.exe)
+              "$installer" //S
+              launch="'$LOCALAPPDATA/Prometheus/prometheus-desktop.exe'"
+              ;;
+            Linux)
+              sudo apt-get install -y ./out/${{ matrix.target }}/*.deb
+              launch="xvfb-run -a /usr/bin/prometheus-desktop"
+              ;;
+          esac
+          uv run --locked python scripts/release/drill.py --launch "$launch" \
+            --update-launch "$launch" \
+            --evidence evidence/${{ matrix.target }}-drill.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-${{ matrix.target }}
+          path: evidence/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.target }}
+          path: out/
+
+  publish:
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: dist/sbom
+
+      - name: Update manifest and checksums, from verified signatures only
+        env:
+          PROMETHEUS_UPDATER_PUBKEY: ${{ secrets.PROMETHEUS_UPDATER_PUBKEY }}
+        run: |
+          uv run --locked python scripts/release/update_manifest.py \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --artifacts dist \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/v${{ needs.preflight.outputs.version }}" \
+            --pubkey "$PROMETHEUS_UPDATER_PUBKEY" \
+            --out dist
+
+      # A draft: a person reads the evidence and publishes it. A beta is marked
+      # a pre-release, so the stable channel's `releases/latest` never serves it.
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          [ "${{ needs.preflight.outputs.channel }}" = "stable" ] || prerelease="--prerelease"
+          gh release create "v${{ needs.preflight.outputs.version }}" --draft $prerelease \
+            --title "Prometheus ${{ needs.preflight.outputs.version }}" \
+            --notes "See docs/release.md for how this build was verified." \
+            $(find dist -type f)

@@ -110,6 +110,15 @@ class Settings(BaseSettings):
     #: puts the whole store on a server instead. `prometheus storage migrate --to`
     #: is how the data follows.
     database_url: str | None = None
+    #: PostgreSQL only. A server is backed up by whoever runs it, so an upgrade
+    #: there waits until somebody says a backup exists. SQLite is backed up by
+    #: the runtime itself before every upgrade.
+    postgres_backup_acknowledged: bool = False
+    #: Where the key that encrypts stored credentials lives when
+    #: `PROMETHEUS_MASTER_KEY` does not say. `keychain` is the operating system's
+    #: credential vault and the only choice a desktop should make; `file` is a
+    #: 0600 file beside the data, for a headless machine that chose it knowingly.
+    secret_backend: Literal["keychain", "file"] = "keychain"
 
     # --- Provider access -----------------------------------------------------
     llm_api_key: str | None = None
@@ -314,6 +323,18 @@ class Settings(BaseSettings):
         and an isolation the file tools do not enforce is not one.
         """
         return self.data_dir / "workspaces"
+
+    @property
+    def default_backup_dir(self) -> Path:
+        """Where a backup goes when nobody says: outside the data it protects.
+
+        A backup inside the data directory is lost with it. The default
+        installation keeps them in the person's home; one pointed elsewhere keeps
+        them beside its data directory, so a test never writes into a home.
+        """
+        if self.data_dir == _default_data_dir():
+            return Path.home() / "Prometheus Backups"
+        return self.data_dir.parent / f"{self.data_dir.name}-backups"
 
     @property
     def active_workspace_path(self) -> Path:

@@ -36,6 +36,7 @@ terminal status underneath a loop that is still working.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from uuid import UUID
 
 import structlog
@@ -43,9 +44,10 @@ import structlog
 from application.prometheus.manager import PrometheusManager
 from application.task_runner import TaskRunner
 from domain.approvals.protocols import ApprovalWaiter
-from domain.errors import WorkControlError
+from domain.errors import InvalidStateTransitionError, WorkControlError, WorkStoppedError
 from domain.policies.models import ActorKind
-from domain.tasks.cancellation import Cancellations
+from domain.safety.emergency import EmergencyStop
+from domain.tasks.cancellation import Cancellations, LiveTasks
 from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Task, TaskResult, TaskStatus
 from domain.workforce import directions as carried
@@ -63,6 +65,16 @@ log = structlog.get_logger(__name__)
 SHUTDOWN_GRACE_SECONDS = 10.0
 
 
+@dataclass(frozen=True, slots=True)
+class HaltedWork:
+    """What one sweep of the emergency stop reached in this process and the store."""
+
+    objectives_cancelled: int = 0
+    tasks_signalled: int = 0
+    tasks_closed: int = 0
+    approvals_released: int = 0
+
+
 class Runs:
     """Starts tasks in the background and keeps track of the live ones."""
 
@@ -75,6 +87,7 @@ class Runs:
         objectives: ObjectiveRepository,
         cancellations: Cancellations,
         approvals: ApprovalWaiter,
+        stop: EmergencyStop | None = None,
     ) -> None:
         self._runner = runner
         self._manager = manager
@@ -82,6 +95,7 @@ class Runs:
         self._objectives_store = objectives
         self._cancellations = cancellations
         self._approvals = approvals
+        self._stop = stop
         self._running: dict[UUID, asyncio.Task[Task]] = {}
         self._objectives: dict[UUID, asyncio.Task[ObjectiveResult | None]] = {}
 
@@ -89,6 +103,7 @@ class Runs:
 
     async def start(self, goal: str, employee_name: str) -> Task:
         """Record the task, schedule the work, and hand the task straight back."""
+        self._refuse_if_stopped()
         task, assignment = await self._runner.submit(goal, employee_name)
         run = asyncio.create_task(
             self._runner.run(task, assignment), name=f"prometheus-task-{task.id}"
@@ -112,6 +127,7 @@ class Runs:
         was invisible while there was one workspace and would have made
         switching between two look like it worked (§15.2).
         """
+        self._refuse_if_stopped()
         # Received under the directions too, so the record says what they were.
         with carried.given(directions):
             objective = await self._manager.receive(
@@ -120,8 +136,23 @@ class Runs:
         self._schedule(objective, directions, resume=False)
         return objective
 
+    async def reconcile_abandoned_approvals(self, workspaces: list[WorkspaceId]) -> int:
+        """Tasks a crash left parked on a question nobody can answer any more."""
+        if self._runner is None:
+            return 0
+        return sum(
+            [await self._runner.reconcile_abandoned_approvals(item) for item in workspaces]
+        )
+
     async def recover(self) -> int:
-        """Resume every durable objective left incomplete by an earlier process."""
+        """Resume every durable objective left incomplete by an earlier process.
+
+        Not while stopped: the restart that follows a stop must not quietly pick
+        up the work the stop was pulled on. The stop control closes it instead.
+        """
+        if self._stop is not None and self._stop.engaged():
+            log.info("objectives.recovery_withheld", reason=self._stop.reason)
+            return 0
         recovered = 0
         for objective in await self._objectives_store.list_incomplete():
             if objective.status is ObjectiveStatus.PAUSED:
@@ -199,6 +230,70 @@ class Runs:
 
     # --- Stopping -------------------------------------------------------------
 
+    def _refuse_if_stopped(self) -> None:
+        if self._stop is not None and self._stop.engaged():
+            raise WorkStoppedError(self._stop.reason)
+
+    async def halt_all(
+        self,
+        reason: str,
+        unfinished: list[Task] | None = None,
+        *,
+        live: LiveTasks | None = None,
+    ) -> HaltedWork:
+        """Stop everything this process carries and close what nobody carries.
+
+        The order is the point. Parked approvals are answered no first, so a
+        call waiting on a person cannot be approved into the gap; every
+        unfinished task is asked to stop at its next boundary, which keeps what
+        it did; the manager's coroutines are cancelled and their records closed;
+        and a task no runtime here is carrying - left by a crash - is closed in
+        the store, so a later `resume` does not pick it up.
+        """
+        released = 0
+        for request in self._approvals.pending():
+            released += self._approvals.release(request.task_id)
+        signalled = 0
+        known = {task.id: task for task in unfinished or []}
+        for task_id in {*self._running, *known}:
+            self._cancellations.cancel(task_id, reason)
+            released += self._approvals.release(task_id)
+            signalled += 1
+        cancelled = 0
+        for objective_id in list(self._objectives):
+            await self.cancel_objective(objective_id)
+            cancelled += 1
+        for objective in await self._objectives_store.list_incomplete():
+            await self._close(objective.id)
+            cancelled += 1
+        closed = 0
+        for task in known.values():
+            carried_here = task.id in self._running or (
+                live is not None and live.carrying(task.id)
+            )
+            if carried_here:
+                continue
+            current = await self._tasks.get(task.id)
+            if current is None or current.is_terminal:
+                continue
+            try:
+                stopped, event = current.transition_to(
+                    TaskStatus.CANCELLED,
+                    result=current.result or TaskResult(summary=f"Stopped: {reason}"),
+                )
+            except InvalidStateTransitionError:
+                continue
+            await self._tasks.save(stopped, event)
+            # Nothing is carrying it, so nothing will clear the request either.
+            self._cancellations.clear(task.id)
+            closed += 1
+        return HaltedWork(
+            objectives_cancelled=cancelled,
+            tasks_signalled=signalled,
+            tasks_closed=closed,
+            approvals_released=released,
+        )
+
     async def pause(self, task_id: UUID) -> Task | None:
         """Ask a task to park at its next safe execution boundary."""
         task = await self._tasks.get(task_id)
@@ -213,6 +308,7 @@ class Runs:
         task = await self._tasks.get(task_id)
         if task is None or task.is_terminal:
             return task
+        self._refuse_if_stopped()
         self._cancellations.resume(task_id)
         return task
 
@@ -263,6 +359,7 @@ class Runs:
 
     def resume_objective(self, objective: Objective) -> None:
         """Continue a paused durable objective when no live coroutine owns it."""
+        self._refuse_if_stopped()
         if objective.id not in self._objectives:
             self._schedule(objective, objective.directions, resume=True)
 

@@ -23,6 +23,13 @@ tauri-plugin-dialog = "2"
 # Opens a link in the system browser - where to get a plugin's token. The
 # webview itself navigates nowhere but its own page.
 tauri-plugin-opener = "2"
+# Phase 13. A second launch focuses the window that is already open instead of
+# starting a second shell - and with it a second runtime on the same data.
+tauri-plugin-single-instance = "2"
+# Signed updates: the package is verified against the public key compiled into
+# the build before it replaces anything. Registered only when a key was given.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [features]
 default = ["custom-protocol"]

@@ -1,0 +1,254 @@
+{
+  "format_version": 1,
+  "plugins": {
+    "airtable": {
+      "artifact": {
+        "digests": [
+          "sha512-OYUwkrIhXsYRqx39wQ5R7OAM5R0RdDWJRb8CBMLFU8OGPAB1Jmm4oOrLtaH3Qmtd+UG2IAT+nFlFrqfs//2klA=="
+        ],
+        "kind": "npm",
+        "name": "airtable-mcp-server",
+        "version": "1.14.0"
+      },
+      "declaration_sha256": "0fb00f6ac166ea5be93546d687ca4d6a14570c1500d1f6421c5d18af7d5b2d95"
+    },
+    "arxiv": {
+      "artifact": {
+        "digests": [
+          "024c8122112617af9eea9d913a6c46ec5cf1d6b5fbcbac43c8ba0615bfe9d65c",
+          "ae8abb0940d698cba18ff4b8b99cedd61d74d717d1af524ca4b223de1b739248"
+        ],
+        "kind": "pypi",
+        "name": "arxiv-mcp-server",
+        "version": "0.7.2"
+      },
+      "declaration_sha256": "2b9d640f04e235e1f24f3d7c42f84e3b0bb11bcc3c3056c67b79616b805aaa13"
+    },
+    "brave-search": {
+      "artifact": {
+        "digests": [
+          "sha512-a34HBs6os4Ilp0yHPV/j3UrgBQH1uTDLsNA9y5IlO30RCYUFm9QPfC0coh2c7WEDxKcHuWjVsrfuXIJNheu9YA=="
+        ],
+        "kind": "npm",
+        "name": "@brave/brave-search-mcp-server",
+        "version": "2.1.4"
+      },
+      "declaration_sha256": "f6ad4bf64769da14f2380cabf104c0d91989ab96c1c59fa92ad5041741e37972"
+    },
+    "context7": {
+      "artifact": {
+        "digests": [
+          "sha512-fUARTIZGVKzlzQKDhKUg4aIQ3yEU/12STdfxJDDnLMSN7yyHiPvNHI05iFwxkv3vC8G76Wp27MwK6Jucl/C5pA=="
+        ],
+        "kind": "npm",
+        "name": "@upstash/context7-mcp",
+        "version": "4.1.1"
+      },
+      "declaration_sha256": "1f0160bb36f03c2936aa613b0be923b27d7a914ac8242be3c26de6c451f7e24b"
+    },
+    "duckduckgo": {
+      "artifact": {
+        "digests": [
+          "2f676339f888971f33c6ebcc9952a307de066dc57fd8a6df23c7f3eb1ce74ba7",
+          "5e387d2747c3dc57fc65d874d8bf8ff958845df3828d9de4274197586e759e18"
+        ],
+        "kind": "pypi",
+        "name": "duckduckgo-mcp-server",
+        "version": "0.7.0"
+      },
+      "declaration_sha256": "b1ec736f7743cdbdd4809fde1e69ce6d62a647645d468f31e6c1330e42b59c6b"
+    },
+    "exa": {
+      "artifact": {
+        "digests": [
+          "sha512-X6g4J9LXLJZ0uK52G8KE/KCaxpaD+wkEHzjkoDTYkC+afxfm5xqWgih3i0hgTfyufl6PggkLeR0L6rDAxW6ETg=="
+        ],
+        "kind": "npm",
+        "name": "exa-mcp-server",
+        "version": "3.4.1"
+      },
+      "declaration_sha256": "052c68865488c16839da6eeafefaa6d0029936ab6d5ea82087c94efb8436b225"
+    },
+    "fetch": {
+      "artifact": {
+        "digests": [
+          "6642df733a1032e7f37d0f13849af8a944d46c02420d2c070cc14e0948f8fcc2",
+          "da12533c8218c7a4ee2eb9d789170a317cf758c07cb2cc0211a91bdb0d4b7254"
+        ],
+        "kind": "pypi",
+        "name": "mcp-server-fetch",
+        "version": "2026.8.18"
+      },
+      "declaration_sha256": "164d26d595f1849dba80605bb1963ee6de2a0e026e1b07e014f16944ff42fdc6"
+    },
+    "figma": {
+      "artifact": {
+        "digests": [
+          "sha512-7Flx0S/3gI7dIm+9G6BCogwne0o9LdYaCxtDLappiZZUZgqoNiXws/T1kn2R2tqr1iRzFPStqlwf+bPrcscQ0Q=="
+        ],
+        "kind": "npm",
+        "name": "figma-developer-mcp",
+        "version": "0.13.2"
+      },
+      "declaration_sha256": "6991f17b026eaa5c981c1cf585cf2d08d5fcd2421c5be44990bcf50b9fb60a2f"
+    },
+    "filesystem": {
+      "artifact": {
+        "digests": [
+          "sha512-kKaFkyAh6oipvc9+EAbJ552JafnMnOq5nzmzWkp1jJdBhTAAGpmIpWihUG1+rfNhmEFM98gUZDdCHCDD4v6a7Q=="
+        ],
+        "kind": "npm",
+        "name": "@modelcontextprotocol/server-filesystem",
+        "version": "2026.8.31"
+      },
+      "declaration_sha256": "002cc062f696f49eaf11418afc36eb30d2a5569ad2084aaab44ceec395d27e0a"
+    },
+    "firecrawl": {
+      "artifact": {
+        "digests": [
+          "sha512-GJdI37XWXWK+Hu/LnITH9KSoUgzWxPBNrS+ixrNILukRieKYypL5LskACjPlmtbH9290HtpK/lkHWW6052V3rg=="
+        ],
+        "kind": "npm",
+        "name": "firecrawl-mcp",
+        "version": "3.24.0"
+      },
+      "declaration_sha256": "bab6990750af2a768e79f61869c38959764b56f91771f11777d7ecb5c520ba4c"
+    },
+    "git": {
+      "artifact": {
+        "digests": [
+          "6c32a8e771564122a9bafac373cf871fb3ab540ddc1ba0ee8e9c8c6e9878aef7",
+          "96894ca661cfda45174a8882d4ca97d1f5261301c72ccad006ff04f4108f173f"
+        ],
+        "kind": "pypi",
+        "name": "mcp-server-git",
+        "version": "2026.8.18"
+      },
+      "declaration_sha256": "0e34ee113e2ac40ae183fc1fb53d90ba2c8fbbbcc34c53237a1075ec57013093"
+    },
+    "github": {
+      "artifact": {
+        "digests": [
+          "sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"
+        ],
+        "kind": "oci",
+        "name": "ghcr.io/github/github-mcp-server",
+        "version": "sha256:508a0857ec762b1ab1cece29193345b501fab1dd9d1228a7b617062954cecac6"
+      },
+      "declaration_sha256": "4f38933d809dd20eb55a284e5b816a6d10ebfc8b96237a8b513ddcefe08745da"
+    },
+    "gmail": {
+      "artifact": {
+        "digests": [
+          "287556249630d1c8bd88770708ab0a5b5e2b1afa91e3469dd26562dcb640ac73",
+          "66e059179a0fa23bba7ec111ba46702e8c5b954a682357395b7d38cbc70e5df9"
+        ],
+        "kind": "pypi",
+        "name": "workspace-mcp",
+        "version": "1.26.2"
+      },
+      "declaration_sha256": "a2125101d054423d555b53797af193c306f43599e9025fe60b6b952112fdfa7a"
+    },
+    "google-drive": {
+      "artifact": {
+        "digests": [
+          "287556249630d1c8bd88770708ab0a5b5e2b1afa91e3469dd26562dcb640ac73",
+          "66e059179a0fa23bba7ec111ba46702e8c5b954a682357395b7d38cbc70e5df9"
+        ],
+        "kind": "pypi",
+        "name": "workspace-mcp",
+        "version": "1.26.2"
+      },
+      "declaration_sha256": "55c5de0fdba0b7e75efe0feee92da9cdb8af5fac984c71a9b4e3efc534ef0592"
+    },
+    "hubspot": {
+      "artifact": {
+        "digests": [
+          "sha512-nNNrqysJrCkPb8XWl3wd2d61nTLf8IAnfWOHag4FCSRKRjSXuIE/2h4GVUcPmVhJVaN7RsIq8C43BMFV+EI9GA=="
+        ],
+        "kind": "npm",
+        "name": "@hubspot/mcp-server",
+        "version": "0.4.0"
+      },
+      "declaration_sha256": "2fc40414ce1f4a6a44f528930ce98fc19fe0187d9e529828227082ccb094ffab"
+    },
+    "notion": {
+      "artifact": {
+        "digests": [
+          "sha512-JPG38WoSxYxZMk+fLgqsibU1rhvCSbK1JSMUlw5DPyoc1LveN2cz5C1lbJFcv7mZTa/DAOP4zbfxNj4YtN/lcQ=="
+        ],
+        "kind": "npm",
+        "name": "@notionhq/notion-mcp-server",
+        "version": "2.5.1"
+      },
+      "declaration_sha256": "ad5fb15277ab72baa3d6e4d7fb8c80f1c6944eebac726825a4e5255a8e02f200"
+    },
+    "sentry": {
+      "artifact": {
+        "digests": [
+          "sha512-sJzFkzka+1wkrCk+v/uWvl3lB0Kcu6Mb/jxlnOZyifJKhTpWv1gF6pJEmAGmf19s2f0ARAw6CsDaYuhGN+I4bw=="
+        ],
+        "kind": "npm",
+        "name": "@sentry/mcp-server",
+        "version": "0.39.0"
+      },
+      "declaration_sha256": "ecc458c49249d4f5c8f9436e288481837193f1bf5ac0a3f16fe9390b6be7945f"
+    },
+    "sequential-thinking": {
+      "artifact": {
+        "digests": [
+          "sha512-/EMH++1j2e+VmHwpibw1IUPHxA0tcQY09Yo5/OIPwW/8irEKLAufJNGSZQhCK18n8TUvV6WwZyQOuaDKxe/CeQ=="
+        ],
+        "kind": "npm",
+        "name": "@modelcontextprotocol/server-sequential-thinking",
+        "version": "2026.8.31"
+      },
+      "declaration_sha256": "f3b8f466c955c7cb57963cb83f51f5ff2cbfdf6728b0b2b489c2d168e6eda8d7"
+    },
+    "slack": {
+      "artifact": {
+        "digests": [
+          "sha512-YoRGvadhHkN4jwr1uYAxcNidmRPuzDXDM7j8dmnuvclF8zeqzBHefm1IiZE/xGr23Ka0ljNysdDTDUC7PWj21Q=="
+        ],
+        "kind": "npm",
+        "name": "slack-mcp-server",
+        "version": "1.3.0"
+      },
+      "declaration_sha256": "6dd449ac839af28090aada480d4861d8f50597a3cf7ecc1b1b351546bcae66dc"
+    },
+    "supabase": {
+      "artifact": {
+        "digests": [
+          "sha512-TUzlt0x9eADZgUOz/5wWk95i5GVf1QSnIwYX0jmasNNmoqPxEkAgO/kg8aAQTqmYZx/OPlVlaX3Er5v/le1z2g=="
+        ],
+        "kind": "npm",
+        "name": "@supabase/mcp-server-supabase",
+        "version": "0.13.0"
+      },
+      "declaration_sha256": "7b8cadf2c1b1c5faf8f41e2c31f9174a733b67dbc6708a23506063d5d367a69a"
+    },
+    "tavily": {
+      "artifact": {
+        "digests": [
+          "sha512-w2pmmmn/JKcNavylDoiNtNPflWt6SK2G1SVUvg0VvdvFJQUaOzEdanAm1VUWBOhUCqmVoBYVPstGcOoWvh8RQQ=="
+        ],
+        "kind": "npm",
+        "name": "tavily-mcp",
+        "version": "0.2.22"
+      },
+      "declaration_sha256": "3b5371079e26074b9df8c50c415834c12aee357338129c00c6ce55e936117fa8"
+    },
+    "time": {
+      "artifact": {
+        "digests": [
+          "1407583af42dc0163909d855c9ef20114a12b4981c3975033721a7906cdd212a",
+          "ec1313feb558a848838217d922bd218e9f7ca217cb0f7b890ee75ab94bf962e0"
+        ],
+        "kind": "pypi",
+        "name": "mcp-server-time",
+        "version": "2026.8.18"
+      },
+      "declaration_sha256": "e9badd8719c6079fb5961095de00fc6c63d17b9a469b3381938ad6aa1fcc7755"
+    }
+  }
+}

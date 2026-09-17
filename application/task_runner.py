@@ -18,12 +18,15 @@ from application.employee_runtime.runtime import EmployeeRuntime
 from application.orchestrator import Failure, classify
 from domain.employees.definition import EmployeeDefinition
 from domain.employees.protocols import EmployeeRegistry
+from domain.errors import WorkStoppedError
 from domain.llm import escalation, routing
 from domain.observability import context as trace_context
 from domain.observability.context import TraceContext, tracing
 from domain.observability.models import SpanKind, SpanStatus, TraceEvent, stable_span_id
 from domain.observability.protocols import TraceSink
 from domain.policies.models import ActorKind
+from domain.safety.emergency import EmergencyStop
+from domain.tasks.cancellation import LiveTasks
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Task, TaskCreatedBy, TaskError, TaskResult, TaskStatus
@@ -54,6 +57,8 @@ class TaskRunner:
         progress: ProgressSink | None = None,
         workspaces: WorkspaceContext | None = None,
         traces: TraceSink | None = None,
+        stop: EmergencyStop | None = None,
+        live: LiveTasks | None = None,
     ) -> None:
         self._tasks = tasks
         self._assignments = assignments
@@ -71,6 +76,15 @@ class TaskRunner:
         # run it would have announced from is the one that just died.
         self._progress = progress or NullProgress()
         self._traces = traces
+        # Read before anything is written or started. The executor reads it
+        # again before every effect; this is what keeps a stopped machine from
+        # recording new work it will only cancel.
+        self._stop = stop
+        self._live = live
+
+    def _refuse_if_stopped(self) -> None:
+        if self._stop is not None and self._stop.engaged():
+            raise WorkStoppedError(self._stop.reason)
 
     # --- Starting -------------------------------------------------------------
 
@@ -92,6 +106,7 @@ class TaskRunner:
         Written down first so that a process killed one second later still has a
         task to come back to.
         """
+        self._refuse_if_stopped()
         definition = self._registry.get(employee_name)
         task = replace(
             Task.create(
@@ -146,11 +161,17 @@ class TaskRunner:
             parent_id=stable_span_id(task.id, SpanKind.TASK, str(task.id)),
             workspace_id=task.workspace_id,
         )
-        with tracing(context):
-            if self._workspaces is None:
-                return await self._run(task, assignment)
-            with self._workspaces.enter(task.workspace_id):
-                return await self._run(task, assignment)
+        if self._live is not None:
+            self._live.begin(task.id)
+        try:
+            with tracing(context):
+                if self._workspaces is None:
+                    return await self._run(task, assignment)
+                with self._workspaces.enter(task.workspace_id):
+                    return await self._run(task, assignment)
+        finally:
+            if self._live is not None:
+                self._live.end(task.id)
 
     async def _run(self, task: Task, assignment: TaskAssignment | None = None) -> Task:
         attempt = 1
@@ -268,6 +289,7 @@ class TaskRunner:
         itself. So this is `submit` with those two decisions already made:
         persist both, then carry the task to a terminal state.
         """
+        self._refuse_if_stopped()
         await self._tasks.save(task)
         await self._assignments.save(assignment.accept())
         log.info(
@@ -296,6 +318,38 @@ class TaskRunner:
 
     # --- Resuming -------------------------------------------------------------
 
+    async def reconcile_abandoned_approvals(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    ) -> int:
+        """Put a task that died waiting on a person back where resuming can reach it.
+
+        A task parked on an approval is not resumable while its question is
+        live - a person is about to answer it. After a crash nobody is: the
+        question was expired with the process, the gate's `finally` that would
+        have moved the task back to RUNNING never ran, and the task sat in
+        WAITING_FOR_APPROVAL, neither finished nor resumable, for good. The
+        effect it was asking about never happened, so moving it back to RUNNING
+        repeats nothing: resuming replays the pending call and asks again.
+
+        Called only by a process that owns the data directory and carries
+        nothing yet - never while a live run could be parked on one of these.
+        """
+        reconciled = 0
+        waiting = await self._tasks.list_in_status(TaskStatus.WAITING_FOR_APPROVAL, workspace_id)
+        for task in waiting:
+            if self._live is not None and self._live.carrying(task.id):
+                continue
+            running, event = task.transition_to(TaskStatus.RUNNING)
+            event = replace(
+                event,
+                payload={"reason": "the approval it waited on expired when the process stopped"},
+            )
+            await self._tasks.save(running, event)
+            reconciled += 1
+        if reconciled:
+            log.info("tasks.abandoned_approvals_reconciled", count=reconciled)
+        return reconciled
+
     async def resumable(self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID) -> list[Task]:
         return await self._tasks.list_resumable(workspace_id)
 
@@ -312,6 +366,7 @@ class TaskRunner:
         so resuming is the same call as starting - the difference is entirely in
         the state that was saved.
         """
+        self._refuse_if_stopped()
         assignments = await self._assignments.for_task(task.id)
         log.info(
             "task.resuming",

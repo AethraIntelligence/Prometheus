@@ -708,7 +708,7 @@ async def test_startup_expires_abandoned_approvals_and_resumes_incomplete_object
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
-    assert recovered == {"expired_approvals": 2, "objectives": 1}
+    assert recovered == {"expired_approvals": 2, "reconciled_tasks": 0, "objectives": 1}
     assert parts["manager"].resumed == [left_behind.id]
     assert parts["manager"].directions == [directions]
 

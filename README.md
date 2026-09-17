@@ -56,13 +56,16 @@ Without it, the rest of Prometheus works and `code.run` reports itself unavailab
 
 ```bash
 git clone https://github.com/AethraIntelligence/Prometheus.git && cd Prometheus
-./start.sh
+./start.sh            # in your browser - nothing is compiled
+./start-desktop.sh    # in the desktop window - compiles the window's shell once
 ```
 
-`start.sh` installs everything with one `uv sync` (no extras to remember), creates
-the database, and opens the desktop window. The window starts the runtime, the
-runtime starts Ollama if your catalog uses local models, and the browser engine is
-downloaded on first start.
+Both install everything with one `uv sync` (no extras to remember) and start the
+runtime, which creates or upgrades the database on its first start, after a backup.
+`start.sh` needs uv and Node 20+; `start-desktop.sh` also needs the Rust toolchain.
+Ctrl+C stops what the script started. The runtime starts Ollama if your catalog uses
+local models, and the browser engine is downloaded on first start. Installable,
+signed packages are prepared for release in [docs/release.md](docs/release.md).
 
 Then type a goal:
 
@@ -244,8 +247,11 @@ automatically repeated.
   Docker engine and the sandbox image, it fails closed.
 - **The desktop is opt-in per application.** With no allowed applications, nothing
   on your desktop can be touched, and every desktop action asks each time.
-- **There is a brake.** `prometheus stop` writes a file every screen action reads
-  first - it works from a second terminal while a run holds the screen.
+- **There is a brake, and it holds.** The Stop button on every screen, the app menu,
+  or `prometheus stop` from any terminal stops all work until somebody resumes it -
+  across restarts too. It is checked again after an approval and right before the
+  action, so a "yes" given as somebody pulls the brake does not get through. Nothing
+  already done is claimed to be undone.
 - **Silence is a no.** An unanswered approval expires and is refused. Approvals can
   also reach you on Telegram.
 - **Remembered permission is exact and revocable.** An approval can apply once,
@@ -286,6 +292,13 @@ setting, and moving is *copy -> verify row by row -> erase only when you confirm
 ```bash
 uv run prometheus storage-migrate --to postgresql://localhost/prometheus
 ```
+
+Upgrades check the database first: one written by a newer version is left untouched,
+an older one is backed up and then upgraded, and an interrupted upgrade is undone on
+the next start. The key that encrypts stored credentials lives in the system keychain.
+Backups are an explicit archive - Settings -> Backups and updates, or
+`prometheus backup` / `prometheus restore` - checked in full before anything is
+replaced. Installing, signing and releasing: [docs/release.md](docs/release.md).
 
 ---
 
@@ -361,7 +374,9 @@ storage   storage-migrate --to <url> [--erase]   validate   validation-report
 uv run pytest                                  # whole suite: no network, no key
 uv run ruff check . && uv run lint-imports
 uv run python scripts/check_english_only.py
+uv run python scripts/check_types.py           # no type errors beyond the baseline
 cd desktop && npm test                         # the window, against a scripted runtime
+uv run python scripts/release/drill.py --launch "uv run prometheus serve"  # release drill
 PROMETHEUS_TEST_POSTGRES_URL=postgresql://localhost/prometheus_test uv run pytest
 ```
 

@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Protocol
 
 import structlog
@@ -36,12 +38,25 @@ class _Stoppable(Protocol):
     should_exit: bool
 
 
+@dataclass(frozen=True, slots=True)
+class PendingRestore:
+    """A verified backup to put in place between this process and the next."""
+
+    archive: Path
+    passphrase: str | None = field(default=None, repr=False)
+    skip_secrets: bool = False
+
+
 class RestartSignal:
     """One per process: whether a restart is possible, and whether one was asked for."""
 
     def __init__(self) -> None:
         self._server: _Stoppable | None = None
         self.requested = False
+        #: Set by a restore request. A restore replaces the store this process
+        #: has open, so it runs after the server has stopped and before the
+        #: process replaces itself - never while anything could write.
+        self.restore: PendingRestore | None = None
         #: When this interpreter started. A window waiting for a restart knows
         #: the new process is up when this changes.
         self.started_at = datetime.now(UTC).isoformat()
@@ -62,11 +77,18 @@ class RestartSignal:
         self._server.should_exit = True
 
     def replace_process(self) -> None:  # pragma: no cover - replaces the test runner
-        """Run the same command again in this process, with everything reread."""
-        log.info("runtime.restarting", argv=sys.argv)
+        """Run the same command again in this process, with everything reread.
+
+        `sys.orig_argv` rather than `sys.argv`: the packaged application starts
+        the runtime as `python -m app.cli.main serve`, and `sys.argv` has lost
+        the `-m` by then - re-executing it would run the module as a bare file,
+        outside its package.
+        """
+        arguments = [sys.executable, *sys.orig_argv[1:]]
+        log.info("runtime.restarting", argv=arguments)
         sys.stdout.flush()
         sys.stderr.flush()
-        os.execv(sys.executable, [sys.executable, *sys.argv])
+        os.execv(sys.executable, arguments)
 
 
 #: The process's signal. Module-level because the app is built by uvicorn's

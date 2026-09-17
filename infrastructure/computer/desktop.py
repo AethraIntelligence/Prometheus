@@ -37,7 +37,10 @@ from infrastructure.observability.logging import get_logger
 log = get_logger(__name__)
 
 INSTALL_HINT = (
-    "Desktop computer use needs its driver, which `uv sync` installs. Run it again: uv sync"
+    "Desktop computer use needs its driver, which is not installed here. From a source "
+    "checkout `uv sync` installs it; the packaged application does not include it, "
+    "because its dependencies are GPL-licensed. Computer use inside the browser works "
+    "without it."
 )
 
 #: How long the platform waits to be told which application is in front. The

@@ -441,20 +441,21 @@
   <table class="api-table"><thead><tr><th>Requirement</th><th>Why</th></tr></thead><tbody>
     <tr><td><code>Python 3.12+</code> and <code>uv</code></td><td>The runtime, CLI and local API.</td></tr>
     <tr><td><code>Node 20+</code></td><td>The desktop window's frontend.</td></tr>
-    <tr><td>Rust toolchain</td><td>The Tauri shell around the window.</td></tr>
+    <tr><td>Rust toolchain</td><td>Only for the desktop window (<code>start-desktop.sh</code>). The browser start needs none.</td></tr>
     <tr><td>Ollama <em>or</em> a provider key</td><td>A model to think with — local and free, or hosted.</td></tr>
   </tbody></table>
 
-  <h2 class="section-title" id="window">Start the window</h2>
+  <h2 class="section-title" id="window">Start it</h2>
   ${code("bash","",`git clone https://github.com/AethraIntelligence/Prometheus.git && cd Prometheus
-./start.sh`)}
+./start.sh            # in the browser, nothing compiled
+./start-desktop.sh    # in the desktop window`)}
   ${steps([
     ["Python dependencies","One <code>uv sync</code> installs everything — browser automation, PDF, PostgreSQL driver, desktop driver. There are no extras to remember."],
-    ["Database schema","<code>alembic upgrade head</code> creates <code>~/.prometheus/prometheus.db</code>. Cheap on every run when nothing changed."],
-    ["Window dependencies","<code>npm install</code> in <code>desktop/</code>, on the first run only."],
-    ["The window opens","The Tauri shell starts <code>prometheus serve</code> if nothing answers on the port, and never kills a runtime it did not start. Chromium is fetched on first start."]
+    ["Interface dependencies","<code>npm install</code> in <code>desktop/</code>, on the first run only."],
+    ["The runtime starts","<code>prometheus serve</code> creates <code>~/.prometheus/prometheus.db</code>, or upgrades it after a backup. <code>start.sh</code> starts it with the interface's dev server and opens the browser; in <code>start-desktop.sh</code> the Tauri shell starts it. A runtime already answering on the port is used, not replaced."],
+    ["Ctrl+C stops it","Whatever the script started is stopped; a runtime that was already running is left alone."]
   ])}
-  ${callout("info","Running <code>start.sh</code> twice costs a few seconds and changes nothing — every step is skipped when already done.")}
+  ${callout("info","Running either script twice costs a few seconds and changes nothing — every setup step is skipped when already done.")}
 
   <h2 class="section-title" id="terminal">Or the terminal</h2>
   ${code("bash","",`uv sync
@@ -1497,7 +1498,8 @@ defaults`)}
   <div class="prose"><p>The window talks the same HTTP and the same event stream the browser page does, to the same process — so a runtime started in a terminal and the window are one engine. The Rust side owns the window and starts <code>uv run prometheus serve</code> unless something already answers, and never kills a runtime it did not start.</p></div>
 
   <h2 class="section-title" id="run">Running it</h2>
-  ${code("bash","",`./start.sh                      # setup + window
+  ${code("bash","",`./start.sh                      # setup + browser interface
+./start-desktop.sh              # setup + window
 cd desktop && npm install
 cd desktop && npm run tauri dev # the window
 cd desktop && npm test          # frontend tests, no runtime needed`)}

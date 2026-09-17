@@ -21,12 +21,30 @@ log = get_logger(__name__)
 
 
 class InMemoryCancellations:
-    """Implements `domain.tasks.cancellation.Cancellations`."""
+    """Implements `domain.tasks.cancellation.Cancellations` and `LiveTasks`."""
 
     def __init__(self) -> None:
         self._reasons: dict[UUID, str] = {}
         self._paused: set[UUID] = set()
         self._wake: dict[UUID, asyncio.Event] = {}
+        #: Runs in progress, counted: a task resumed while its first run is
+        #: still unwinding is carried twice for a moment, not zero times.
+        self._live: dict[UUID, int] = {}
+
+    # --- Implements `domain.tasks.cancellation.LiveTasks` ----------------------
+
+    def begin(self, task_id: UUID) -> None:
+        self._live[task_id] = self._live.get(task_id, 0) + 1
+
+    def end(self, task_id: UUID) -> None:
+        remaining = self._live.get(task_id, 0) - 1
+        if remaining > 0:
+            self._live[task_id] = remaining
+        else:
+            self._live.pop(task_id, None)
+
+    def carrying(self, task_id: UUID) -> bool:
+        return task_id in self._live
 
     def cancel(self, task_id: UUID, reason: str = "") -> None:
         self._reasons[task_id] = reason

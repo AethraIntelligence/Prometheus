@@ -9,7 +9,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- airtable-mcp-server
+- 'airtable-mcp-server@1.14.0'
 settings:
 - key: AIRTABLE_API_KEY
   label: Personal access token

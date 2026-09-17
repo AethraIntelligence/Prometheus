@@ -31,7 +31,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import structlog
@@ -83,6 +83,11 @@ from domain.integrations.catalog import (
     suggested_holders,
 )
 from domain.integrations.models import Integration, IntegrationKind
+from domain.integrations.provenance import (
+    ArtifactVerifier,
+    PluginVerificationError,
+    same_published,
+)
 from domain.knowledge.models import KnowledgeQuery
 from domain.knowledge.protocols import Retriever
 from domain.llm.catalog import (
@@ -107,6 +112,8 @@ from domain.memory.usage import MemoryUseLog
 from domain.observability.models import RunKind
 from domain.policies.models import ActorKind, SimpleActor
 from domain.policies.risk import Effect
+from domain.safety.backup import Backups
+from domain.safety.effects import EffectGate
 from domain.scheduling.models import MIN_INTERVAL_SECONDS, Recurrence, Schedule
 from domain.scheduling.protocols import EventLog, ScheduleRepository
 from domain.secrets.protocols import CredentialStore
@@ -125,6 +132,9 @@ from domain.workforce.repository import (
     PlanRepository,
 )
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
+
+if TYPE_CHECKING:
+    from application.safety.emergency import EmergencyStopControl
 
 log = structlog.get_logger(__name__)
 
@@ -265,6 +275,17 @@ class ServiceDependencies:
     #: One durable, sanitized explanation of a run. None only for narrowly
     #: constructed tests and older embedding applications.
     observability: ObservabilityService | None = None
+    #: The machine-wide brake. None only where a surface was built without one;
+    #: every stop operation then refuses rather than pretending to have stopped.
+    emergency: EmergencyStopControl | None = None
+    #: Making and checking backups of this installation. None where a surface
+    #: was built without them, or the store is not one a backup covers.
+    backups: Backups | None = None
+    #: Effects executing in this process, and the hold an update places on them.
+    effects: EffectGate | None = None
+    #: Asks a registry what it publishes for a pinned plugin artifact. None
+    #: refuses to install any plugin that has one, rather than skipping the check.
+    artifact_verifier: ArtifactVerifier | None = None
 
 
 class PrometheusService:
@@ -277,8 +298,18 @@ class PrometheusService:
         self._background: set[asyncio.Task[None]] = set()
 
     async def recover(self) -> dict[str, int]:
-        """Reconcile state owned by the previous process and resume its work."""
+        """Reconcile state owned by the previous process and resume its work.
+
+        A machine that was stopped comes back stopped: the stop is enforced
+        before anything is resumed, and `Runs.recover` resumes nothing while it
+        holds.
+        """
+        if self._d.emergency is not None:
+            await self._d.emergency.enforce()
         expired = await self._d.approvals.expire_abandoned()
+        reconciled = await self._d.runs.reconcile_abandoned_approvals(
+            await self._every_workspace()
+        )
         objectives = await self._d.runs.recover()
         if expired or objectives:
             log.info(
@@ -286,7 +317,16 @@ class PrometheusService:
                 expired_approvals=expired,
                 objectives=objectives,
             )
-        return {"expired_approvals": expired, "objectives": objectives}
+        return {
+            "expired_approvals": expired,
+            "reconciled_tasks": reconciled,
+            "objectives": objectives,
+        }
+
+    async def _every_workspace(self) -> list[WorkspaceId]:
+        if self._d.workspaces is None:
+            return [DEFAULT_WORKSPACE_ID]
+        return [item.id for item in await self._d.workspaces.list()] or [DEFAULT_WORKSPACE_ID]
 
     # --- Conversations --------------------------------------------------------
 
@@ -1856,6 +1896,7 @@ class PrometheusService:
         stored = (
             frozenset(await self._d.credentials.names()) if self._d.credentials else frozenset()
         )
+        await self._verify_artifact(plugin)
         plan = plan_install(plugin, values, stored=stored | self._d.provided_credentials)
         if plan.secrets:
             if self._d.credentials is None:
@@ -1883,6 +1924,23 @@ class PrometheusService:
         return views.installed_integration(
             connected, plugin=plugin.id, holders=_holders(connected, self._d.employees.list())
         )
+
+    async def _verify_artifact(self, plugin) -> None:
+        """Before anything is stored or started: the registry still publishes what was locked."""
+        if plugin.artifact is None:
+            return
+        if self._d.artifact_verifier is None:
+            raise PluginVerificationError(
+                f"{plugin.name} runs {plugin.artifact.reference}, and nothing here can verify "
+                "it. It was not installed."
+            )
+        published = await self._d.artifact_verifier.published(plugin.artifact)
+        if not same_published(plugin.artifact, published):
+            log.warning("plugins.artifact_mismatch", plugin=plugin.id)
+            raise PluginVerificationError(
+                f"The registry no longer publishes the reviewed {plugin.artifact.reference}: "
+                "its contents differ from the catalog lock. It was not installed."
+            )
 
     async def sign_in_integration(self, integration_id: UUID) -> dict[str, Any]:
         """Ask a plugin whose server signs in through the browser to do so.
@@ -2617,6 +2675,93 @@ class PrometheusService:
         """Runs in flight here: what a restart would stop, said before it does."""
         return self._d.runs.carrying
 
+    # --- The emergency stop ---------------------------------------------------
+
+    def _emergency(self) -> EmergencyStopControl:
+        if self._d.emergency is None:
+            raise PrometheusError("This interface was built without an emergency stop.")
+        return self._d.emergency
+
+    def stop_state(self) -> dict[str, Any]:
+        """Whether all work is stopped. Read from the record, never from memory."""
+        if self._d.emergency is None:
+            return {"engaged": False, "available": False}
+        return {**self._d.emergency.state().to_dict(), "available": True}
+
+    async def emergency_stop(self, reason: str = "", *, by: str = "user") -> dict[str, Any]:
+        """Stop all work on this machine, now, until a person resumes it."""
+        return (await self._emergency().engage(reason, by=by)).to_dict()
+
+    # --- Updates --------------------------------------------------------------
+
+    def update_readiness(self) -> dict[str, Any]:
+        """Whether the program could be replaced this instant without cutting an effect.
+
+        Decided here, not in a window: a shell that computed it from a task list
+        would be the second place the rule lives, and the one that goes stale.
+        """
+        in_flight = self._d.effects.in_flight() if self._d.effects is not None else ()
+        return {
+            "safe": not in_flight,
+            "held": bool(self._d.effects is not None and self._d.effects.held),
+            "in_flight": [item.to_dict() for item in in_flight],
+            "carrying": self._d.runs.carrying,
+            # Running work is not a reason to wait: it is durable and resumes
+            # after the restart. An effect in flight is the only one.
+            "resumes_after_restart": self._d.runs.carrying > 0,
+            "stop": self.stop_state(),
+        }
+
+    async def prepare_update(self, timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Hold new effects and wait for the running ones to finish.
+
+        Ready means the hold is in place and nothing is in flight; it stays until
+        this process exits. Not ready releases the hold again, so work does not
+        sit parked behind an update nobody is installing - the window can wait
+        and ask again, or offer the emergency stop.
+        """
+        if self._d.effects is None:
+            return {**self.update_readiness(), "ready": True}
+        self._d.effects.hold()
+        ready = await self._d.effects.wait_idle(timeout_seconds)
+        if not ready:
+            self._d.effects.release()
+        log.info("interface.update_prepared", ready=ready)
+        return {**self.update_readiness(), "ready": ready}
+
+    def cancel_update(self) -> dict[str, Any]:
+        if self._d.effects is not None:
+            self._d.effects.release()
+        return self.update_readiness()
+
+    # --- Backups --------------------------------------------------------------
+
+    def _backups(self) -> Backups:
+        if self._d.backups is None:
+            raise PrometheusError("Backups are not available on this interface.")
+        return self._d.backups
+
+    async def create_backup(
+        self, destination: str | None = None, *, passphrase: str | None = None
+    ) -> dict[str, Any]:
+        """Write a backup while work continues. Off the loop: it reads every file."""
+        return await asyncio.to_thread(
+            self._backups().create, destination, passphrase=passphrase
+        )
+
+    async def verify_backup(self, path: str, *, passphrase: str | None = None) -> dict[str, Any]:
+        """Check a backup completely without changing anything."""
+        return await asyncio.to_thread(self._backups().verify, path, passphrase=passphrase)
+
+    async def watch_stop(self, done: asyncio.Event) -> None:
+        """Enforce a stop set from outside this process, until `done` is set."""
+        if self._d.emergency is not None:
+            await self._d.emergency.watch(done)
+
+    async def resume_work(self, *, by: str = "user") -> dict[str, Any]:
+        """Lift the stop. Starts nothing that was stopped."""
+        return (await self._emergency().release(by=by)).to_dict()
+
     def health(self) -> dict[str, Any]:
         """Enough for a shell to know the runtime it started is up.
 
@@ -2628,6 +2773,10 @@ class PrometheusService:
             "status": "ok",
             "workspace": str(DEFAULT_WORKSPACE_ID),
             "sources": [source.value for source in RequestSource],
+            # A file read, not a query: it is what every window shows at all
+            # times, and a stop that only appears after navigating is not a
+            # stop anybody sees.
+            "stop": self.stop_state(),
         }
 
 

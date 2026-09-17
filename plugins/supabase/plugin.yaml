@@ -10,7 +10,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- '@supabase/mcp-server-supabase'
+- '@supabase/mcp-server-supabase@0.13.0'
 - --read-only
 settings:
 - key: SUPABASE_ACCESS_TOKEN

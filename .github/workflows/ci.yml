@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs these same checks before it builds anything.
+  workflow_call:
 
 jobs:
   check:
@@ -15,6 +17,11 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+
+      # A lock that does not match pyproject.toml is a build that cannot be
+      # reproduced from the repository.
+      - name: Reproducible lock
+        run: uv lock --check
 
       - name: Install dependencies
         run: uv sync --locked
@@ -31,9 +38,22 @@ jobs:
       - name: English-only codebase
         run: uv run python scripts/check_english_only.py
 
+      # Phase 13: no new type errors beyond typing-baseline.json.
+      - name: Types against the baseline
+        run: uv run python scripts/check_types.py
+
       # No provider keys are configured: the suite must be green without one.
-      - name: Tests
-        run: uv run pytest
+      # Property tests run inside it with a bounded number of examples.
+      - name: Tests, with coverage
+        env:
+          PROMETHEUS_PROPERTY_EXAMPLES: "200"
+        run: >
+          uv run pytest -rs
+          --cov=app --cov=application --cov=domain --cov=infrastructure
+          --cov-report=json:coverage.json
+
+      - name: Coverage floors for the critical areas
+        run: uv run python scripts/check_coverage.py coverage.json
 
       - name: Validation release contract
         run: uv run prometheus validation-gate --check-config
@@ -64,3 +84,75 @@ jobs:
 
       - name: Tests
         run: npm test
+
+  # The shell: formatting, lints as errors, and its own tests, from the lock.
+  shell:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries for the webview
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # `generate_context!` embeds the built page, so the page has to exist.
+      - name: Page the shell embeds
+        working-directory: desktop
+        run: npm ci && npm run build
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lints
+        run: cargo clippy --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
+
+  # What ships is scanned on every change, not only at release time.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Python vulnerabilities (runtime dependencies, by hash)
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements.txt -o requirements.txt
+          uvx pip-audit --require-hashes --disable-pip -r requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Production dependencies must be clean. Development tooling is reported
+      # but does not ship, so it does not block.
+      - name: Window vulnerabilities
+        working-directory: desktop
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high || true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Vulnerabilities fail; "unmaintained" and "unsound" warnings on Tauri's
+      # own transitive crates are reported in the log.
+      - name: Shell vulnerabilities
+        working-directory: desktop/src-tauri
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit

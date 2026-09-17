@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID
 
-from domain.tasks.task import Task, TaskEvent
+from domain.tasks.task import Task, TaskEvent, TaskStatus
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 
@@ -20,6 +20,12 @@ class TaskRepository(Protocol):
         self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
     ) -> list[Task]:
         """Tasks that can be picked up again after a restart."""
+        ...
+
+    async def list_in_status(
+        self, status: TaskStatus, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    ) -> list[Task]:
+        """Every task in one status, oldest first. What recovery reconciles."""
         ...
 
     async def list_recent(

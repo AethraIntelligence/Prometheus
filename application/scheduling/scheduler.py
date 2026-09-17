@@ -42,6 +42,7 @@ import structlog
 from application.workflows.engine import WorkflowEngine
 from application.workspaces import folders
 from domain.conversations.repository import ConversationRepository
+from domain.safety.emergency import EmergencyStop
 from domain.scheduling.models import Event, Schedule, Trigger
 from domain.scheduling.protocols import EventLog, ScheduleRepository
 from domain.workflows.definition import WorkflowDefinition, WorkflowTrigger
@@ -93,6 +94,10 @@ class Scheduler:
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         owner: str | None = None,
         workflows: WorkflowEngine | None = None,
+        # Read at the top of every pass. A stopped machine fires nothing, and
+        # what came due meanwhile is not made up afterwards - the same rule as
+        # a machine that was switched off.
+        stop: EmergencyStop | None = None,
     ) -> None:
         self._manager = manager
         self._schedules = schedules
@@ -106,6 +111,7 @@ class Scheduler:
         self._lease_seconds = max(30, lease_seconds)
         self._owner = owner or str(uuid4())
         self._workflows = workflows
+        self._stop = stop
         #: Schedules with an objective in flight. In memory on purpose: it is a
         #: fact about this process, and a process that died is not still running
         #: anything.
@@ -115,6 +121,9 @@ class Scheduler:
 
     async def tick(self) -> tuple[ObjectiveResult | WorkflowRun, ...]:
         """Fire everything that is due or triggered, once. Never raises."""
+        if self._stop is not None and self._stop.engaged():
+            log.info("scheduler.stopped_by_emergency_stop", reason=self._stop.reason)
+            return ()
         now = self._clock()
         results: list[ObjectiveResult | WorkflowRun] = []
         for workspace_id in await self._workspaces_to_look_in():

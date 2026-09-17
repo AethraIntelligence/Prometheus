@@ -252,3 +252,17 @@ def test_stop_can_be_pulled_and_released_from_a_second_terminal(
         assert "was not stopped" in again.output
     finally:
         get_settings.cache_clear()
+
+
+def test_employees_lists_every_declaration(monkeypatch, tmp_path) -> None:
+    """It crashed on an attribute employees never had; type checking found it (Phase 13)."""
+    from app.config.settings import get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("PROMETHEUS_DATA_DIR", str(tmp_path))
+    try:
+        result = runner.invoke(app, ["employees"])
+        assert result.exit_code == 0, result.output
+        assert "organizer" in result.stdout
+    finally:
+        get_settings.cache_clear()

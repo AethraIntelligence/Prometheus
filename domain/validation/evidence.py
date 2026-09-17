@@ -91,6 +91,8 @@ class Evidence:
     tools_denied: tuple[str, ...] = ()
     #: Workspace-relative paths the runner was asked about and found.
     files_present: tuple[str, ...] = ()
+    #: Named files that exist and were not modified by the run.
+    files_untouched: tuple[str, ...] = ()
     #: The text of those files, for the checks that look inside one.
     file_text: dict[str, str] = field(default_factory=dict)
     #: The exception type that ended the run, if one did. A type, never a
@@ -191,6 +193,16 @@ def check(expect: Expectations, evidence: Evidence) -> tuple[CheckResult, ...]:
         found = text.lower() in content.lower()
         results.append(
             _result(f"'{path}' contains '{text}'", found, "" if found else "not in the file")
+        )
+
+    untouched = set(evidence.files_untouched)
+    for path in expect.files_unchanged:
+        results.append(
+            _result(
+                f"'{path}' unchanged",
+                path in untouched,
+                "" if path in untouched else "changed or missing",
+            )
         )
 
     denied = set(evidence.tools_denied)

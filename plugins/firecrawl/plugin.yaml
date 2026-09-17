@@ -10,7 +10,7 @@ runtime: NODE
 command: npx
 args:
 - -y
-- firecrawl-mcp
+- 'firecrawl-mcp@3.24.0'
 settings:
 - key: FIRECRAWL_API_KEY
   label: API key
