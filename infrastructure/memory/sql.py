@@ -34,12 +34,16 @@ from domain.errors import StorageError, StorageNotInitializedError
 from domain.memory.access import visible
 from domain.memory.models import (
     WORKSPACE_BOUND,
+    MemoryBasis,
     MemoryItem,
     MemoryKind,
     MemoryQuery,
     MemoryScope,
+    MemoryStatus,
+    Provenance,
+    SourceKind,
 )
-from domain.memory.ranking import CUTOFF_RATIO, best_of, score
+from domain.memory.ranking import CUTOFF_RATIO, SUPERSEDED_RETENTION, best_of, score
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.persistence import memory_fts
 from infrastructure.persistence.dialect import is_postgres, upsert
@@ -73,6 +77,16 @@ def _to_row(item: MemoryItem) -> dict[str, object]:
         "importance": float(item.importance),
         "created_at": item.created_at,
         "expires_at": item.expires_at,
+        "basis": item.basis.value,
+        "confidence": float(item.confidence),
+        "status": item.status.value,
+        "superseded_by": str(item.superseded_by) if item.superseded_by else None,
+        "revised_at": item.revised_at,
+        "contradicts": [str(other) for other in item.contradicts],
+        "source_kind": item.provenance.kind.value,
+        "source_ref": item.provenance.ref[:64],
+        "source_label": item.provenance.label,
+        "derived_from": list(item.provenance.derived_from),
     }
 
 
@@ -90,6 +104,18 @@ def _to_item(row: MemoryItemRow) -> MemoryItem:
         importance=row.importance,
         created_at=_aware(row.created_at),
         expires_at=_aware(row.expires_at) if row.expires_at else None,
+        basis=MemoryBasis(row.basis),
+        confidence=row.confidence,
+        status=MemoryStatus(row.status),
+        superseded_by=UUID(row.superseded_by) if row.superseded_by else None,
+        revised_at=_aware(row.revised_at) if row.revised_at else None,
+        contradicts=tuple(UUID(other) for other in row.contradicts or ()),
+        provenance=Provenance(
+            kind=SourceKind(row.source_kind),
+            ref=row.source_ref or "",
+            label=row.source_label or "",
+            derived_from=tuple(row.derived_from or ()),
+        ),
     )
 
 
@@ -167,6 +193,14 @@ class SqlMemory:
                 )
             if ranked is not None:
                 statement = statement.where(MemoryItemRow.id.in_(list(ranked)))
+            if query.ids:
+                statement = statement.where(
+                    MemoryItemRow.id.in_([str(item_id) for item_id in query.ids])
+                )
+            if not query.include_superseded:
+                statement = statement.where(
+                    MemoryItemRow.status != MemoryStatus.SUPERSEDED.value
+                )
             rows = await session.scalars(
                 statement.order_by(MemoryItemRow.created_at.desc()).limit(
                     max(query.limit * CANDIDATE_FACTOR, query.limit)
@@ -222,8 +256,19 @@ class SqlMemory:
             result = await session.execute(
                 delete(MemoryItemRow).where(
                     MemoryItemRow.workspace_id == str(workspace_id),
-                    MemoryItemRow.expires_at.is_not(None),
-                    MemoryItemRow.expires_at <= moment,
+                    or_(
+                        and_(
+                            MemoryItemRow.expires_at.is_not(None),
+                            MemoryItemRow.expires_at <= moment,
+                        ),
+                        # A superseded memory is kept to explain a correction,
+                        # for as long as `ranking.SUPERSEDED_RETENTION` says.
+                        and_(
+                            MemoryItemRow.status == MemoryStatus.SUPERSEDED.value,
+                            MemoryItemRow.revised_at.is_not(None),
+                            MemoryItemRow.revised_at <= moment - SUPERSEDED_RETENTION,
+                        ),
+                    ),
                 )
             )
             return int(result.rowcount or 0)

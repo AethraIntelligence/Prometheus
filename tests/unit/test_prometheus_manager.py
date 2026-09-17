@@ -78,6 +78,7 @@ def build(
     memory=None,
     knowledge=None,
     reconciler=None,
+    session=None,
     #: Supply one to read back what each stage was actually told.
     llm: FakeLLM | None = None,
 ) -> tuple[
@@ -115,6 +116,7 @@ def build(
         max_revisions=max_revisions,
         memory=memory,
         knowledge=knowledge,
+        session=session,
     )
     return manager, runs, objective_store, plan_store
 

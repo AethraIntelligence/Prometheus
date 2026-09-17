@@ -21,6 +21,7 @@ from domain.memory.models import (
     MemoryKind,
     MemoryQuery,
     MemoryScope,
+    MemoryStatus,
 )
 from domain.memory.ranking import is_live
 
@@ -53,6 +54,13 @@ def visible(item: MemoryItem, query: MemoryQuery) -> bool:
         return False
     if query.kinds and item.kind not in query.kinds:
         return False
+    if query.ids and item.id not in query.ids:
+        return False
+    # A superseded memory is the platform's former belief. It is kept so a
+    # correction can be traced, and a run that read it would act on what the
+    # person already corrected.
+    if item.status is MemoryStatus.SUPERSEDED and not query.include_superseded:
+        return False
     # A task id is provenance on every kind but one: what a task *learned* is
     # worth reading in the next task, which is the entire point of remembering
     # it. Working memory is the exception - it is the running notes of one task,
@@ -63,4 +71,7 @@ def visible(item: MemoryItem, query: MemoryQuery) -> bool:
         and item.task_id != query.task_id
     ):
         return False
+    # History may include a superseded belief, but retention remains a harder
+    # boundary. Asking for revision history must not resurrect an item whose
+    # explicit expiry has passed while the maintenance pass has not run yet.
     return is_live(item, query.as_of)

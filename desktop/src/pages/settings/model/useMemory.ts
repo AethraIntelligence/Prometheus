@@ -12,8 +12,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { memoryApi, type MemoryItem } from "../../../entities/memory";
-import { forgetMemory, rememberNote } from "../../../features/manage-memory";
+import { memoryApi, type MemoryItem, type MemoryTrace } from "../../../entities/memory";
+import {
+  correctMemory,
+  forgetMemory,
+  keepMemory,
+  rememberNote,
+} from "../../../features/manage-memory";
 import { report, type RuntimeClient } from "../../../shared/api";
 import { describe } from "../../../shared/lib";
 
@@ -28,8 +33,14 @@ export interface MemoryState {
   items: MemoryItem[];
   search: string;
   setSearch: (words: string) => void;
+  /** Whether lines replaced by a correction are listed too. */
+  history: boolean;
+  setHistory: (shown: boolean) => void;
   add: (content: string, aboutThePerson: boolean) => Promise<void>;
+  correct: (id: string, content: string) => Promise<void>;
+  keep: (id: string, days: number | null) => Promise<void>;
   forget: (id: string) => Promise<void>;
+  trace: (id: string) => Promise<MemoryTrace | null>;
   reload: () => Promise<void>;
 }
 
@@ -41,6 +52,7 @@ export function useMemory(client: RuntimeClient): MemoryState {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [search, setSearch] = useState("");
   const [asked, setAsked] = useState("");
+  const [history, setHistory] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setAsked(search), SEARCH_DELAY_MS);
@@ -49,7 +61,7 @@ export function useMemory(client: RuntimeClient): MemoryState {
 
   const reload = useCallback(async () => {
     try {
-      const body = await memoryApi.all(client, asked);
+      const body = await memoryApi.all(client, asked, history);
       setAvailable(body.available ?? true);
       setCanForget(body.can_forget ?? false);
       setItems(body.items ?? []);
@@ -61,7 +73,7 @@ export function useMemory(client: RuntimeClient): MemoryState {
     } finally {
       setReady(true);
     }
-  }, [client, asked]);
+  }, [client, asked, history]);
 
   useEffect(() => {
     void reload();
@@ -90,9 +102,23 @@ export function useMemory(client: RuntimeClient): MemoryState {
     items,
     search,
     setSearch,
+    history,
+    setHistory,
     add: (content, aboutThePerson) =>
       perform(() => rememberNote(client, content, aboutThePerson)),
+    correct: (id, content) => perform(() => correctMemory(client, id, content)),
+    keep: (id, days) => perform(() => keepMemory(client, id, days)),
     forget: (id) => perform(() => forgetMemory(client, id)),
+    trace: async (id) => {
+      try {
+        return await memoryApi.trace(client, id);
+      } catch (error) {
+        const said = describe(error);
+        setProblem(said);
+        report(said);
+        return null;
+      }
+    },
     reload,
   };
 }

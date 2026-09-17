@@ -6,6 +6,7 @@ from typing import Protocol
 from uuid import UUID
 
 from domain.conversations.models import Conversation
+from domain.conversations.session import SessionState
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 
@@ -23,3 +24,11 @@ class ConversationRepository(Protocol):
     ) -> list[Conversation]:
         """Most recently spoken in first."""
         ...
+
+
+class SessionStateRepository(Protocol):
+    """The stored half of a thread's brief (`domain/conversations/session.py`)."""
+
+    async def get(self, conversation_id: UUID) -> SessionState | None: ...
+
+    async def save(self, state: SessionState) -> None: ...

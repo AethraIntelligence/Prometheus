@@ -461,6 +461,7 @@ class MemoryItemRow(Base):
         ),
         Index("ix_memory_items_scope", "workspace_id", "scope", "kind", "created_at"),
         Index("ix_memory_items_employee", "employee_id", "kind", "created_at"),
+        Index("ix_memory_items_status", "workspace_id", "status"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -477,6 +478,63 @@ class MemoryItemRow(Base):
     importance: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Provenance and revision, since migration 039. Columns rather than keys in
+    # `metadata`, because recall filters on the status and a person sorts by
+    # the confidence - and a key nobody is obliged to write is a key some
+    # writer forgets.
+    basis: Mapped[str] = mapped_column(String(16), nullable=False, default="INFERRED")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE")
+    superseded_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    revised_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    contradicts: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    source_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="UNKNOWN")
+    source_ref: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    source_label: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    derived_from: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+
+
+class MemoryUseRow(Base):
+    """Which memory a piece of work was given, and why (`domain/memory/usage.py`).
+
+    No foreign keys and no copy of the content: a use outlives the memory it
+    names, and forgetting a memory must not leave its words behind here.
+    """
+
+    __tablename__ = "memory_uses"
+    __table_args__ = (
+        Index("ix_memory_uses_objective", "objective_id", "used_at"),
+        Index("ix_memory_uses_task", "task_id", "used_at"),
+        Index("ix_memory_uses_memory", "memory_id", "used_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    memory_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    objective_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reader: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    used_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+
+
+class ConversationSessionRow(Base):
+    """The compacted half of a thread's brief (`domain/conversations/session.py`).
+
+    One row per thread, and only what a model wrote: decisions, open questions
+    and files are projected from `objectives` on every read and never copied
+    here. No foreign key to `conversations`, like every label on this schema.
+    """
+
+    __tablename__ = "conversation_sessions"
+
+    conversation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    goal_brief: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    stages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    resolved_questions: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
 
 
 class AuditRow(Base):

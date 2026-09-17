@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from domain.memory.models import MemoryItem, MemoryKind
+from domain.memory.models import MemoryItem, MemoryKind, MemoryStatus
 
 #: How long it takes an item of each kind to be worth half of what it was.
 #: WORKING is measured in hours because it describes a task that is still
@@ -68,7 +68,43 @@ def score(item: MemoryItem, *, relevance: float = 1.0, now: datetime | None = No
     moment = now or datetime.now(UTC)
     created = item.created_at if item.created_at.tzinfo else item.created_at.replace(tzinfo=UTC)
     age_days = max((moment - created).total_seconds(), 0.0) / 86400.0
-    return relevance * max(item.importance, 0.0) * decay(item.kind, age_days)
+    return (
+        relevance
+        * max(item.importance, 0.0)
+        * decay(item.kind, age_days)
+        * trust(item)
+    )
+
+
+def trust(item: MemoryItem) -> float:
+    """How much of its weight an item keeps for what it rests on.
+
+    Half the weight is unconditional, so an assumption is ranked below a fact
+    rather than out of sight: a model's summary is still the only record of
+    what it summarised. A contested item is halved again - it is shown, marked,
+    and not preferred over the one it disagrees with.
+    """
+    confidence = min(max(item.confidence, 0.0), 1.0)
+    weight = 0.5 + 0.5 * confidence
+    if item.status is MemoryStatus.CONTESTED:
+        weight *= 0.5
+    return weight
+
+
+#: How long a superseded memory is kept after it was replaced. Long enough to
+#: answer "why did last week's run do that"; not so long that every correction
+#: doubles the store for good.
+SUPERSEDED_RETENTION = timedelta(days=30)
+
+
+def retention_over(item: MemoryItem, now: datetime | None = None) -> bool:
+    """Whether a superseded item has been kept as long as it is worth keeping."""
+    if item.status is not MemoryStatus.SUPERSEDED:
+        return False
+    moment = now or datetime.now(UTC)
+    since = item.revised_at or item.created_at
+    since = since if since.tzinfo else since.replace(tzinfo=UTC)
+    return since + SUPERSEDED_RETENTION <= moment
 
 
 #: How far below the best result an item may score and still be worth reading.

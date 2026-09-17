@@ -26,6 +26,7 @@ from uuid import UUID
 from domain.approvals.models import Approval, ApprovalRequest, CapabilityLease
 from domain.configuration.models import Setting
 from domain.conversations.models import Conversation
+from domain.conversations.session import SessionBrief, SessionNote
 from domain.employees.definition import EmployeeDefinition
 from domain.integrations.catalog import FieldKind, Plugin
 from domain.integrations.models import Integration
@@ -34,6 +35,7 @@ from domain.knowledge.models import Document, Passage
 from domain.llm.catalog import ModelEntry
 from domain.llm.telemetry import LLMCallRecord
 from domain.memory.models import MemoryItem
+from domain.memory.usage import MemoryUse
 from domain.policies.risk import at_least
 from domain.policies.rules import APPROVAL_THRESHOLD
 from domain.providers.guide import ProviderGuide
@@ -797,9 +799,11 @@ def memory_item(item: MemoryItem) -> dict[str, Any]:
     """One thing the platform remembers, as an interface shows it.
 
     The scope is shown because it answers a question a person actually asks:
-    whether something is true of this workspace or of them. Nothing here is
-    derived - the ranking that decided this item came back at all happened in
-    the domain, and re-scoring it for display would be a second opinion.
+    whether something is true of this workspace or of them. Since Phase 9 so is
+    what it rests on - basis, confidence, source and status - because the next
+    question is whether to believe it. Nothing here is derived: the ranking
+    that decided this item came back at all happened in the domain, and
+    re-scoring it for display would be a second opinion.
     """
     return {
         "id": str(item.id),
@@ -810,6 +814,92 @@ def memory_item(item: MemoryItem) -> dict[str, Any]:
         "created_at": item.created_at.isoformat(),
         "expires_at": item.expires_at.isoformat() if item.expires_at else "",
         "stated": item.metadata.get("source") == STATED_BY_PERSON,
+        "basis": item.basis.value,
+        "factual": item.is_factual,
+        "confidence": round(item.confidence, 3),
+        "status": item.status.value,
+        "superseded_by": str(item.superseded_by) if item.superseded_by else "",
+        "revised_at": item.revised_at.isoformat() if item.revised_at else "",
+        "contradicts": [str(other) for other in item.contradicts],
+        "source": {
+            "kind": item.provenance.kind.value,
+            "ref": item.provenance.ref,
+            "label": item.provenance.label,
+            "derived_from": list(item.provenance.derived_from),
+        },
+    }
+
+
+def memory_use(use: MemoryUse, item: MemoryItem | None) -> dict[str, Any]:
+    """One recorded use of a memory. `memory` is None where it is not shown here:
+    forgotten since, or an employee's private note, whose words stay private."""
+    return {
+        "memory_id": str(use.memory_id),
+        "reader": use.reader,
+        "reason": use.reason,
+        "weight": round(use.weight, 4),
+        "objective_id": str(use.objective_id) if use.objective_id else "",
+        "task_id": str(use.task_id) if use.task_id else "",
+        "used_at": use.used_at.isoformat(),
+        "memory": memory_item(item) if item is not None else None,
+    }
+
+
+def memory_trace(
+    item: MemoryItem,
+    *,
+    superseded_by: MemoryItem | None,
+    contradicts: list[MemoryItem],
+    derived_from: list[MemoryItem],
+    uses: list[MemoryUse],
+) -> dict[str, Any]:
+    return {
+        "item": memory_item(item),
+        "superseded_by": memory_item(superseded_by) if superseded_by else None,
+        "contradicts": [memory_item(other) for other in contradicts],
+        "derived_from": [memory_item(other) for other in derived_from],
+        "uses": [memory_use(use, None) for use in uses],
+    }
+
+
+def session_brief(brief: SessionBrief) -> dict[str, Any]:
+    """A thread's brief: what it established, and how much of it is compacted."""
+    return {
+        "conversation_id": str(brief.conversation_id),
+        "goal": brief.goal,
+        "decisions": [_session_note(note) for note in brief.decisions],
+        "open_questions": [_session_note(note) for note in brief.open_questions],
+        "artifacts": [
+            {
+                "path": item.path,
+                "objective_id": str(item.objective_id),
+                "recorded_at": item.recorded_at.isoformat(),
+            }
+            for item in brief.artifacts
+        ],
+        "stages": [
+            {
+                "index": stage.index,
+                "summary": stage.summary,
+                "objective_ids": [str(i) for i in stage.objective_ids],
+                "started_at": stage.started_at.isoformat(),
+                "ended_at": stage.ended_at.isoformat(),
+                "compacted_at": stage.compacted_at.isoformat(),
+                "summarised": stage.summarised,
+            }
+            for stage in brief.stages
+        ],
+        "total_turns": brief.total_turns,
+        "compacted_turns": brief.compacted_turns,
+        "recent_turns": len(brief.recent),
+    }
+
+
+def _session_note(note: SessionNote) -> dict[str, Any]:
+    return {
+        "text": note.text,
+        "objective_id": str(note.objective_id),
+        "recorded_at": note.recorded_at.isoformat(),
     }
 
 

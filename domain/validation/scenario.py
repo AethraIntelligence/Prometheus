@@ -184,6 +184,11 @@ class Scenario:
     #: alternative of leaving it unattended made "write the file you were asked
     #: for" impossible to pass and filled the report with NEEDED_APPROVAL.
     approve: tuple[str, ...] = ()
+    #: Requests asked first, in order, in the same thread as `request`. Each is
+    #: carried to an answer and none is measured: they are the history the
+    #: measured request depends on. A thread is what a long session is, and a
+    #: scenario about remembering one could not be written without it (Phase 9).
+    thread: tuple[str, ...] = ()
     inputs: dict[str, Any] = field(default_factory=dict)
     expect: Expectations = field(default_factory=Expectations)
     #: Force this into the regression set on a machine with no history of it.

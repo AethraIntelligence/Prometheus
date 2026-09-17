@@ -26,7 +26,7 @@ from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.computer.constraints import ComputerConstraints
 from domain.computer.models import Region
 from domain.computer.protocols import Computer, ScreenReader, StopSignal
-from domain.conversations.repository import ConversationRepository
+from domain.conversations.repository import ConversationRepository, SessionStateRepository
 from domain.employees.protocols import EmployeeRegistry
 from domain.employees.validation import Issue, check_all
 from domain.errors import PrometheusError
@@ -36,6 +36,7 @@ from domain.llm.models import RoutingHints, TaskKind
 from domain.llm.protocols import LLM, ModelRouter
 from domain.llm.telemetry import LLMCallLog
 from domain.memory.protocols import Memory, MemoryMaintenance
+from domain.memory.usage import MemoryUseLog
 from domain.scheduling.protocols import EventLog, ScheduleRepository
 from domain.search.protocols import SearchEngine
 from domain.secrets.protocols import CredentialStore, SecretResolver
@@ -731,6 +732,31 @@ class Container:
     def memory_maintenance(self) -> MemoryMaintenance | None:
         """The same store, seen through the contract that may forget."""
         return self.memory  # type: ignore[return-value]
+
+    @cached_property
+    def memory_uses(self) -> MemoryUseLog:
+        """Which memories work was given, and why. Built with no flag: with
+        memory off nothing is recalled, so nothing is written to it."""
+        if self._in_memory:
+            from infrastructure.persistence.memory_use_repository import InMemoryMemoryUseLog
+
+            return InMemoryMemoryUseLog()
+        from infrastructure.persistence.memory_use_repository import SqlMemoryUseLog
+
+        return SqlMemoryUseLog(self.session_factory)
+
+    @cached_property
+    def session_states(self) -> SessionStateRepository:
+        """The compacted half of each thread's brief."""
+        if self._in_memory:
+            from infrastructure.persistence.session_repository import (
+                InMemorySessionStateRepository,
+            )
+
+            return InMemorySessionStateRepository()
+        from infrastructure.persistence.session_repository import SqlSessionStateRepository
+
+        return SqlSessionStateRepository(self.session_factory)
 
     # --- Approvals --------------------------------------------------------------
 

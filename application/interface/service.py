@@ -29,19 +29,21 @@ import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import structlog
 
+from application.conversations.session import SessionMemory
 from application.integrations.service import IntegrationService
 from application.interface import artifacts, views
 from application.interface.activity import Activity, ActivityEvent
 from application.interface.contracts import RequestSource, UserRequest
 from application.interface.runs import Runs
 from application.knowledge.service import KnowledgeService
+from application.memory.revision import MemoryReviser
 from application.providers.service import ProviderService
 from application.workflows.engine import WorkflowEngine
 from application.workspaces import folders
@@ -83,8 +85,17 @@ from domain.knowledge.protocols import Retriever
 from domain.llm.catalog import DEFAULT_CONTEXT_TOKENS, ModelEntry
 from domain.llm.models import TaskKind
 from domain.llm.telemetry import LLMCallLog
-from domain.memory.models import MemoryItem, MemoryKind, MemoryQuery, MemoryScope
+from domain.memory.models import (
+    MemoryBasis,
+    MemoryItem,
+    MemoryKind,
+    MemoryQuery,
+    MemoryScope,
+    Provenance,
+    SourceKind,
+)
 from domain.memory.protocols import Memory, MemoryMaintenance
+from domain.memory.usage import MemoryUseLog
 from domain.policies.models import ActorKind, SimpleActor
 from domain.policies.risk import Effect
 from domain.scheduling.models import MIN_INTERVAL_SECONDS, Recurrence, Schedule
@@ -200,6 +211,14 @@ class ServiceDependencies:
     #: object. Where both are given, what may be forgotten is exactly what
     #: `list_memory` shows - see `forget_memory`.
     memory_maintenance: MemoryMaintenance | None = None
+    #: Which memories work was given, and why. None where a surface was built
+    #: without it; "why was this used" then has no record to answer from.
+    memory_uses: MemoryUseLog | None = None
+    #: Checks a note against what it may replace. None writes notes as they
+    #: are, which is what happened before Phase 9.
+    memory_reviser: MemoryReviser | None = None
+    #: Each thread's brief: decisions, open questions, files, compacted stages.
+    sessions: SessionMemory | None = None
     #: What this machine can do at all. Read-only here: the registry is the
     #: authority on which tools exist, and who may call one is the employee's
     #: own declaration - neither is an interface's to change.
@@ -529,7 +548,9 @@ class PrometheusService:
     def memory_can_forget(self) -> bool:
         return self._d.memory is not None and self._d.memory_maintenance is not None
 
-    async def _readable(self, text: str = "", limit: int = 20) -> MemoryQuery:
+    async def _readable(
+        self, text: str = "", limit: int = 20, *, include_superseded: bool = False
+    ) -> MemoryQuery:
         """What a person may see of memory here, stated once for reading and forgetting.
 
         The same scopes a run reads - this workspace's, and the person's own -
@@ -541,39 +562,80 @@ class PrometheusService:
             workspace_id=await self._here(),
             scopes=MEMORY_SHOWN,
             limit=limit,
+            include_superseded=include_superseded,
         )
 
-    async def list_memory(self, *, search: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    async def list_memory(
+        self, *, search: str = "", limit: int = 20, include_superseded: bool = False
+    ) -> list[dict[str, Any]]:
         """What this workspace remembers, through the one contract memory has.
 
         A search is `recall` with words in it, ranked by the domain like every
-        other recall - not a second query written for a screen.
+        other recall - not a second query written for a screen. Superseded
+        memories are shown only when asked for: they are history, kept so a
+        correction can be traced, not what the platform currently believes.
         """
         if self._d.memory is None:
             return []
-        items = await self._d.memory.recall(await self._readable(search, limit))
+        items = await self._d.memory.recall(
+            await self._readable(search, limit, include_superseded=include_superseded)
+        )
         return [views.memory_item(item) for item in items]
+
+    async def _shown(self, ids: set[UUID]) -> dict[UUID, MemoryItem]:
+        """These memories, as far as a person may see them here - superseded included."""
+        if self._d.memory is None or not ids:
+            return {}
+        query = replace(
+            await self._readable(limit=len(ids), include_superseded=True),
+            ids=frozenset(ids),
+        )
+        return {item.id: item for item in await self._d.memory.recall(query)}
+
+    async def memory_detail(self, item_id: UUID) -> dict[str, Any]:
+        """One memory traced: its source, what it replaced or disputes, and where it was used."""
+        if self._d.memory is None:
+            raise MemoryDisabledError("Memory is switched off on this machine.")
+        found = await self._shown({item_id})
+        item = found.get(item_id)
+        if item is None:
+            raise NotFoundError(f"Nothing remembered here as {item_id}.")
+        related = {
+            *(i for i in (item.superseded_by,) if i is not None),
+            *item.contradicts,
+            *(UUID(ref) for ref in item.provenance.derived_from if _is_uuid(ref)),
+        }
+        others = await self._shown(related)
+        uses = (
+            await self._d.memory_uses.for_memory(item_id)
+            if self._d.memory_uses is not None
+            else []
+        )
+        return views.memory_trace(
+            item,
+            superseded_by=others.get(item.superseded_by) if item.superseded_by else None,
+            contradicts=[others[i] for i in item.contradicts if i in others],
+            derived_from=[
+                others[UUID(ref)]
+                for ref in item.provenance.derived_from
+                if _is_uuid(ref) and UUID(ref) in others
+            ],
+            uses=uses,
+        )
 
     async def remember(self, content: str, *, about_the_person: bool) -> dict[str, Any]:
         """Keep something a person told the platform directly.
 
         SEMANTIC and without an expiry, like a preference read out of a request:
         it is a statement of how things are, and what supersedes it is the
-        person removing it, not time passing. `about_the_person` is the one
-        question worth asking - is this true of you everywhere, or of this
-        workspace - because it is the difference between USER and WORKSPACE,
-        and every other field has one right answer.
+        person removing or correcting it, or a later statement that replaces
+        it. `about_the_person` is the one question worth asking - is this true
+        of you everywhere, or of this workspace - because it is the difference
+        between USER and WORKSPACE, and every other field has one right answer.
         """
         if self._d.memory is None:
             raise MemoryDisabledError("Memory is switched off on this machine.")
-        stated = " ".join(content.split())
-        if not stated:
-            raise ValueError("There is nothing to remember.")
-        if len(stated) > MAX_NOTE_LENGTH:
-            raise ValueError(
-                f"A note is at most {MAX_NOTE_LENGTH} characters; "
-                "a longer text is a document."
-            )
+        stated = _note(content)
         here = await self._here()
         item = MemoryItem.create(
             stated,
@@ -582,23 +644,115 @@ class PrometheusService:
             workspace_id=here,
             importance=STATED_IMPORTANCE,
             metadata={"source": views.STATED_BY_PERSON, "stated_in": str(here)},
+            basis=MemoryBasis.STATED,
+            confidence=1.0,
+            provenance=Provenance(kind=SourceKind.PERSON, label="added by the user"),
         )
-        await self._d.memory.remember(item)
+        if self._d.memory_reviser is not None:
+            item = await self._d.memory_reviser.remember(item)
+        else:
+            await self._d.memory.remember(item)
         return views.memory_item(item)
+
+    async def correct_memory(self, item_id: UUID, content: str) -> dict[str, Any]:
+        """Replace what a memory says. The old one is superseded, not erased."""
+        if self._d.memory is None:
+            raise MemoryDisabledError("Memory is switched off on this machine.")
+        stated = _note(content)
+        old = (await self._shown({item_id})).get(item_id)
+        if old is None or not old.is_active:
+            raise NotFoundError(f"Nothing current is remembered here as {item_id}.")
+        new, old = MemoryReviser.correction(old, stated)
+        await self._d.memory.remember(new)
+        await self._d.memory.remember(old)
+        return views.memory_item(new)
+
+    async def set_memory_retention(self, item_id: UUID, days: int | None) -> dict[str, Any]:
+        """How long a memory is kept: `None` for until it is replaced, or a number of days."""
+        if self._d.memory is None:
+            raise MemoryDisabledError("Memory is switched off on this machine.")
+        if days is not None and not 1 <= days <= 3650:
+            raise ValueError("Keep a memory for between 1 and 3650 days, or until replaced.")
+        item = (await self._shown({item_id})).get(item_id)
+        if item is None:
+            raise NotFoundError(f"Nothing remembered here as {item_id}.")
+        updated = replace(
+            item,
+            expires_at=datetime.now(UTC) + timedelta(days=days) if days is not None else None,
+        )
+        await self._d.memory.remember(updated)
+        return views.memory_item(updated)
 
     async def forget_memory(self, item_id: UUID) -> bool:
         """Forget one thing a person can see. False where there is no such thing *here*.
 
-        Bounded by the same query `list_memory` reads with, so an id copied from
-        another workspace, or belonging to an employee's private notes, is not
-        found rather than deleted.
+        Bounded by the same scopes `list_memory` reads with, so an id copied
+        from another workspace, or belonging to an employee's private notes, is
+        not found rather than deleted. Superseded memories can be forgotten too:
+        keeping a correction's history is a default, not an obligation.
         """
         if self._d.memory is None or self._d.memory_maintenance is None:
             raise MemoryDisabledError("Forgetting is not available on this machine.")
         forgotten = await self._d.memory_maintenance.forget(
-            [item_id], within=await self._readable()
+            [item_id], within=await self._readable(include_superseded=True)
         )
         return forgotten > 0
+
+    async def memory_used_by(self, objective_id: UUID) -> dict[str, Any]:
+        """Which memories one answer was given, by whom, and why each was chosen."""
+        objective = await self._d.objectives.get(objective_id)
+        if objective is None:
+            raise NotFoundError(f"Unknown objective: {objective_id}")
+        uses = []
+        plans = await self._d.plans.for_objective(objective_id)
+        if self._d.memory_uses is not None:
+            uses.extend(await self._d.memory_uses.for_objective(objective_id))
+            for plan in plans:
+                for task in plan.tasks:
+                    uses.extend(await self._d.memory_uses.for_task(task.id))
+        ids = {use.memory_id for use in uses}
+        shown = await self._shown(ids)
+        if self._d.memory is not None and ids - set(shown):
+            # Plan memory belongs to this objective's own work, so it is shown
+            # here - read plan by plan, because a query names one plan or none.
+            for plan in plans:
+                query = MemoryQuery(
+                    workspace_id=objective.workspace_id,
+                    scopes=frozenset({MemoryScope.PLAN}),
+                    plan_id=plan.id,
+                    ids=frozenset(ids - set(shown)),
+                    include_superseded=True,
+                    limit=len(ids),
+                )
+                shown.update({item.id: item for item in await self._d.memory.recall(query)})
+        return {
+            "objective_id": str(objective_id),
+            "recorded": self._d.memory_uses is not None,
+            "uses": [views.memory_use(use, shown.get(use.memory_id)) for use in uses],
+        }
+
+    # --- Sessions -------------------------------------------------------------
+
+    async def session_brief(self, conversation_id: UUID) -> dict[str, Any]:
+        """What a thread has established: goal, decisions, open questions, files, stages."""
+        if self._d.sessions is None:
+            raise NotFoundError("This interface keeps no thread briefs.")
+        if await self._d.conversations.get(conversation_id) is None:
+            raise NotFoundError(f"Unknown conversation: {conversation_id}")
+        return views.session_brief(await self._d.sessions.brief(conversation_id))
+
+    async def resolve_session_question(
+        self, conversation_id: UUID, question: str
+    ) -> dict[str, Any]:
+        if self._d.sessions is None:
+            raise NotFoundError("This interface keeps no thread briefs.")
+        if await self._d.conversations.get(conversation_id) is None:
+            raise NotFoundError(f"Unknown conversation: {conversation_id}")
+        if not question.strip():
+            raise ValueError("Name the question that is settled.")
+        return views.session_brief(
+            await self._d.sessions.resolve(conversation_id, question.strip())
+        )
 
     # --- Knowledge ------------------------------------------------------------
 
@@ -2420,3 +2574,22 @@ def _task_kind(value: str) -> TaskKind:
     except ValueError as error:
         known = ", ".join(sorted(kind.value for kind in TaskKind))
         raise PrometheusError(f"Unknown kind of work '{value}'. Known: {known}.") from error
+
+
+def _note(content: str) -> str:
+    stated = " ".join(content.split())
+    if not stated:
+        raise ValueError("There is nothing to remember.")
+    if len(stated) > MAX_NOTE_LENGTH:
+        raise ValueError(
+            f"A note is at most {MAX_NOTE_LENGTH} characters; a longer text is a document."
+        )
+    return stated
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True

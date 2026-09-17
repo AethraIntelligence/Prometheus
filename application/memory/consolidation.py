@@ -28,7 +28,15 @@ from application.prompts import render
 from domain.capabilities.models import CapabilityRequirement
 from domain.llm.models import LLMRequest, Message, RoutingHints, TaskKind
 from domain.llm.protocols import LLM
-from domain.memory.models import MemoryItem, MemoryKind, MemoryQuery, MemoryScope
+from domain.memory.models import (
+    MemoryBasis,
+    MemoryItem,
+    MemoryKind,
+    MemoryQuery,
+    MemoryScope,
+    Provenance,
+    SourceKind,
+)
 from domain.memory.protocols import Memory, MemoryMaintenance
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
@@ -101,6 +109,21 @@ class Consolidator:
             # of them now, and it says something none of them said alone.
             importance=min(max(item.importance for item in oldest) + 0.1, 1.0),
             metadata={"consolidated": len(oldest)},
+            # A model's reading of several accounts: an assumption, however
+            # good, and never more trusted than the least trusted thing it read.
+            basis=MemoryBasis.INFERRED,
+            confidence=round(min(item.confidence for item in oldest) * 0.9, 3),
+            provenance=Provenance(
+                kind=SourceKind.CONSOLIDATION,
+                label=f"{len(oldest)} earlier outcomes",
+                # The originals are forgotten below; their ids and sources are
+                # what is left of where this came from.
+                derived_from=tuple(
+                    dict.fromkeys(
+                        (item.provenance.ref or str(item.id)) for item in oldest
+                    )
+                ),
+            ),
         )
         try:
             await self._memory.remember(folded)

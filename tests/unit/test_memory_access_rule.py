@@ -37,9 +37,10 @@ ALLOWED = {
     "infrastructure/persistence/models.py",
     "infrastructure/persistence/migrations/versions/007_memory_items.py",
     # A migration is the schema, and the schema is where the table's name
-    # belongs. Every file here is one of the four that build it.
+    # belongs. Every file here is one of the five that build it.
     "infrastructure/persistence/migrations/versions/015_memory_above_the_workspace.py",
     "infrastructure/persistence/migrations/versions/021_text_index_tokenises_like_the_other_one.py",
+    "infrastructure/persistence/migrations/versions/039_memory_provenance_and_session_briefs.py",
     # Knowledge is a different store with a contract of its own (ADR 0016), and
     # this rule is about reaching *memory* around its. Its index is declared and
     # queried in these three files and named nowhere else - the same shape of

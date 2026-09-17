@@ -16,7 +16,7 @@ from uuid import UUID
 
 from domain.memory.access import visible
 from domain.memory.models import MemoryItem, MemoryQuery
-from domain.memory.ranking import CUTOFF_RATIO, best_of, is_live, score
+from domain.memory.ranking import CUTOFF_RATIO, best_of, is_live, retention_over, score
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 _WORD = re.compile(r"\w+", re.UNICODE)
@@ -78,6 +78,7 @@ class InMemoryMemory:
         expired = [
             item.id
             for item in self._items.values()
-            if item.workspace_id == workspace_id and not is_live(item, now)
+            if item.workspace_id == workspace_id
+            and (not is_live(item, now) or retention_over(item, now))
         ]
         return await self.forget(expired)

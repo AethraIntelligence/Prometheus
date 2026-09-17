@@ -43,6 +43,7 @@ KNOWN_FIELDS = frozenset(
         "setup",
         "reset",
         "approve",
+        "thread",
         "workspace",
         "knowledge",
         "expect",
@@ -134,6 +135,13 @@ def _load(path: Path) -> Scenario:
     if entry is not Entry.WORKFLOW and not request:
         raise ConfigurationError(f"{path}: 'request' is required and must have text.")
 
+    thread = _strings(path, "thread", raw.get("thread"))
+    if thread and entry is not Entry.OBJECTIVE:
+        raise ConfigurationError(
+            f"{path}: 'thread' is a conversation with Prometheus, so it needs a request "
+            "to Prometheus rather than to an employee or a workflow."
+        )
+
     phase = raw.get("phase", 0)
     if not isinstance(phase, int) or isinstance(phase, bool) or phase < 0:
         raise ConfigurationError(f"{path}: phase must be a whole number.")
@@ -150,6 +158,7 @@ def _load(path: Path) -> Scenario:
         setup=_files(path, "setup", raw.get("setup")),
         reset=_paths(path, raw.get("reset")),
         approve=_strings(path, "approve", raw.get("approve")),
+        thread=thread,
         workspace=str(raw.get("workspace", "") or "").strip(),
         knowledge=_knowledge(path, raw.get("knowledge")),
         inputs=dict(raw.get("inputs") or {}),

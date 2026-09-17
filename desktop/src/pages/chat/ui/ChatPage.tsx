@@ -25,6 +25,7 @@ import { ComposerMenu, FolderTray } from "../../../features/choose-folder";
 import { ApprovalDecision } from "../../../features/decide-approval";
 import { RequestComposer } from "../../../features/send-request";
 import { StopButton } from "../../../features/stop-run";
+import { ThreadBrief } from "../../../features/view-thread-brief";
 import { useRuntime } from "../../../shared/api";
 import { PageHead } from "../../../shared/ui";
 import { ConversationView } from "../../../widgets/conversation";
@@ -109,6 +110,7 @@ export function ChatPage({
         // middle of the screen, so the greeting and the field stay together.
         empty={blank ? null : <WorkforcePanel employees={employees} />}
         onOpenFile={(message, artifact) => setPreview({ objectiveId: message.id, artifact })}
+        explainMemory
       />
       {approvals.map((approval) => (
         <ApprovalCard
@@ -183,7 +185,9 @@ export function ChatPage({
           chip={active?.name}
           railOpen={railOpen}
           onOpenRail={onOpenRail}
-        />
+        >
+          {thread && <ThreadBrief conversationId={thread.id} refresh={messages.length} />}
+        </PageHead>
 
         {blank ? (
           <div className="stream blank">

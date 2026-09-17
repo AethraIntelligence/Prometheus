@@ -42,11 +42,13 @@ export function workedFor(message: Message): string {
 interface Props {
   message: Message;
   work?: ReactNode;
+  /** Which memories the answer was given, and why - composed by the widget. */
+  memory?: ReactNode;
   /** Opening a file the turn produced. Without it the cards are shown and do nothing. */
   onOpenFile?: (message: Message, artifact: Artifact) => void;
 }
 
-export function MessageTurn({ message, work, onOpenFile }: Props) {
+export function MessageTurn({ message, work, memory, onOpenFile }: Props) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const took = workedFor(message);
@@ -122,6 +124,7 @@ export function MessageTurn({ message, work, onOpenFile }: Props) {
                 </ul>
               </section>
             )}
+            {memory}
             {message.answer && (
               <div className="react">
                 <button type="button" aria-label={copied ? "Copied" : "Copy"} onClick={copy}>

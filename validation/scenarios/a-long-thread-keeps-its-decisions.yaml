@@ -1,0 +1,38 @@
+# Phase 9: a long session keeps its meaning. Twelve requests come before the one
+# that is measured - enough for the oldest six to be folded into a compacted
+# stage before it is asked - and the measured request depends on two things
+# only those oldest turns established: where the list goes and what is on it.
+# With the thread as its last few turns, neither is in front of the manager.
+
+name: a-long-thread-keeps-its-decisions
+description: A request late in a long thread relies on decisions made at its start.
+phase: 9
+tags: [memory, session, manager]
+
+thread:
+  - "We are planning a hiking trip. Decision: the packing list will be saved as packing/list.md. Nothing to do yet, just note it."
+  - "First item for the list: passport."
+  - "Second item: a head torch."
+  - "Third item: water filter."
+  - "Fourth item: blister plasters."
+  - "Fifth and last item: a paper map of the route."
+  - "What is a sensible daily distance for a beginner on mountain trails?"
+  - "Is it better to start early in the morning in summer?"
+  - "How much water should one person carry for a day?"
+  - "What should go in a basic first aid kit?"
+  - "How do I tell if a storm is coming in the mountains?"
+  - "Should I tell someone my route before leaving?"
+
+request: >
+  Now write the packing list we agreed on to the file we decided on, one item per
+  line.
+
+reset: [packing]
+
+approve: [fs.write]
+
+expect:
+  files_exist: [packing/list.md]
+  file_contains:
+    packing/list.md: passport
+  max_steps: 40

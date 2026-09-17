@@ -42,6 +42,13 @@ passed down to the tasks it delegates rather than kept for itself. Memory is
 optional and reached through a contract, so a manager without one plans exactly
 as it did before (§9.4).
 
+**Long threads.** A thread reaches the reading of a request as a brief -
+goal, decisions, open questions, the files it produced and compacted stages -
+plus its most recent turns verbatim, inside a fixed character budget however
+long the thread has grown. After each answer the oldest turns outside the
+recent window are folded into a stage when enough have accumulated; the
+objectives themselves are never changed (`application/conversations/session.py`).
+
 What this class does *not* do is as deliberate:
 
 * it never names an employee - candidates come from `EmployeeRegistry`;
@@ -58,6 +65,7 @@ from dataclasses import replace
 
 import structlog
 
+from application.conversations.session import SessionMemory
 from application.knowledge.workspace import WorkspaceKnowledge
 from application.memory.workspace import WorkspaceMemory
 from application.prometheus.intent import IntentReader
@@ -113,6 +121,7 @@ class PrometheusManager:
         max_revisions: int = MAX_PLAN_REVISIONS,
         memory: WorkspaceMemory | None = None,
         knowledge: WorkspaceKnowledge | None = None,
+        session: SessionMemory | None = None,
     ) -> None:
         self._intent = intent
         self._planner = planner
@@ -134,6 +143,9 @@ class PrometheusManager:
         # exists to retrieve it. That is what the first Phase 15 validation run
         # did (validation/tasks/phase-15-*).
         self._knowledge = knowledge
+        # Optional like memory: without it a thread is its last few turns, the
+        # arrangement before Phase 9, which is still bounded - only forgetful.
+        self._session = session
 
     # --- The whole of it ------------------------------------------------------
 
@@ -342,6 +354,7 @@ class PrometheusManager:
                 intent.preferences,
                 source=objective.text,
                 workspace_id=objective.workspace_id,
+                objective_id=objective.id,
             )
 
         rejected: tuple[str, ...] = ()
@@ -399,7 +412,10 @@ class PrometheusManager:
             # Nothing else records this: no task ran, so without it the only
             # trace that the question was asked is the objective row.
             await self._memory.remember_answer(
-                objective.text, intent.answer, workspace_id=objective.workspace_id
+                objective.text,
+                intent.answer,
+                workspace_id=objective.workspace_id,
+                objective_id=objective.id,
             )
         return await self._finish(
             objective,
@@ -584,7 +600,13 @@ class PrometheusManager:
             missing=missing,
             cost_usd=cost_usd,
         )
-        await self._objectives.save(objective.to(status, result))
+        finished = objective.to(status, result)
+        await self._objectives.save(finished)
+        if self._session is not None:
+            # After the answer is on record, so the turn being folded is a
+            # finished one. Guarded inside: a thread that could not be
+            # compacted is a longer brief next time, not a failed objective.
+            await self._session.after(finished)
         await self._announce(
             objective,
             summary,
@@ -635,7 +657,9 @@ class PrometheusManager:
             remembered = (
                 *remembered,
                 *await self._memory.context_for(
-                    objective.text, workspace_id=objective.workspace_id
+                    objective.text,
+                    workspace_id=objective.workspace_id,
+                    objective_id=objective.id,
                 ),
             )
         if self._knowledge is not None:
@@ -657,6 +681,8 @@ class PrometheusManager:
         """
         if objective.conversation_id is None:
             return ()
+        if self._session is not None:
+            return await self._session.context_for(objective)
         thread = await self._objectives.for_conversation(objective.conversation_id)
         earlier = [
             item

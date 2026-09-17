@@ -33,7 +33,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from shutil import rmtree
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -261,14 +261,34 @@ class ValidationHarness:
         if scenario.entry is Entry.OBJECTIVE:
             if self._objectives is None:
                 raise _unavailable("the manager")
-            objective = await self._objectives.receive(scenario.request, workspace_id)
+            conversation_id = uuid4() if scenario.thread else None
+            spent = 0.0
+            for earlier in scenario.thread:
+                # The history the measured request depends on, asked the way a
+                # person would have asked it: one request at a time, each
+                # answered before the next, all in one thread.
+                previous = await self._objectives.receive(
+                    earlier, workspace_id, conversation_id=conversation_id
+                )
+                spent += (await self._objectives.handle_objective(previous)).cost_usd
+            objective = await self._objectives.receive(
+                scenario.request,
+                workspace_id,
+                **({"conversation_id": conversation_id} if conversation_id else {}),
+            )
             result = await self._objectives.handle_objective(objective)
             ids = tuple(
                 UUID(str(entry["id"]))
                 for entry in result.output.get("tasks", [])
                 if entry.get("id")
             )
-            return result.summary, result.succeeded, result.missing, ids, result.cost_usd
+            return (
+                result.summary,
+                result.succeeded,
+                result.missing,
+                ids,
+                result.cost_usd + spent,
+            )
 
         if scenario.entry is Entry.TASK:
             if self._employees is None:

@@ -327,6 +327,14 @@ def memory(
                     f"{item.created_at:%Y-%m-%d %H:%M}  "
                     f"{' '.join(item.content.split())[:90]}"
                 )
+                # What it rests on, on its own line: a person reading this list
+                # is usually asking whether to believe a line, not what it says.
+                typer.secho(
+                    f"{'':<11}{item.basis.value.lower()} · {item.provenance.kind.value.lower()}"
+                    f" · confidence {item.confidence:.2f} · {item.scope.value.lower()}"
+                    + (f" · {item.status.value.lower()}" if item.status.value != "ACTIVE" else ""),
+                    dim=True,
+                )
         except StorageNotInitializedError as error:
             typer.secho(f"{error} Run: uv run alembic upgrade head", fg="red", err=True)
             raise typer.Exit(code=1) from error
@@ -334,6 +342,59 @@ def memory(
             await container.aclose()
 
     asyncio.run(_run())
+
+
+@app.command(name="memory-eval")
+def memory_eval(
+    backend: str = typer.Option(
+        "both", "--backend", help="memory, sqlite, or both."
+    ),
+) -> None:
+    """Retrieval evals: groundedness, freshness and workspace isolation.
+
+    Run against a fresh store seeded with a fixed corpus - never the real one,
+    because an eval that wrote into a person's memory would be a way to corrupt
+    it. `sqlite` builds a throwaway database file with the real text index.
+    """
+    import tempfile
+
+    from application.memory.evals import render_report, run_retrieval_evals
+    from infrastructure.memory.in_memory import InMemoryMemory
+
+    async def _run() -> bool:
+        passed = True
+        if backend in ("memory", "both"):
+            report = await run_retrieval_evals(InMemoryMemory, backend="in-memory")
+            typer.echo(render_report(report))
+            passed = passed and report.passed
+        if backend in ("sqlite", "both"):
+            from infrastructure.memory.sql import SqlMemory
+            from infrastructure.persistence.models import Base
+            from infrastructure.persistence.session import (
+                create_engine,
+                create_session_factory,
+            )
+
+            with tempfile.TemporaryDirectory() as directory:
+                engine = create_engine(f"sqlite+aiosqlite:///{directory}/eval.db")
+                try:
+                    async with engine.begin() as connection:
+                        await connection.run_sync(Base.metadata.create_all)
+                    factory = create_session_factory(engine)
+                    report = await run_retrieval_evals(
+                        lambda: SqlMemory(factory), backend="sqlite"
+                    )
+                finally:
+                    await engine.dispose()
+            typer.echo(render_report(report))
+            passed = passed and report.passed
+        return passed
+
+    if backend not in ("memory", "sqlite", "both"):
+        typer.secho("--backend must be memory, sqlite or both.", fg="red", err=True)
+        raise typer.Exit(code=2)
+    if not asyncio.run(_run()):
+        raise typer.Exit(code=1)
 
 
 @app.command(name="run-task")

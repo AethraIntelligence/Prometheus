@@ -15,33 +15,12 @@ integration ever adds, and would be wrong the first time one did.
 from __future__ import annotations
 
 import mimetypes
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from domain.tools.telemetry import ToolCallRecord
+from domain.tools.artifacts import produced_files
 
-
-def produced_files(calls: Iterable[ToolCallRecord]) -> list[str]:
-    """Relative paths, in the order they were first written, as they stand now.
-
-    A file moved after it was written is listed where it went: the old path is
-    somewhere nobody can open any more.
-    """
-    found: list[str] = []
-    for call in sorted(calls, key=lambda item: item.created_at):
-        if not call.success:
-            continue
-        output = call.output or {}
-        written = output.get("path")
-        if isinstance(written, str) and "bytes_written" in output:
-            if written not in found:
-                found.append(written)
-            continue
-        source, destination = output.get("source"), output.get("destination")
-        if isinstance(source, str) and isinstance(destination, str) and source in found:
-            found[found.index(source)] = destination
-    return found
+__all__ = ["artifact", "media_type", "produced_files", "within"]
 
 
 def within(root: Path, relative: str) -> Path | None:

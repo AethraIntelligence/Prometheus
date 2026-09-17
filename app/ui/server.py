@@ -316,6 +316,22 @@ class NewMemory(BaseModel):
     about_the_person: bool = False
 
 
+class MemoryCorrection(BaseModel):
+    """What a memory should say instead. The old wording is kept as superseded."""
+
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class MemoryRetention(BaseModel):
+    """How long to keep a memory: a number of days, or null for until replaced."""
+
+    days: int | None = Field(default=None, ge=1, le=3650)
+
+
+class SettledQuestion(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+
 class NewWorkspace(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
@@ -578,6 +594,19 @@ def _routes(app: FastAPI) -> None:
         found = await _guarded(_service(request).rename_conversation(conversation_id, body.title))
         return _found(found, f"Unknown conversation: {conversation_id}")
 
+    @app.get("/api/conversations/{conversation_id}/session")
+    async def conversation_session(request: Request, conversation_id: UUID) -> dict[str, Any]:
+        """The thread's brief: goal, decisions, open questions, files and stages."""
+        return await _memory(_service(request).session_brief(conversation_id))
+
+    @app.post("/api/conversations/{conversation_id}/session/resolved")
+    async def settle_question(
+        request: Request, conversation_id: UUID, body: SettledQuestion
+    ) -> dict[str, Any]:
+        return await _memory(
+            _service(request).resolve_session_question(conversation_id, body.question)
+        )
+
     @app.put("/api/conversations/{conversation_id}/folder")
     async def thread_folder(
         request: Request, conversation_id: UUID, body: ConversationFolder
@@ -716,14 +745,40 @@ def _routes(app: FastAPI) -> None:
 
 
     @app.get("/api/memory")
-    async def memory(request: Request, q: str = "", limit: int = 20) -> dict[str, Any]:
+    async def memory(
+        request: Request, q: str = "", limit: int = 20, superseded: bool = False
+    ) -> dict[str, Any]:
         """What this workspace remembers, or what of it matches `q`."""
         service = _service(request)
         return {
             "available": service.memory_available,
             "can_forget": service.memory_can_forget,
-            "items": await _guarded(service.list_memory(search=q, limit=limit)),
+            "items": await _guarded(
+                service.list_memory(search=q, limit=limit, include_superseded=superseded)
+            ),
         }
+
+    @app.get("/api/memory/{item_id}")
+    async def memory_detail(request: Request, item_id: UUID) -> dict[str, Any]:
+        """One memory traced to its source, its revisions and where it was used."""
+        return await _memory(_service(request).memory_detail(item_id))
+
+    @app.put("/api/memory/{item_id}")
+    async def correct_memory(
+        request: Request, item_id: UUID, body: MemoryCorrection
+    ) -> dict[str, Any]:
+        return await _memory(_service(request).correct_memory(item_id, body.content))
+
+    @app.put("/api/memory/{item_id}/retention")
+    async def memory_retention(
+        request: Request, item_id: UUID, body: MemoryRetention
+    ) -> dict[str, Any]:
+        return await _memory(_service(request).set_memory_retention(item_id, body.days))
+
+    @app.get("/api/objectives/{objective_id}/memory")
+    async def objective_memory(request: Request, objective_id: UUID) -> dict[str, Any]:
+        """Which memories this answer was given, and why each one."""
+        return await _memory(_service(request).memory_used_by(objective_id))
 
     @app.post("/api/memory", status_code=201)
     async def remember(request: Request, body: NewMemory) -> dict[str, Any]:
@@ -1311,6 +1366,8 @@ async def _memory(awaitable):
         return await _guarded(awaitable)
     except MemoryDisabledError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

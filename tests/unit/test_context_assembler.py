@@ -26,6 +26,17 @@ PLAN = reply('{"steps": [{"description": "Answer it", "expected_outcome": "an an
 PASS = reply('{"passed": true, "reason": "good enough"}')
 
 
+def claims(assembled) -> tuple[str, ...]:
+    """What was recalled, without the provenance each line now carries.
+
+    The citation is checked on its own (`test_memory_provenance.py`); these
+    tests are about which memories arrive, not how they are labelled.
+    """
+    lines = assembled.recollections()
+    assert all(line.endswith("]") and " [" in line for line in lines)
+    return tuple(line.rsplit(" [", 1)[0] for line in lines)
+
+
 def build(script, memory=None, employee=None, retriever=None):
     llm = FakeLLM(script)
     registry = InMemoryToolRegistry([])
@@ -69,7 +80,7 @@ async def test_the_three_parts_arrive_in_order_of_trust() -> None:
     assert assembled.goal == task.goal
     assert assembled.facts == ("Last month's are already done",)
     assert assembled.constraints == ("Keep names",)
-    assert assembled.recollections() == ("The invoices live in finance/2026",)
+    assert claims(assembled) == ("The invoices live in finance/2026",)
 
 
 async def test_what_is_remembered_reaches_the_model_as_recollection() -> None:
@@ -145,7 +156,7 @@ async def test_a_document_is_not_offered_as_something_the_employee_remembers() -
         memory, retriever=OnePassage("Returns run for thirty days.")
     ).assemble(Task.create("What is the returns window?"), definition())
 
-    assert assembled.recollections() == ("You wrote the delivery page last week",)
+    assert claims(assembled) == ("You wrote the delivery page last week",)
     assert "Returns run for thirty days." in "".join(assembled.quotations())
     assert not any("Returns run" in line for line in assembled.recollections())
 
@@ -203,7 +214,7 @@ async def test_an_employee_recalls_its_own_notes_and_not_a_colleagues() -> None:
 
     assembled = await ContextAssembler(memory).assemble(Task.create("Use fs.list"), mine)
 
-    assert assembled.recollections() == ("I always start with fs.list",)
+    assert claims(assembled) == ("I always start with fs.list",)
 
 
 async def test_a_recall_that_fails_leaves_the_run_with_what_it_was_told() -> None:
@@ -242,7 +253,7 @@ async def test_a_narrowed_assignment_still_carries_its_facts_into_memory_recall(
         SharedContext(facts=("It is a ledger export",)),
     )
 
-    assert assembled.recollections() == ("Ledger exports are tab separated",)
+    assert claims(assembled) == ("Ledger exports are tab separated",)
 
 
 async def test_a_plans_memory_follows_the_plan_and_not_the_employee() -> None:
@@ -261,7 +272,7 @@ async def test_a_plans_memory_follows_the_plan_and_not_the_employee() -> None:
     outside_plan = replace(task, plan_id=uuid4())
 
     assembler = ContextAssembler(memory)
-    assert (await assembler.assemble(within_plan, definition())).recollections() == (
+    assert claims(await assembler.assemble(within_plan, definition())) == (
         "Step one produced sources.csv",
     )
-    assert (await assembler.assemble(outside_plan, definition())).recollections() == ()
+    assert claims(await assembler.assemble(outside_plan, definition())) == ()

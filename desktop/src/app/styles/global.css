@@ -2596,10 +2596,124 @@ article > .actions {
   border-top: 0;
 }
 
-.memory > span:nth-child(2) {
+.memory > .memory-body {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+  display: grid;
+  gap: 3px;
+}
+
+/* A line that is somebody's account or a model's guess reads a shade quieter
+   than one a person stated or the platform recorded. */
+.memory .memory-claim {
+  font-style: italic;
+}
+
+.memory.superseded .memory-body > span:first-child {
+  color: var(--grey-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--hair-2);
+}
+
+.provenance {
+  font-size: 11.5px;
+  color: var(--grey-2);
+}
+
+.memory.contested .provenance {
+  color: var(--text);
+}
+
+.memory-history {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.memory .keep {
+  font-size: 12px;
+  max-width: 150px;
+}
+
+.memory-trace h3,
+.session-brief h3 {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--grey);
+}
+
+.memory-trace .note,
+.session-brief .note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--grey-2);
+}
+
+.memory-uses {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.memory-uses li {
+  padding: 10px 12px;
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.memory-uses p {
+  margin: 0;
+}
+
+.memory-uses .memory-reason {
+  margin-top: 4px;
+  color: var(--grey);
+}
+
+.memory-used-by {
+  margin: 0 0 8px;
+}
+
+.session-brief ul,
+.session-brief ol {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+  display: grid;
+  gap: 4px;
+}
+
+.session-brief li {
+  overflow-wrap: anywhere;
+}
+
+.session-brief li .linkish {
+  margin-left: 8px;
+  font-size: 12px;
+  border: 0;
+  background: none;
+}
+
+.session-brief .mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.head-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--grey);
+}
+
+.head-btn:hover {
+  color: var(--text);
 }
 
 .memory .note {

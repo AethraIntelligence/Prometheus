@@ -98,3 +98,79 @@ def test_workflow_schedule_migration_keeps_legacy_schedule_and_history(
         events = connection.execute(text("SELECT count(*) FROM events")).scalar_one()
     assert tuple(schedule) == ("Summarise notes", 7, 3, "", None)
     assert events == 1
+
+
+def test_memory_provenance_migration_traces_existing_memories_and_keeps_the_index(
+    tmp_path: Path,
+) -> None:
+    """Migration 039 on a store with memories in it.
+
+    Existing rows get the provenance they already imply, not a blanket
+    "unknown", and the text index still finds them afterwards - the columns are
+    added one by one precisely so its triggers survive.
+    """
+    from alembic import command
+
+    database = tmp_path / "legacy-memory.db"
+    config = _alembic_config(f"sqlite+aiosqlite:///{database}")
+    command.upgrade(config, "038")
+    engine = create_engine(f"sqlite:///{database}")
+    rows = [
+        ("00000000-0000-0000-0000-00000000000a", "SEMANTIC", "Invoices live in finance",
+         None, '{"source": "person"}'),
+        ("00000000-0000-0000-0000-00000000000b", "SEMANTIC", "The user prefers: Markdown",
+         None, '{"source": "Always use Markdown"}'),
+        ("00000000-0000-0000-0000-00000000000c", "EPISODIC", "Sorted the inbox",
+         "00000000-0000-0000-0000-0000000000ff", '{"status": "COMPLETED"}'),
+    ]  # fmt: skip
+    with engine.begin() as connection:
+        for item_id, kind, content, task_id, meta in rows:
+            connection.execute(
+                text(
+                    "INSERT INTO memory_items (id, workspace_id, scope, kind, content, "
+                    "task_id, metadata, importance, created_at) VALUES "
+                    "(:id, 'default', 'WORKSPACE', :kind, :content, :task, :meta, 0.5, "
+                    "'2026-09-01 00:00:00')"
+                ),
+                {"id": item_id, "kind": kind, "content": content, "task": task_id, "meta": meta},
+            )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        traced = connection.execute(
+            text(
+                "SELECT content, basis, confidence, source_kind, source_ref, status "
+                "FROM memory_items ORDER BY id"
+            )
+        ).all()
+        found = connection.execute(
+            text("SELECT item_id FROM memory_items_fts WHERE memory_items_fts MATCH 'inbox'")
+        ).all()
+        inserted = connection.execute(
+            text(
+                "INSERT INTO memory_items (id, workspace_id, scope, kind, content, metadata, "
+                "importance, created_at) VALUES ('00000000-0000-0000-0000-00000000000d', "
+                "'default', 'WORKSPACE', 'SEMANTIC', 'Refunds live in returns', '{}', 0.5, "
+                "'2026-09-18 00:00:00')"
+            )
+        )
+        assert inserted.rowcount == 1
+        refound = connection.execute(
+            text("SELECT item_id FROM memory_items_fts WHERE memory_items_fts MATCH 'refunds'")
+        ).all()
+
+    assert [tuple(row) for row in traced] == [
+        ("Invoices live in finance", "STATED", 1.0, "PERSON", "", "ACTIVE"),
+        ("The user prefers: Markdown", "STATED", 0.8, "OBJECTIVE", "", "ACTIVE"),
+        (
+            "Sorted the inbox",
+            "REPORTED",
+            0.75,
+            "TASK",
+            "00000000-0000-0000-0000-0000000000ff",
+            "ACTIVE",
+        ),
+    ]
+    assert len(found) == 1
+    assert len(refound) == 1, "the triggers that keep the index in step survived"

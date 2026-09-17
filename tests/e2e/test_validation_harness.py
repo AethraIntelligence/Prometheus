@@ -326,3 +326,51 @@ async def test_a_scenario_that_passed_twice_is_called_reliable(tmp_path: Path) -
 def test_the_task_ids_a_run_reports_are_the_ones_it_measures() -> None:
     """A guard on the one shortcut that would make every metric meaningless."""
     assert UUID(str(Task.create("x").id))  # ids are ids, and the harness reads them
+
+
+async def test_a_thread_is_asked_in_one_conversation_before_the_measured_request(
+    tmp_path: Path,
+) -> None:
+    """Phase 9: a scenario about a long session states the session as a file.
+
+    Every earlier request is carried to an answer, in order, in one thread, and
+    only the last one is measured - the way a person would have asked them.
+    """
+    from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
+
+    class Manager:
+        def __init__(self) -> None:
+            self.asked: list[tuple[str, UUID | None]] = []
+
+        async def receive(self, request, workspace_id=None, conversation_id=None):
+            self.asked.append((request, conversation_id))
+            return Objective.create(request, conversation_id=conversation_id)
+
+        async def handle_objective(self, objective):
+            return ObjectiveResult(
+                objective_id=objective.id,
+                summary="Done.",
+                status=ObjectiveStatus.DONE,
+                cost_usd=0.01,
+            )
+
+    manager = Manager()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    scenario = Scenario(
+        name="a-thread", request="And now the last one", thread=("first", "second")
+    )
+    run = await ValidationHarness(
+        scenarios=YamlScenarioRegistry(tmp_path),
+        runs=InMemoryValidationRunRepository(),
+        tasks=InMemoryTaskRepository(),
+        workspace=workspace,
+        available=frozenset(Requirement),
+        objectives=manager,
+    ).run_scenario(scenario)
+
+    assert [request for request, _ in manager.asked] == ["first", "second", "And now the last one"]
+    threads = {conversation for _, conversation in manager.asked}
+    assert len(threads) == 1 and None not in threads
+    assert run.status is RunStatus.PASSED
+    assert round(run.metrics.cost_usd, 2) == 0.03, "the history is part of what it cost"

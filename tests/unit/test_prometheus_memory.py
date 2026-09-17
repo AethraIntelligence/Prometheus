@@ -94,7 +94,10 @@ async def test_what_the_workspace_knows_is_handed_down_with_the_work() -> None:
     await manager.handle_objective(await manager.receive("Tell me what the notes say"))
 
     _, assignment = execution.started[0]
-    assert "The notes live in notes/2026" in assignment.context.facts
+    # Handed down with what it rests on, so the employee reads it as a lead.
+    assert any(
+        fact.startswith("The notes live in notes/2026 [") for fact in assignment.context.facts
+    )
 
 
 async def test_a_question_answered_directly_is_still_on_the_record() -> None:

@@ -80,3 +80,11 @@ and lowering one requires an explanation in the release notes.
 Write a file in `scenarios/`. Nothing else - no Python, no registration.
 `tests/e2e/test_validation_harness.py` declares one in a temporary directory and
 runs it, which is that claim as a test.
+
+## A scenario about a long thread
+
+`thread:` lists requests asked first, in order, in the same conversation as
+`request`. Each is carried to an answer and none is measured; they are the
+history the measured request depends on. Only a request to Prometheus can have a
+thread. `a-long-thread-keeps-its-decisions` uses twelve, enough for the oldest
+six to be compacted into a stage before the measured request is asked.

@@ -24,6 +24,12 @@ employee, and the store answers within those bounds - an employee never reads
 another employee's private memory, and that is enforced where the rows are
 rather than trusted here (`domain/memory/access.py`).
 
+Since Phase 9 each recollection also says what it rests on - stated, recorded,
+reported or inferred, where from, when, how confident and whose - so a guess is
+read as a guess (`domain/memory/citation.py`). And which memories a run was given
+is recorded with the reason each one was chosen (`domain/memory/usage.py`), so
+"why did it do that" has an answer a person can read.
+
 The recalled part is labelled as recollection rather than merged into the facts.
 A model told "the report is in reports/q3.md" as a fact will act on it; told
 "you noted last time that the report was in reports/q3.md" it will check. The
@@ -40,8 +46,10 @@ from domain.employees.definition import EmployeeDefinition
 from domain.integrations.untrusted import frame
 from domain.knowledge.models import KnowledgeQuery, Passage
 from domain.knowledge.protocols import Retriever
+from domain.memory.citation import explain, recollection
 from domain.memory.models import MemoryItem, MemoryQuery, MemoryScope
 from domain.memory.protocols import Memory
+from domain.memory.usage import MemoryUse, MemoryUseLog
 from domain.tasks.task import Task
 from domain.workforce.assignment import SharedContext
 
@@ -73,7 +81,7 @@ class AssembledContext:
 
     def recollections(self) -> tuple[str, ...]:
         """The remembered part, as the lines a prompt shows."""
-        return tuple(item.content.strip() for item in self.recalled if item.content.strip())
+        return tuple(recollection(item) for item in self.recalled if item.content.strip())
 
     def quotations(self) -> tuple[str, ...]:
         """The retrieved part, framed as what it is: someone else's words.
@@ -99,8 +107,10 @@ class ContextAssembler:
         limit: int = DEFAULT_LIMIT,
         retriever: Retriever | None = None,
         knowledge_limit: int = DEFAULT_KNOWLEDGE_LIMIT,
+        uses: MemoryUseLog | None = None,
     ) -> None:
         self._memory = memory
+        self._uses = uses
         self._limit = limit
         # None where knowledge is switched off or nothing was ever added. The
         # run is then a Phase 14 run, which is the same arrangement memory has:
@@ -198,4 +208,38 @@ class ContextAssembler:
                 employee=definition.name,
                 items=len(items),
             )
+            await record_uses(
+                self._uses, items, query, reader="task", task_id=task.id
+            )
         return tuple(items)
+
+
+async def record_uses(
+    log_: MemoryUseLog | None,
+    items: list[MemoryItem],
+    query: MemoryQuery,
+    *,
+    reader: str,
+    task_id=None,
+    objective_id=None,
+) -> None:
+    """Write down why each of these was recalled. Never raises at the caller."""
+    if log_ is None or not items:
+        return
+    try:
+        await log_.record(
+            [
+                MemoryUse(
+                    memory_id=item.id,
+                    reason=(explanation := explain(item, query)).reason,
+                    weight=explanation.weight,
+                    objective_id=objective_id,
+                    task_id=task_id,
+                    workspace_id=query.workspace_id,
+                    reader=reader,
+                )
+                for item in items
+            ]
+        )
+    except Exception as error:  # an explanation must not cost the run its memory
+        log.warning("memory.use_not_recorded", reader=reader, error=str(error))

@@ -11,6 +11,7 @@ from __future__ import annotations
 from app.config.general import FileSettingsEditor
 from app.config.settings import Settings, get_settings
 from application.computer.screen_reader import LLMScreenReader
+from application.conversations.session import SessionMemory
 from application.employee_runtime.approvals import ApprovalGate
 from application.employee_runtime.executor import Executor
 from application.employee_runtime.planner import Planner
@@ -30,6 +31,7 @@ from application.memory.assembler import ContextAssembler
 from application.memory.consolidation import Consolidator
 from application.memory.distiller import OutcomeDistiller
 from application.memory.recorder import MemoryRecorder
+from application.memory.revision import MemoryReviser
 from application.memory.workspace import WorkspaceMemory
 from application.prometheus.delegation import CapabilityDelegator
 from application.prometheus.intent import IntentReader
@@ -230,6 +232,7 @@ def build_memory(
             maintenance,
             threshold=settings.memory_consolidation_threshold,
         ),
+        reviser=MemoryReviser(container.llm_for(*MemoryReviser.routing()), memory),
     )
     return (
         ContextAssembler(
@@ -237,6 +240,7 @@ def build_memory(
             limit=settings.memory_recall_limit,
             retriever=container.retriever,
             knowledge_limit=settings.knowledge_recall_limit,
+            uses=container.memory_uses,
         ),
         recorder,
     )
@@ -319,15 +323,28 @@ def build_manager(container: Container) -> PrometheusManager:
         plans=container.plan_repository,
         progress=container.progress,
         memory=(
-            WorkspaceMemory(container.memory, recorder)
+            WorkspaceMemory(container.memory, recorder, uses=container.memory_uses)
             if container.memory is not None and recorder is not None
             else None
         ),
+        session=build_session_memory(container),
         knowledge=(
             WorkspaceKnowledge(container.retriever)
             if container.retriever is not None
             else None
         ),
+    )
+
+
+def build_session_memory(container: Container) -> SessionMemory:
+    """Each thread's brief. Built with no flag, like conversations themselves:
+    a thread that forgets its own decisions is not a longer conversation."""
+    return SessionMemory(
+        objectives=container.objective_repository,
+        states=container.session_states,
+        plans=container.plan_repository,
+        tool_calls=container.tool_call_log,
+        llm=container.llm_for(*SessionMemory.routing()),
     )
 
 
@@ -425,6 +442,13 @@ def build_service(
             retriever=container.retriever,
             memory=container.memory,
             memory_maintenance=container.memory_maintenance,
+            memory_uses=container.memory_uses,
+            memory_reviser=(
+                MemoryReviser(container.llm_for(*MemoryReviser.routing()), container.memory)
+                if container.memory is not None
+                else None
+            ),
+            sessions=build_session_memory(container),
             credentials=container.credential_store,
             providers=build_providers(container),
             settings=_settings_editor(container),

@@ -23,3 +23,21 @@ export async function forgetMemory(client: RuntimeClient, id: string): Promise<b
   const body = await client.del<{ forgotten: boolean }>(`/api/memory/${id}`);
   return body.forgotten;
 }
+
+/** Replace what a line says. The core keeps the old wording as replaced. */
+export async function correctMemory(
+  client: RuntimeClient,
+  id: string,
+  content: string,
+): Promise<MemoryItem> {
+  return client.put<MemoryItem>(`/api/memory/${id}`, { content });
+}
+
+/** Keep a line for a number of days, or - with null - until something replaces it. */
+export async function keepMemory(
+  client: RuntimeClient,
+  id: string,
+  days: number | null,
+): Promise<MemoryItem> {
+  return client.put<MemoryItem>(`/api/memory/${id}/retention`, { days });
+}

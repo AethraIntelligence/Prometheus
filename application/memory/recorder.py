@@ -41,8 +41,16 @@ import structlog
 
 from application.memory.consolidation import Consolidator
 from application.memory.distiller import OutcomeDistiller
+from application.memory.revision import MemoryReviser
 from domain.employees.definition import EmployeeDefinition
-from domain.memory.models import MemoryItem, MemoryKind, MemoryScope
+from domain.memory.models import (
+    MemoryBasis,
+    MemoryItem,
+    MemoryKind,
+    MemoryScope,
+    Provenance,
+    SourceKind,
+)
 from domain.memory.protocols import Memory
 from domain.memory.ranking import expires_at
 from domain.tasks.plan import Observation
@@ -61,6 +69,14 @@ IMPORTANCE_BY_STATUS = {
     TaskStatus.CANCELLED: 0.2,
 }
 
+#: How far an employee's account of a task is to be trusted. A completed task
+#: passed its verifier; a failed one is still a report, of a failure.
+CONFIDENCE_BY_STATUS = {
+    TaskStatus.COMPLETED: 0.75,
+    TaskStatus.FAILED: 0.5,
+    TaskStatus.CANCELLED: 0.3,
+}
+
 
 def trim(text: str, limit: int = MAX_CONTENT) -> str:
     clean = " ".join(text.split())
@@ -76,10 +92,15 @@ class MemoryRecorder:
         *,
         consolidator: Consolidator | None = None,
         distiller: OutcomeDistiller | None = None,
+        reviser: MemoryReviser | None = None,
     ) -> None:
         self._memory = memory
         self._consolidator = consolidator
         self._distiller = distiller
+        # Standing memories only: a task's outcome is episodic and expires, and
+        # a model call per task to check it against the past is a cost every
+        # run would pay for a question decay already answers.
+        self._reviser = reviser
 
     # --- During a run ---------------------------------------------------------
 
@@ -104,6 +125,11 @@ class MemoryRecorder:
                 importance=0.3 if observation.succeeded else 0.5,
                 expires_at=expires_at(MemoryKind.WORKING),
                 metadata={"tool": observation.details.get("tool", "")},
+                basis=MemoryBasis.OBSERVED if observation.succeeded else MemoryBasis.REPORTED,
+                confidence=0.8 if observation.succeeded else 0.5,
+                provenance=Provenance(
+                    kind=SourceKind.TASK, ref=str(task.id), label=trim(task.goal, 160)
+                ),
             )
         )
 
@@ -135,6 +161,9 @@ class MemoryRecorder:
             "plan_id": task.plan_id,
             "importance": importance,
             "metadata": {"employee": definition.name, "status": task.status.value},
+            "provenance": Provenance(
+                kind=SourceKind.TASK, ref=str(task.id), label=trim(task.goal, 160)
+            ),
         }
 
         await self.remember(
@@ -143,6 +172,10 @@ class MemoryRecorder:
                 scope=MemoryScope.WORKSPACE,
                 kind=MemoryKind.EPISODIC,
                 expires_at=expires_at(MemoryKind.EPISODIC),
+                # What the employee said happened, checked by a verifier at
+                # most: a claim, and shown to later runs as one.
+                basis=MemoryBasis.REPORTED,
+                confidence=CONFIDENCE_BY_STATUS.get(task.status, 0.4),
                 **common,
             )
         )
@@ -155,6 +188,8 @@ class MemoryRecorder:
                     scope=MemoryScope.PLAN,
                     kind=MemoryKind.EPISODIC,
                     expires_at=expires_at(MemoryKind.EPISODIC),
+                    basis=MemoryBasis.REPORTED,
+                    confidence=CONFIDENCE_BY_STATUS.get(task.status, 0.4),
                     **{**common, "importance": min(importance + 0.1, 1.0)},
                 )
             )
@@ -167,6 +202,9 @@ class MemoryRecorder:
                     scope=MemoryScope.EMPLOYEE_PRIVATE,
                     kind=MemoryKind.SEMANTIC,
                     employee_id=definition.id,
+                    # Read off the recorded tool calls, not off anybody's account.
+                    basis=MemoryBasis.OBSERVED,
+                    confidence=0.9,
                     **common,
                 )
             )
@@ -180,6 +218,7 @@ class MemoryRecorder:
         *,
         workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
         source: str = "",
+        objective_id: str = "",
     ) -> None:
         """How the user wants work done here, from now on (§9.4).
 
@@ -201,23 +240,39 @@ class MemoryRecorder:
             stated = trim(str(preference), 300)
             if not stated:
                 continue
-            await self.remember(
-                MemoryItem.create(
-                    f"The user prefers: {stated}",
-                    scope=MemoryScope.USER,
-                    kind=MemoryKind.SEMANTIC,
-                    workspace_id=workspace_id,
-                    # No expiry: a preference is superseded by another
-                    # preference, not by time passing.
-                    importance=0.8,
-                    metadata={
-                        "source": trim(source, 200),
-                        "stated_in": str(workspace_id),
-                    },
-                )
+            item = MemoryItem.create(
+                f"The user prefers: {stated}",
+                scope=MemoryScope.USER,
+                kind=MemoryKind.SEMANTIC,
+                workspace_id=workspace_id,
+                # No expiry: a preference is superseded by another
+                # preference, not by time passing - which is what the
+                # reviser does when one is stated.
+                importance=0.8,
+                metadata={
+                    "source": trim(source, 200),
+                    "stated_in": str(workspace_id),
+                },
+                # Stated by the person, but read out of their request by a
+                # model: evidence, one reading removed.
+                basis=MemoryBasis.STATED,
+                confidence=0.8,
+                provenance=Provenance(
+                    kind=SourceKind.OBJECTIVE, ref=objective_id, label=trim(source, 200)
+                ),
             )
+            await self.remember_standing(item)
 
     # --- Writing --------------------------------------------------------------
+
+    async def remember_standing(self, item: MemoryItem) -> MemoryItem:
+        """A memory with no expiry, checked against what it may replace."""
+        if not item.content.strip():
+            return item
+        if self._reviser is None:
+            await self.remember(item)
+            return item
+        return await self._reviser.remember(item)
 
     async def remember(self, item: MemoryItem) -> None:
         """Write one item, or log why it could not be written. Never raises."""
