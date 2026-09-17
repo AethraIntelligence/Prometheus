@@ -235,6 +235,19 @@ class SqlApprovalRepository:
             )
             return [_to_approval(row) for row in rows]
 
+    async def list_recent(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
+    ) -> list[Approval]:
+        await self.expire_overdue()
+        async with self._session() as session:
+            rows = await session.scalars(
+                select(ApprovalRow)
+                .where(ApprovalRow.workspace_id == str(workspace_id))
+                .order_by(ApprovalRow.requested_at.desc())
+                .limit(limit)
+            )
+            return [_to_approval(row) for row in rows]
+
 
 class InMemoryApprovalRepository:
     """Implements `domain.approvals.protocols.ApprovalRepository`."""
@@ -287,6 +300,21 @@ class InMemoryApprovalRepository:
             ),
             key=lambda approval: approval.request.requested_at,
         )
+
+    async def list_recent(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
+    ) -> list[Approval]:
+        await self.expire_overdue()
+        found = sorted(
+            (
+                approval
+                for approval in self._approvals.values()
+                if approval.request.workspace_id == workspace_id
+            ),
+            key=lambda approval: approval.request.requested_at,
+            reverse=True,
+        )
+        return found[:limit]
 
 
 class SqlCapabilityLeaseRepository:

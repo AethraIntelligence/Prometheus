@@ -14,6 +14,7 @@ export {
   DotsIcon,
   FolderIcon,
   GearIcon,
+  InboxIcon,
   LogoMark,
   PanelIcon,
   PencilIcon,

@@ -43,6 +43,12 @@ class ApprovalRepository(Protocol):
         self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
     ) -> list[Approval]: ...
 
+    async def list_recent(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID, *, limit: int = 50
+    ) -> list[Approval]:
+        """Recent questions in every final state, newest first."""
+        ...
+
     async def for_task(self, task_id: UUID) -> list[Approval]:
         """Every question this task raised, answered or not.
 

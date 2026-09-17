@@ -184,6 +184,75 @@ def stored_approval(
     }
 
 
+def inbox_approval(
+    record: Approval,
+    *,
+    live: bool,
+    task: Task | None = None,
+    objective_id: UUID | None = None,
+    conversation_id: UUID | None = None,
+    subject_name: str = "",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """One decision as a person supervising all work needs to see it."""
+    moment = now or datetime.now(UTC)
+    age_seconds = max(0, int((moment - record.request.requested_at).total_seconds()))
+    if age_seconds < 60:
+        wait_group = "NEW"
+    elif age_seconds < 300:
+        wait_group = "WAITING"
+    else:
+        wait_group = "LONG_WAIT"
+    resource = (
+        record.request.scope.resource
+        if record.request.scope is not None
+        else record.request.tool or "General action"
+    )
+    actionable = record.is_pending and live
+    if actionable:
+        status_explanation = "The employee is waiting for your decision."
+    elif record.is_pending:
+        status_explanation = "No active action is waiting on this request."
+    elif record.state.value == "APPROVED":
+        status_explanation = "Approved. The exact permitted action was released."
+    elif record.state.value == "REJECTED":
+        status_explanation = "Rejected. The action was not performed."
+    else:
+        status_explanation = "Expired. Nothing can execute from this request."
+    return {
+        **stored_approval(
+            record,
+            live=live,
+            conversation_id=conversation_id,
+            subject_name=subject_name,
+        ),
+        "objective_id": str(objective_id) if objective_id else None,
+        "task_goal": task.goal if task else "",
+        "task_status": task.status.value if task else None,
+        "resource_group": resource,
+        "wait_seconds": age_seconds,
+        "wait_group": wait_group,
+        "actionable": actionable,
+        "approve_effect": (
+            "The employee will perform this exact action within the displayed scope."
+            if actionable
+            else "This request can no longer release an action."
+        ),
+        "reject_effect": (
+            "The action will not run; the employee will continue or finish without it."
+            if actionable
+            else "This request is already final."
+        ),
+        "status_explanation": status_explanation,
+        "expires_at": (
+            record.request.expires_at.isoformat() if record.request.expires_at else None
+        ),
+        "resolved_at": record.resolved_at.isoformat() if record.resolved_at else None,
+        "resolved_by": record.resolved_by,
+        "comment": record.comment,
+    }
+
+
 def capability_lease(lease: CapabilityLease, *, subject_name: str = "") -> dict[str, Any]:
     return {
         "id": str(lease.id),

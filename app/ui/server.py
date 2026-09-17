@@ -672,6 +672,10 @@ def _routes(app: FastAPI) -> None:
     async def approvals(request: Request) -> dict[str, Any]:
         return {"approvals": await _guarded(_service(request).list_approvals())}
 
+    @app.get("/api/approval-inbox")
+    async def approval_inbox(request: Request) -> dict[str, Any]:
+        return await _guarded(_service(request).list_approval_inbox())
+
     @app.post("/api/approvals/{approval_id}")
     async def decide(request: Request, approval_id: UUID, body: Decision) -> dict[str, Any]:
         try:

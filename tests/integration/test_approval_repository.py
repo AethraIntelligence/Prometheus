@@ -16,6 +16,7 @@ from domain.approvals.models import (
 )
 from domain.policies.models import RiskLevel
 from domain.tasks.task import Task
+from domain.workspace.models import WorkspaceId
 from infrastructure.persistence.approval_repository import (
     InMemoryApprovalRepository,
     SqlApprovalRepository,
@@ -121,6 +122,33 @@ async def test_the_in_memory_repository_answers_the_same_way() -> None:
 
     await memory.save(approval.resolve(ApprovalState.APPROVED))
     assert await memory.list_pending() == []
+    assert (await memory.list_recent())[0].state is ApprovalState.APPROVED
+
+
+async def test_recent_questions_include_final_states_and_stay_in_their_workspace(
+    repository, sqlite_repository
+) -> None:
+    task = await stored_task(sqlite_repository)
+    older = pending(task, "fs.write(path='first.txt')")
+    newer = pending(task, "fs.write(path='second.txt')")
+    elsewhere = Approval(
+        request=ApprovalRequest.create(
+            task.id,
+            "fs.write(path='private.txt')",
+            workspace_id=WorkspaceId("personal"),
+        )
+    )
+    await repository.save(older.resolve(ApprovalState.REJECTED))
+    await repository.save(newer)
+    await repository.save(elsewhere)
+
+    recent = await repository.list_recent(limit=2)
+
+    assert [item.id for item in recent] == [newer.id, older.id]
+    assert [item.state for item in recent] == [
+        ApprovalState.PENDING,
+        ApprovalState.REJECTED,
+    ]
 
 
 async def test_restart_expires_every_pending_question(repository, sqlite_repository) -> None:

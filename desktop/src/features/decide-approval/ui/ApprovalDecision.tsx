@@ -11,6 +11,7 @@ import type { ApprovalGrant } from "../../../entities/approval";
 interface Props {
   approvalId: string;
   exactOnly?: boolean;
+  disabled?: boolean;
   onDecide: (
     approvalId: string,
     approved: boolean,
@@ -19,7 +20,7 @@ interface Props {
   ) => void | Promise<void>;
 }
 
-export function ApprovalDecision({ approvalId, exactOnly = false, onDecide }: Props) {
+export function ApprovalDecision({ approvalId, exactOnly = false, disabled = false, onDecide }: Props) {
   const [grant, setGrant] = useState<ApprovalGrant>("ONCE");
   const [duration, setDuration] = useState("86400");
   const durationSeconds = grant === "PERSISTENT" && duration ? Number(duration) : undefined;
@@ -29,7 +30,7 @@ export function ApprovalDecision({ approvalId, exactOnly = false, onDecide }: Pr
         Permission
         <select
           value={exactOnly ? "ONCE" : grant}
-          disabled={exactOnly}
+          disabled={exactOnly || disabled}
           onChange={(event) => setGrant(event.target.value as ApprovalGrant)}
         >
           <option value="ONCE">Only this action</option>
@@ -40,7 +41,7 @@ export function ApprovalDecision({ approvalId, exactOnly = false, onDecide }: Pr
       {!exactOnly && grant === "PERSISTENT" && (
         <label className="gate-scope">
           Expires
-          <select value={duration} onChange={(event) => setDuration(event.target.value)}>
+          <select disabled={disabled} value={duration} onChange={(event) => setDuration(event.target.value)}>
             <option value="3600">In 1 hour</option>
             <option value="86400">In 24 hours</option>
             <option value="2592000">In 30 days</option>
@@ -51,6 +52,7 @@ export function ApprovalDecision({ approvalId, exactOnly = false, onDecide }: Pr
       <button
         type="button"
         className="btn btn-wait"
+        disabled={disabled}
         onClick={() => void onDecide(approvalId, true, exactOnly ? "ONCE" : grant, durationSeconds)}
       >
         Approve
@@ -58,6 +60,7 @@ export function ApprovalDecision({ approvalId, exactOnly = false, onDecide }: Pr
       <button
         type="button"
         className="btn btn-line"
+        disabled={disabled}
         onClick={() => void onDecide(approvalId, false, "ONCE")}
       >
         Reject

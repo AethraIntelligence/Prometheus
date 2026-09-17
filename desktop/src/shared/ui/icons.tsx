@@ -232,6 +232,13 @@ export const BriefcaseIcon = (props: Props) => (
   </svg>
 );
 
+export const InboxIcon = (props: Props) => (
+  <svg viewBox="0 0 20 20" {...base} {...props}>
+    <path d="M3.2 4.1h13.6l1 8.1v2.1c0 .9-.7 1.6-1.6 1.6H3.8c-.9 0-1.6-.7-1.6-1.6v-2.1l1-8.1Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    <path d="M2.4 11.4h4.2l1.2 1.7h4.4l1.2-1.7h4.2" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+  </svg>
+);
+
 export const ComposeIcon = (props: Props) => (
   <svg viewBox="0 0 20 20" {...base} {...props}>
     <path

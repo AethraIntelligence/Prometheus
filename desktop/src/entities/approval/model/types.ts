@@ -24,9 +24,34 @@ export interface Approval {
   context_sources?: Array<{ source: string; kind: string; trust: string }>;
   grant?: ApprovalGrant;
   lease_id?: string | null;
+  objective_id?: string | null;
+  task_goal?: string;
+  task_status?: string | null;
+  resource_group?: string;
+  wait_seconds?: number;
+  wait_group?: "NEW" | "WAITING" | "LONG_WAIT";
+  actionable?: boolean;
+  approve_effect?: string;
+  reject_effect?: string;
+  status_explanation?: string;
+  expires_at?: string | null;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
+  comment?: string;
 }
 
 export type ApprovalGrant = "ONCE" | "TASK" | "PERSISTENT";
+
+export interface ApprovalInbox {
+  pending: Approval[];
+  recent: Approval[];
+  counts: {
+    total: number;
+    actionable: number;
+    critical: number;
+    long_wait: number;
+  };
+}
 
 export interface CapabilityLease {
   id: string;

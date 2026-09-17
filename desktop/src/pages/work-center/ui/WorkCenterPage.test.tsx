@@ -96,4 +96,21 @@ describe("Work Center", () => {
     await userEvent.click(screen.getByRole("button", { name: /Completed/ }));
     expect(await screen.findByRole("heading", { name: "Finished report" })).toBeInTheDocument();
   });
+
+  it("opens the exact work item linked from an approval", async () => {
+    const items = [
+      item({ id: "active", text: "Other work", bucket: "ACTIVE" }),
+      item({ id: "waiting", text: "Approval source", bucket: "WAITING" }),
+    ];
+    const fetch = vi.fn(async (url: string) => url.endsWith("/api/employees") ? json({ employees: [] }) : json({ items }));
+
+    render(
+      <RuntimeProvider client={new RuntimeClient(BASE, fetch as never)}>
+        <WorkCenterPage initialObjectiveId="waiting" />
+      </RuntimeProvider>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Approval source" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Waiting for approval/ })).toHaveClass("on");
+  });
 });

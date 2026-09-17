@@ -345,6 +345,11 @@ def test_an_irreversible_action_waits_for_the_window(tmp_path: Path) -> None:
             time.sleep(0.02)
         assert waiting, "the run parked on a question instead of acting"
         assert waiting[0]["live"] is True
+        inbox = client.get("/api/approval-inbox")
+        assert inbox.status_code == 200
+        assert inbox.json()["counts"]["actionable"] == 1
+        assert inbox.json()["pending"][0]["id"] == waiting[0]["id"]
+        assert inbox.json()["pending"][0]["approve_effect"]
 
         answered = client.post(f"/api/approvals/{waiting[0]['id']}", json={"approved": True})
         assert answered.status_code == 200
@@ -358,4 +363,9 @@ def test_an_irreversible_action_waits_for_the_window(tmp_path: Path) -> None:
             time.sleep(0.02)
         assert (workspace / "report.md").read_text(encoding="utf-8") == "the new report", (
             "the approved action happened"
+        )
+        recent = client.get("/api/approval-inbox").json()["recent"]
+        assert any(
+            item["id"] == waiting[0]["id"] and item["state"] == "APPROVED"
+            for item in recent
         )

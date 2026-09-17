@@ -1063,6 +1063,92 @@ class PrometheusService:
             if record.id not in live
         ]
 
+    async def list_approval_inbox(self) -> dict[str, Any]:
+        """Every current decision plus recent final outcomes for this workspace."""
+        workspace_id = await self._active_workspace_id()
+        records = await self._d.approvals.list_recent(workspace_id, limit=100)
+        live = {
+            item.id: item
+            for item in self._d.waiter.pending()
+            if item.workspace_id == workspace_id
+        }
+        recorded = {record.id for record in records}
+        # The waiter and durable repository are updated one after the other.
+        # Include the narrow in-between state so a live decision never vanishes
+        # from the global inbox merely because its insert is still completing.
+        records = [
+            *(Approval(request=request) for key, request in live.items() if key not in recorded),
+            *records,
+        ]
+        names = {
+            str(item.id): item.name for item in self._d.employees.list(workspace_id)
+        }
+        projected: list[dict[str, Any]] = []
+        for record in records:
+            task, objective = await self._approval_context(record.request.task_id)
+            is_live = record.id in live
+            ended = (task is not None and task.is_terminal) or (
+                objective is not None and objective.is_terminal
+            )
+            if record.is_pending and not is_live:
+                comment = (
+                    "The related work ended before this decision was answered."
+                    if ended
+                    else "No active action was waiting for this decision."
+                )
+                record = record.resolve(
+                    ApprovalState.EXPIRED,
+                    resolved_by="work-ended" if ended else "stale",
+                    comment=comment,
+                )
+                await self._d.approvals.save(record)
+            projected.append(
+                views.inbox_approval(
+                    record,
+                    live=is_live,
+                    task=task,
+                    objective_id=objective.id if objective else None,
+                    conversation_id=objective.conversation_id if objective else None,
+                    subject_name=(
+                        names.get(record.request.scope.subject, "")
+                        if record.request.scope
+                        else ""
+                    ),
+                )
+            )
+
+        risk_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        pending = [item for item in projected if item["state"] == "PENDING"]
+        pending.sort(
+            key=lambda item: (
+                risk_order.get(str(item["risk"]), 4),
+                str(item["requested_at"]),
+            )
+        )
+        recent = [item for item in projected if item["state"] != "PENDING"][:30]
+        return {
+            "pending": pending,
+            "recent": recent,
+            "counts": {
+                "total": len(pending),
+                "actionable": sum(bool(item["actionable"]) for item in pending),
+                "critical": sum(item["risk"] == "CRITICAL" for item in pending),
+                "long_wait": sum(item["wait_group"] == "LONG_WAIT" for item in pending),
+            },
+        }
+
+    async def _approval_context(
+        self, task_id: UUID
+    ) -> tuple[Task | None, Objective | None]:
+        objective = await self._d.objectives.get(task_id)
+        if objective is not None:
+            return None, objective
+        task = await self._d.tasks.get(task_id)
+        if task is None or task.plan_id is None:
+            return task, None
+        plan = await self._d.plans.get(task.plan_id)
+        return task, await self._d.objectives.get(plan.objective_id) if plan else None
+
     async def _conversation_of(self, task_id: UUID) -> UUID | None:
         """The thread a task's work was asked in: task -> plan -> objective.
 
@@ -1120,6 +1206,25 @@ class PrometheusService:
                 "lease_id": str(record.lease_id) if record.lease_id else None,
             }
 
+        live_request = next(
+            (item for item in self._d.waiter.pending() if item.id == approval_id),
+            None,
+        )
+        if live_request is None:
+            expired = record.resolve(
+                ApprovalState.EXPIRED,
+                resolved_by="stale",
+                comment="No active action was waiting for this decision.",
+            )
+            await self._d.approvals.save(expired)
+            return {
+                "id": str(approval_id),
+                "state": ApprovalState.EXPIRED.value,
+                "live": False,
+                "grant": ApprovalGrant.ONCE.value,
+                "lease_id": None,
+            }
+
         if record.request.requires_explicit_confirmation and grant is not ApprovalGrant.ONCE:
             raise ApprovalsDisabledError(
                 "A security step-up can approve only this exact action."
@@ -1147,12 +1252,26 @@ class PrometheusService:
         state = ApprovalState.APPROVED if approved else ApprovalState.REJECTED
         answered = self._d.waiter.decide(approval_id, approved)
         if not answered:
-            service = self._d.approval_service
-            if service is None:
-                raise ApprovalsDisabledError(
-                    "Approvals are switched off in this configuration."
+            # The waiter disappeared between the live check and this click.
+            # It is unsafe to record APPROVED when no action can receive it.
+            if lease is not None and self._d.leases is not None:
+                await self._d.leases.revoke(lease.id, by="stale")
+                record = replace(
+                    record, grant=ApprovalGrant.ONCE, lease_id=None
                 )
-            await service.resolve(approval_id, state, comment=comment)
+            expired = record.resolve(
+                ApprovalState.EXPIRED,
+                resolved_by="stale",
+                comment="The waiting action ended before the decision arrived.",
+            )
+            await self._d.approvals.save(expired)
+            return {
+                "id": str(approval_id),
+                "state": ApprovalState.EXPIRED.value,
+                "live": False,
+                "grant": ApprovalGrant.ONCE.value,
+                "lease_id": None,
+            }
         return {
             "id": str(approval_id),
             "state": state.value,

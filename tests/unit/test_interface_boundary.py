@@ -30,7 +30,13 @@ from application.interface.service import (
     PrometheusService,
     ServiceDependencies,
 )
-from domain.approvals.models import Approval, ApprovalGrant, ApprovalRequest, scope_for
+from domain.approvals.models import (
+    Approval,
+    ApprovalGrant,
+    ApprovalRequest,
+    ApprovalState,
+    scope_for,
+)
 from domain.conversations.models import TITLE_LIMIT, Conversation
 from domain.errors import PrometheusError
 from domain.llm.telemetry import SpendSummary
@@ -256,6 +262,9 @@ class _NoApprovals:
         return None
 
     async def list_pending(self, workspace_id=None):
+        return []
+
+    async def list_recent(self, workspace_id=None, *, limit=50):
         return []
 
     async def for_task(self, task_id):
@@ -522,6 +531,46 @@ async def test_what_is_waiting_says_which_questions_a_run_is_still_parked_on() -
 
     assert waiting["action"] == "send an email"
     assert waiting["live"] is True
+
+
+async def test_the_global_inbox_explains_and_groups_every_live_decision() -> None:
+    question = ApprovalRequest.create(
+        uuid4(),
+        "fs.write(path='report.md')",
+        tool="fs.write",
+        scope=scope_for("employee-1", "fs.write", {"path": "report.md"}),
+        reason="The existing report will be replaced.",
+    )
+    approvals = InMemoryApprovalRepository()
+    await approvals.save(Approval(request=question))
+    service, _ = build(waiter=NoWaiter(question), approvals=approvals)
+
+    inbox = await service.list_approval_inbox()
+
+    [shown] = inbox["pending"]
+    assert inbox["counts"]["actionable"] == 1
+    assert shown["resource_group"] == "path:report.md"
+    assert shown["wait_group"] == "NEW"
+    assert shown["approve_effect"]
+    assert shown["reject_effect"]
+    assert shown["actionable"] is True
+
+
+async def test_a_stale_decision_expires_instead_of_releasing_authority() -> None:
+    question = ApprovalRequest.create(uuid4(), "fs.delete(path='report.md')")
+    approvals = InMemoryApprovalRepository()
+    await approvals.save(Approval(request=question))
+    service, _ = build(waiter=NoWaiter(), approvals=approvals)
+
+    answered = await service.decide_approval(question.id, approved=True)
+    inbox = await service.list_approval_inbox()
+
+    assert answered["state"] == "EXPIRED"
+    assert inbox["pending"] == []
+    assert inbox["recent"][0]["state"] == "EXPIRED"
+    assert inbox["recent"][0]["resolved_by"] == "stale"
+    stored = await approvals.get(question.id)
+    assert stored is not None and stored.state is ApprovalState.EXPIRED
 
 
 async def test_a_question_names_the_thread_whose_work_asked_it() -> None:

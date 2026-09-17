@@ -133,16 +133,16 @@ function WorkDetail({ item, page, onOpenThread }: { item: WorkItem; page: Return
   );
 }
 
-export function WorkCenterPage({ railOpen = true, onOpenRail, onOpenThread }: { railOpen?: boolean; onOpenRail?: () => void; onOpenThread?: (id: string) => void }) {
+export function WorkCenterPage({ initialObjectiveId = null, railOpen = true, onOpenRail, onOpenThread }: { initialObjectiveId?: string | null; railOpen?: boolean; onOpenRail?: () => void; onOpenThread?: (id: string) => void }) {
   const page = useWorkCenter(useRuntime());
   const [bucket, setBucket] = useState<WorkBucket>("ACTIVE");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialObjectiveId);
   const shown = useMemo(() => page.items.filter((item) => item.bucket === bucket), [page.items, bucket]);
   const item = page.items.find((candidate) => candidate.id === selected) ?? shown[0] ?? null;
 
   useEffect(() => {
-    if (item && item.bucket !== bucket) setSelected(null);
-  }, [bucket, item]);
+    if (selected && item && item.bucket !== bucket) setBucket(item.bucket);
+  }, [bucket, item, selected]);
 
   return (
     <main className="main">

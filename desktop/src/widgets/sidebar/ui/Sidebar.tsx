@@ -33,6 +33,7 @@ import {
   ClockIcon,
   ComposeIcon,
   GearIcon,
+  InboxIcon,
   PanelIcon,
   PlugIcon,
   SearchIcon,
@@ -40,6 +41,7 @@ import {
 } from "../../../shared/ui";
 import { groupByDay, markFor } from "../model/presentation";
 import { useThreads } from "../model/useThreads";
+import { useApprovalBadge } from "../model/useApprovalBadge";
 
 interface Props {
   selected: string | null;
@@ -47,6 +49,7 @@ interface Props {
   /** Whether the schedules page is the one shown. */
   schedulesOpen?: boolean;
   workCenterOpen?: boolean;
+  approvalsOpen?: boolean;
   /** Changes when the page did something the list should show at once. */
   refresh: number;
   onSelect: (conversationId: string) => void;
@@ -55,6 +58,7 @@ interface Props {
   onSettings: (section?: "plugins") => void;
   onSchedules?: () => void;
   onWorkCenter?: () => void;
+  onApprovals?: () => void;
   /** Make a schedule out of this thread's request. */
   onRepeat?: (conversationId: string) => void;
   onClose: () => void;
@@ -67,6 +71,7 @@ export function Sidebar({
   settingsOpen,
   schedulesOpen = false,
   workCenterOpen = false,
+  approvalsOpen = false,
   refresh,
   onSelect,
   onNew,
@@ -74,11 +79,13 @@ export function Sidebar({
   onSettings,
   onSchedules,
   onWorkCenter,
+  onApprovals,
   onRepeat,
   onClose,
   onThreadChanged,
 }: Props) {
   const client = useRuntime();
+  const approvalBadge = useApprovalBadge(client);
   const [changed, setChanged] = useState(0);
   const { threads, workspace, spent } = useThreads(client, refresh + changed);
   const [search, setSearch] = useState("");
@@ -165,6 +172,19 @@ export function Sidebar({
           >
             <BriefcaseIcon />
             Work Center
+          </button>
+        )}
+        {onApprovals && (
+          <button
+            type="button"
+            className={approvalsOpen ? "navrow on" : "navrow"}
+            aria-current={approvalsOpen ? "page" : undefined}
+            onClick={onApprovals}
+          >
+            <InboxIcon />
+            Approval Inbox
+            {approvalBadge.count > 0 && <span className="nav-count">{approvalBadge.count}</span>}
+            {approvalBadge.fresh > 0 && <span className="sr-only" role="status">{approvalBadge.fresh} new approval request(s)</span>}
           </button>
         )}
         {onSchedules && (

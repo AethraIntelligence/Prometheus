@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
 import type { ConversationKind } from "../entities/conversation";
+import { ApprovalInboxPage } from "../pages/approval-inbox";
 import { ChatPage } from "../pages/chat";
 import { SchedulesPage } from "../pages/schedules";
 import { SettingsPage } from "../pages/settings";
@@ -34,7 +35,7 @@ const narrow = () => typeof window !== "undefined" && window.innerWidth < NARROW
  * weight, and the way back is one button that says so.
  */
 export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: string }) {
-  const [showing, setShowing] = useState<"work" | "settings" | "schedules" | "center">("work");
+  const [showing, setShowing] = useState<"work" | "settings" | "schedules" | "center" | "approvals">("work");
   const [workspace, setWorkspace] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const [newKind, setNewKind] = useState<ConversationKind>("TASK");
@@ -44,13 +45,14 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
   const [section, setSection] = useState<"plugins" | "general" | undefined>(undefined);
   // A thread somebody asked to repeat, held until the schedules page has read it.
   const [repeat, setRepeat] = useState<string | null>(null);
+  const [centerObjective, setCenterObjective] = useState<string | null>(null);
   const repeatTaken = useCallback(() => setRepeat(null), []);
 
   const switched = () => {
     setWorkspace((count) => count + 1);
     setOpen(null);
   };
-  const go = (page: "work" | "settings" | "schedules" | "center", thread: string | null = open) => {
+  const go = (page: "work" | "settings" | "schedules" | "center" | "approvals", thread: string | null = open) => {
     setShowing(page);
     setOpen(thread);
     if (narrow()) setRailOpen(false);
@@ -78,7 +80,12 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           settingsOpen={false}
           schedulesOpen={showing === "schedules"}
           workCenterOpen={showing === "center"}
-          onWorkCenter={() => go("center", null)}
+          approvalsOpen={showing === "approvals"}
+          onWorkCenter={() => {
+            setCenterObjective(null);
+            go("center", null);
+          }}
+          onApprovals={() => go("approvals", null)}
           onSchedules={() => go("schedules")}
           onRepeat={(thread) => {
             setRepeat(thread);
@@ -126,9 +133,21 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
         ) : showing === "center" ? (
           <WorkCenterPage
             key={`center-${workspace}`}
+            initialObjectiveId={centerObjective}
             railOpen={railOpen}
             onOpenRail={() => setRailOpen(true)}
             onOpenThread={(thread) => go("work", thread)}
+          />
+        ) : showing === "approvals" ? (
+          <ApprovalInboxPage
+            key={`approvals-${workspace}`}
+            railOpen={railOpen}
+            onOpenRail={() => setRailOpen(true)}
+            onOpenThread={(thread) => go("work", thread)}
+            onOpenWork={(objective) => {
+              setCenterObjective(objective);
+              go("center", null);
+            }}
           />
         ) : (
           <ChatPage

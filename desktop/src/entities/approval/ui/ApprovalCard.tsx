@@ -30,21 +30,24 @@ export function ApprovalCard({ approval, actions }: Props) {
   const details = Object.entries(approval.payload ?? {});
   const preview = Object.entries(approval.preview ?? {});
   const [open, setOpen] = useState(false);
+  const pending = !approval.state || approval.state === "PENDING";
   return (
     <article
-      className={approval.live ? "gate" : "gate ended"}
+      className={approval.live && pending ? "gate" : "gate ended"}
       aria-label={`Approval: ${approval.action}`}
     >
       <div className="gate-top">
         <WarningIcon />
         <b>
-          Needs approval · <span className="risk">{approval.risk}</span>
+          {pending ? "Needs approval" : approval.state} ·{" "}
+          <span className="risk">{approval.risk}</span>
         </b>
       </div>
       <h4 className={open ? undefined : "folded"} title={open ? undefined : approval.action}>
         Prometheus wants to {approval.action}
       </h4>
       {approval.reason && <p>{approval.reason}</p>}
+      {approval.status_explanation && <p className="note">{approval.status_explanation}</p>}
       {approval.requires_explicit_confirmation && (
         <p className="note">
           Security step-up: approve only this exact action. Auto approval and saved permissions
@@ -73,11 +76,17 @@ export function ApprovalCard({ approval, actions }: Props) {
           ))}
         </dl>
       )}
-      {!approval.live && (
+      {pending && !approval.live && (
         <p className="stale">
-          Nothing is waiting on this any more — the run that asked has ended. Answering it
-          only closes the question.
+          Nothing is waiting on this any more — the run that asked has ended. It cannot be
+          approved or resumed.
         </p>
+      )}
+      {pending && (approval.approve_effect || approval.reject_effect) && (
+        <dl className="gate-effects">
+          {approval.approve_effect && <div><dt>If approved</dt><dd>{approval.approve_effect}</dd></div>}
+          {approval.reject_effect && <div><dt>If rejected</dt><dd>{approval.reject_effect}</dd></div>}
+        </dl>
       )}
       {(actions || details.length > 0 || preview.length > 0) && (
         <div className="gate-acts">
