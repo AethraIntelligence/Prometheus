@@ -20,7 +20,7 @@ typed, and a reviewer would have to read the file in order to know what it does.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from domain.policies.engine import PolicyRequest
@@ -182,7 +182,7 @@ class RuleBasedPolicyEngine:
         # built - so a second check here could only ever disagree with the first
         # one, and the disagreement would be silent.
         decisions = [
-            decision
+            decision if decision.source else replace(decision, source=name)
             for name in sorted(request.policies)
             if (rule := CATALOG.get(name)) is not None
             and (decision := rule.decide(request)) is not None
@@ -198,9 +198,11 @@ class RuleBasedPolicyEngine:
                 reason=request.risk_reason
                 or f"{_subject(request)} is a {request.risk_level.value.lower()}-risk action",
                 risk_level=request.risk_level,
+                source="risk_threshold",
             )
         return PolicyDecision(
             decision=Decision.ALLOW,
             reason=request.risk_reason,
             risk_level=request.risk_level,
+            source="risk_threshold",
         )

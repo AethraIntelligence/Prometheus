@@ -29,7 +29,7 @@ from application.interface.service import (
     PrometheusService,
     ServiceDependencies,
 )
-from domain.approvals.models import ApprovalRequest
+from domain.approvals.models import Approval, ApprovalGrant, ApprovalRequest, scope_for
 from domain.conversations.models import TITLE_LIMIT, Conversation
 from domain.errors import PrometheusError
 from domain.llm.telemetry import SpendSummary
@@ -37,6 +37,10 @@ from domain.tasks.progress import ProgressEvent, ProgressKind
 from domain.tasks.task import Task, TaskResult, TaskStatus
 from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
 from domain.workspace.models import WorkspaceId
+from infrastructure.persistence.approval_repository import (
+    InMemoryApprovalRepository,
+    InMemoryCapabilityLeaseRepository,
+)
 from infrastructure.persistence.conversation_repository import InMemoryConversationRepository
 from infrastructure.persistence.in_memory_task_repository import InMemoryTaskRepository
 from infrastructure.persistence.objective_repository import InMemoryObjectiveRepository
@@ -149,13 +153,17 @@ class Stream:
 
 
 def build(
-    *, waiter: NoWaiter | None = None, approval_service=None
+    *,
+    waiter: NoWaiter | None = None,
+    approval_service=None,
+    approvals=None,
+    leases=None,
 ) -> tuple[PrometheusService, dict]:
     objectives = InMemoryObjectiveRepository()
     conversations = InMemoryConversationRepository()
     tasks = InMemoryTaskRepository()
     manager = RecordingManager(objectives)
-    approvals = _NoApprovals()
+    approvals = approvals or _NoApprovals()
     parts = {
         "objectives": objectives,
         "conversations": conversations,
@@ -183,6 +191,7 @@ def build(
             tasks=tasks,
             employees=FakeRegistry(),
             approvals=approvals,
+            leases=leases,
             waiter=parts["waiter"],
             tool_calls=EmptyLog(),
             llm_calls=EmptyLog(),
@@ -419,6 +428,36 @@ async def test_a_decision_reaches_the_run_that_is_waiting_for_it() -> None:
     assert waiter.decisions == [(question.id, True)]
     assert answered["state"] == "APPROVED"
     assert answered["live"] is True, "a tool call in this process was parked on it"
+
+
+async def test_a_scoped_decision_creates_visible_revocable_authority() -> None:
+    task_id = uuid4()
+    question = ApprovalRequest.create(
+        task_id,
+        "fs.write(path='report.md')",
+        tool="fs.write",
+        scope=scope_for("employee-1", "fs.write", {"path": "report.md"}),
+        reason="Overwrite report.md",
+    )
+    waiter = NoWaiter(question)
+    approvals = InMemoryApprovalRepository()
+    leases = InMemoryCapabilityLeaseRepository()
+    await approvals.save(Approval(request=question))
+    service, _ = build(waiter=waiter, approvals=approvals, leases=leases)
+
+    answered = await service.decide_approval(
+        question.id,
+        approved=True,
+        grant=ApprovalGrant.TASK,
+        duration_seconds=3600,
+    )
+
+    assert answered["grant"] == "TASK"
+    [visible] = await service.list_capability_leases()
+    assert visible["resource"] == "path:report.md"
+    assert visible["task_id"] == str(task_id)
+    assert await service.revoke_capability_lease(UUID(visible["id"]))
+    assert await service.list_capability_leases() == []
 
 
 async def test_what_is_waiting_says_which_questions_a_run_is_still_parked_on() -> None:

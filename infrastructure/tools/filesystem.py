@@ -13,6 +13,7 @@ other, so the tools tell the gate which one this is.
 
 from __future__ import annotations
 
+import difflib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -184,6 +185,25 @@ class FileWriteTool(FileRootTool):
             )
         return RiskAssessment(RiskLevel.LOW, "")
 
+    def preview(self, input_data: dict[str, object]) -> dict[str, object]:
+        target = self._root.resolve(str(input_data.get("path", "")))
+        after = str(input_data.get("content", ""))
+        before = target.read_text(encoding="utf-8", errors="replace") if target.is_file() else ""
+        diff = "".join(
+            difflib.unified_diff(
+                before.splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile=f"before/{self._root.display(target)}",
+                tofile=f"after/{self._root.display(target)}",
+            )
+        )
+        return {
+            "kind": "file_diff",
+            "path": self._root.display(target),
+            "overwrites": target.exists(),
+            "diff": diff[:4_000] + ("\n... [preview truncated]" if len(diff) > 4_000 else ""),
+        }
+
     async def run(self, path: str, content: str) -> ToolResult:
         target = self._root.resolve(path)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -228,6 +248,16 @@ class FileMoveTool(FileRootTool):
         # A move inside the root is undone by another move, so sorting a
         # folder full of documents does not ask a question per document.
         return RiskAssessment(RiskLevel.LOW, "")
+
+    def preview(self, input_data: dict[str, object]) -> dict[str, object]:
+        source = self._root.resolve(str(input_data.get("source", "")))
+        target = self._destination(source, str(input_data.get("destination", "")))
+        return {
+            "kind": "file_move",
+            "source": self._root.display(source),
+            "destination": self._root.display(target),
+            "overwrites": target.exists(),
+        }
 
     def _destination(self, source: Path, raw: str) -> Path:
         target = self._root.resolve(raw)

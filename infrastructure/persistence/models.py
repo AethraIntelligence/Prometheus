@@ -27,7 +27,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 
-from domain.approvals.models import ApprovalState
+from domain.approvals.models import ApprovalGrant, ApprovalState
 from domain.integrations.models import IntegrationKind, IntegrationStatus
 from domain.knowledge.models import DocumentStatus
 from domain.memory.models import MemoryKind, MemoryScope
@@ -41,6 +41,7 @@ from infrastructure.persistence.dialect import UtcTimestamp
 
 TASK_STATUS_VALUES = tuple(status.value for status in TaskStatus)
 APPROVAL_STATE_VALUES = tuple(state.value for state in ApprovalState)
+APPROVAL_GRANT_VALUES = tuple(grant.value for grant in ApprovalGrant)
 OBJECTIVE_STATUS_VALUES = tuple(status.value for status in ObjectiveStatus)
 PLAN_STATUS_VALUES = tuple(status.value for status in PlanStatus)
 MEMORY_SCOPE_VALUES = tuple(scope.value for scope in MemoryScope)
@@ -266,12 +267,52 @@ class ApprovalRow(Base):
     risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    subject: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    resource: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    limits: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    preview: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    policy_source: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     requested_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
     #: When the question stops being worth answering. NULL waits forever.
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
     resolved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    grant_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=ApprovalGrant.ONCE.value
+    )
+    lease_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+
+class CapabilityLeaseRow(Base):
+    """Exact, revocable authority created by an explicit approval."""
+
+    __tablename__ = "capability_leases"
+    __table_args__ = (
+        CheckConstraint(
+            "grant_kind IN ('TASK','PERSISTENT')",
+            name="ck_capability_leases_grant_kind",
+        ),
+        Index("ix_capability_leases_active", "workspace_id", "revoked_at", "expires_at"),
+        Index("ix_capability_leases_match", "workspace_id", "subject", "action", "resource"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject: Mapped[str] = mapped_column(String(128), nullable=False)
+    action: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource: Mapped[str] = mapped_column(Text, nullable=False)
+    limits: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    grant_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    approval_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("approvals.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ObjectiveRow(Base):

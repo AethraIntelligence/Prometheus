@@ -6,12 +6,20 @@ from uuid import uuid4
 
 import pytest
 
-from domain.approvals.models import Approval, ApprovalRequest, ApprovalState
+from domain.approvals.models import (
+    Approval,
+    ApprovalGrant,
+    ApprovalRequest,
+    ApprovalState,
+    CapabilityLease,
+    scope_for,
+)
 from domain.policies.models import RiskLevel
 from domain.tasks.task import Task
 from infrastructure.persistence.approval_repository import (
     InMemoryApprovalRepository,
     SqlApprovalRepository,
+    SqlCapabilityLeaseRepository,
 )
 from infrastructure.persistence.task_repository import SqlTaskRepository
 
@@ -116,3 +124,35 @@ async def test_in_memory_restart_expires_pending_questions() -> None:
     stored = await repository.get(approval.id)
     assert stored is not None and stored.state is ApprovalState.EXPIRED
     assert stored.resolved_by == "restart"
+
+
+async def test_an_exact_lease_is_persisted_matched_and_revoked(
+    repository, sqlite_repository, session_factory
+) -> None:
+    task = await stored_task(sqlite_repository)
+    approval = pending(task)
+    await repository.save(approval)
+    leases = SqlCapabilityLeaseRepository(session_factory)
+    scope = scope_for(
+        "employee-1",
+        "fs.write",
+        {"path": "reports/final.md", "content": "approved"},
+    )
+    lease = CapabilityLease.create(
+        workspace_id=task.workspace_id,
+        scope=scope,
+        grant=ApprovalGrant.TASK,
+        reason="The user approved this exact file for the task.",
+        approval_id=approval.id,
+        task_id=task.id,
+    )
+
+    await leases.save(lease)
+
+    matched = await leases.find_match(
+        scope, workspace_id=task.workspace_id, task_id=task.id
+    )
+    assert matched == lease
+    assert await leases.list_active() == [lease]
+    assert await leases.revoke(lease.id)
+    assert await leases.list_active() == []

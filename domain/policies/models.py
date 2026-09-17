@@ -59,6 +59,7 @@ class PolicyDecision:
     decision: Decision
     reason: str = ""
     risk_level: RiskLevel = RiskLevel.LOW
+    source: str = ""
 
     @property
     def is_allowed(self) -> bool:

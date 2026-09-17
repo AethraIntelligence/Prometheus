@@ -28,6 +28,7 @@ interface Props {
 
 export function ApprovalCard({ approval, actions }: Props) {
   const details = Object.entries(approval.payload ?? {});
+  const preview = Object.entries(approval.preview ?? {});
   const [open, setOpen] = useState(false);
   return (
     <article
@@ -44,12 +45,24 @@ export function ApprovalCard({ approval, actions }: Props) {
         Prometheus wants to {approval.action}
       </h4>
       {approval.reason && <p>{approval.reason}</p>}
-      {open && details.length > 0 && (
+      {approval.scope && (
+        <p className="note">
+          Exact scope: <code>{approval.scope.subject_name || approval.scope.subject}</code> may{" "}
+          <code>{approval.scope.action}</code> on <code>{approval.scope.resource}</code>
+        </p>
+      )}
+      {open && (details.length > 0 || preview.length > 0) && (
         <dl className="gate-details">
           {details.map(([key, value]) => (
             <div key={key}>
               <dt>{key}</dt>
               <dd>{String(value)}</dd>
+            </div>
+          ))}
+          {preview.map(([key, value]) => (
+            <div key={`preview-${key}`}>
+              <dt>preview · {key}</dt>
+              <dd>{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd>
             </div>
           ))}
         </dl>
@@ -60,10 +73,10 @@ export function ApprovalCard({ approval, actions }: Props) {
           only closes the question.
         </p>
       )}
-      {(actions || details.length > 0) && (
+      {(actions || details.length > 0 || preview.length > 0) && (
         <div className="gate-acts">
           {actions}
-          {details.length > 0 && (
+          {(details.length > 0 || preview.length > 0) && (
             <button
               type="button"
               className="gate-more"

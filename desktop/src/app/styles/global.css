@@ -1403,6 +1403,24 @@ button.worked:hover {
   flex-wrap: wrap;
 }
 
+.gate-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--wait-text);
+}
+
+.gate-scope select {
+  max-width: 220px;
+  border: 1px solid var(--wait-line);
+  border-radius: 7px;
+  padding: 5px 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
 .gate-more {
   margin-left: auto;
   background: none;

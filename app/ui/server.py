@@ -41,7 +41,7 @@ import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import structlog
@@ -341,6 +341,8 @@ class NewCredential(BaseModel):
 class Decision(BaseModel):
     approved: bool
     comment: str = ""
+    grant: Literal["ONCE", "TASK", "PERSISTENT"] = "ONCE"
+    duration_seconds: float | None = Field(default=None, gt=0, le=31_536_000)
 
 
 class Cancellation(BaseModel):
@@ -623,12 +625,27 @@ def _routes(app: FastAPI) -> None:
     async def decide(request: Request, approval_id: UUID, body: Decision) -> dict[str, Any]:
         try:
             return await _service(request).decide_approval(
-                approval_id, approved=body.approved, comment=body.comment
+                approval_id,
+                approved=body.approved,
+                comment=body.comment,
+                grant=body.grant,
+                duration_seconds=body.duration_seconds,
             )
         except ApprovalsDisabledError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except PrometheusError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/capability-leases")
+    async def capability_leases(request: Request) -> dict[str, Any]:
+        return {"leases": await _guarded(_service(request).list_capability_leases())}
+
+    @app.delete("/api/capability-leases/{lease_id}")
+    async def revoke_capability_lease(request: Request, lease_id: UUID) -> dict[str, Any]:
+        revoked = await _guarded(_service(request).revoke_capability_lease(lease_id))
+        if not revoked:
+            raise HTTPException(status_code=404, detail=f"Unknown active permission: {lease_id}")
+        return {"id": str(lease_id), "revoked": True}
 
 
     @app.get("/api/memory")

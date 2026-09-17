@@ -398,13 +398,27 @@ def test_an_irreversible_action_waits_for_the_interface(
         assert pending[0]["task_id"] == task_id
         assert pending[0]["live"] is True
         assert pending[0]["risk"] in ("HIGH", "CRITICAL")
+        assert pending[0]["scope"]["action"] == "fs.write"
+        assert pending[0]["scope"]["resource"] == "path:report.md"
+        assert pending[0]["preview"]["kind"] == "file_diff"
+        assert "-the old report" in pending[0]["preview"]["diff"]
+        assert "+the new report" in pending[0]["preview"]["diff"]
         assert (workspace / "report.md").read_text(encoding="utf-8") == "the old report"
 
-        answered = client.post(
-            f"/api/approvals/{pending[0]['id']}", json={"approved": approved, "comment": ""}
-        )
+        decision = {"approved": approved, "comment": ""}
+        if approved:
+            decision.update({"grant": "TASK", "duration_seconds": 3600})
+        answered = client.post(f"/api/approvals/{pending[0]['id']}", json=decision)
         assert answered.status_code == 200
         assert answered.json()["live"] is True
+        if approved:
+            [lease] = client.get("/api/capability-leases").json()["leases"]
+            assert lease["action"] == "fs.write"
+            assert lease["resource"] == "path:report.md"
+            assert lease["task_id"] == task_id
+            revoked = client.delete(f"/api/capability-leases/{lease['id']}")
+            assert revoked.status_code == 200
+            assert client.get("/api/capability-leases").json()["leases"] == []
 
         finished = wait_for(client, task_id, "COMPLETED", "FAILED", "CANCELLED")
         del finished

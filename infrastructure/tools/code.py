@@ -1,29 +1,18 @@
-"""Running code the employee wrote, with the brakes on.
-
-What isolation means here is stated plainly, because a tool called "sandbox"
-that is not one is worse than no tool. The child is a normal OS process; what it
-gets is:
-
-* a scratch directory of its own as the working directory, thrown away after;
-* a stripped environment - no inherited variables, so a provider key on this
-  machine cannot be read by generated code and printed into a transcript;
-* wall-clock, CPU, memory and output caps, so a runaway loop stops on its own;
-* `-I`, so nothing from the user's site-packages or PYTHONPATH is importable.
-
-What it does not get is a kernel boundary. The process can still reach the
-network and the filesystem, which is why the tool is declared irreversible and
-every run goes through the approval gate. A container or VM backend is the
-Phase 10 upgrade, and it slots in behind the same `ToolSpec`.
-"""
+"""Generated Python runs in one Docker sandbox on every supported host."""
 
 from __future__ import annotations
 
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+from typing import Protocol
 
 from domain.capabilities.models import Capability
 from domain.policies.risk import Effect
@@ -35,54 +24,244 @@ log = get_logger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_TIMEOUT_SECONDS = 300.0
-#: Output beyond this is truncated: the model has to read it, and a script that
-#: prints a megabyte has already told us what went wrong in the first lines.
-MAX_OUTPUT_CHARS = 20_000
 DEFAULT_MEMORY_MB = 512
+DEFAULT_DISK_MB = 64
+DEFAULT_MAX_OUTPUT_CHARS = 20_000
 
 
-def _limits(memory_mb: int, cpu_seconds: int):
-    """Per-process resource caps, applied in the child before it runs anything."""
+class SandboxBackend(Protocol):
+    """Turns a Python command into one confined by the container runtime."""
 
-    def apply() -> None:  # pragma: no cover - runs in the forked child
+    name: str
+    available: bool
+    reason: str
+    uses_host_limits: bool
+
+    def wrap(self, command: Sequence[str], directory: Path) -> list[str]: ...
+
+    def environment(self, directory: Path) -> dict[str, str]: ...
+
+    def cleanup(self, directory: Path) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableSandbox:
+    name: str = "unavailable"
+    available: bool = False
+    uses_host_limits: bool = False
+    reason: str = (
+        "The Docker code sandbox is unavailable. Start Docker and install the "
+        "configured Python sandbox image."
+    )
+
+    def wrap(self, command: Sequence[str], directory: Path) -> list[str]:
+        del command, directory
+        raise RuntimeError(self.reason)
+
+    def environment(self, directory: Path) -> dict[str, str]:
+        del directory
+        return {}
+
+    def cleanup(self, directory: Path) -> None:
+        del directory
+
+
+@lru_cache(maxsize=4)
+def _docker_readiness(executable: str, image: str) -> tuple[bool, str]:
+    try:
+        daemon = subprocess.run(
+            [executable, "info", "--format", "{{.ServerVersion}}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return False, f"Docker could not be checked: {error}"
+    if daemon.returncode:
+        return False, "Docker is installed but its engine is not running."
+    image_check = subprocess.run(
+        [executable, "image", "inspect", image],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if image_check.returncode:
+        return False, f"The sandbox image is missing. Run: docker pull {image}"
+    return True, ""
+
+
+class DockerSandbox:
+    """One cross-platform container contract with no network or host access."""
+
+    name = "docker"
+    uses_host_limits = False
+
+    def __init__(
+        self,
+        *,
+        memory_mb: int,
+        disk_mb: int,
+        executable: str | None = None,
+        image: str = "python:3.12-alpine",
+        check_readiness: bool = True,
+    ) -> None:
+        self._executable = executable or shutil.which("docker") or ""
+        self._image = image
+        self._memory_mb = memory_mb
+        self._disk_mb = disk_mb
+        if not self._executable:
+            self.available = False
+            self.reason = "Docker is not installed."
+        elif check_readiness:
+            self.available, self.reason = _docker_readiness(self._executable, image)
+        else:
+            self.available, self.reason = True, ""
+
+    @staticmethod
+    def _name(directory: Path) -> str:
+        return f"prometheus-code-{directory.name.removeprefix('prometheus-code-')}"
+
+    def wrap(self, command: Sequence[str], directory: Path) -> list[str]:
+        del command
+        if not self.available:
+            raise RuntimeError(self.reason)
+        scratch = str(directory.resolve())
+        return [
+            self._executable,
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--name",
+            self._name(directory),
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "32",
+            "--memory",
+            f"{self._memory_mb}m",
+            "--memory-swap",
+            f"{self._memory_mb}m",
+            "--cpus",
+            "1",
+            "--ulimit",
+            "nofile=64:64",
+            "--ulimit",
+            f"fsize={self._disk_mb * 1024 * 1024}:{self._disk_mb * 1024 * 1024}",
+            "--user",
+            "65534:65534",
+            "--workdir",
+            "/workspace",
+            "--mount",
+            f"type=bind,src={scratch},dst=/workspace,rw",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=16m",
+            self._image,
+            "python",
+            "-I",
+            "-B",
+            "/workspace/main.py",
+        ]
+
+    def environment(self, directory: Path) -> dict[str, str]:
+        del directory
+        keys = (
+            "HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "PATH",
+            "DOCKER_CONFIG",
+            "DOCKER_HOST",
+            "DOCKER_CONTEXT",
+        )
+        return {key: os.environ[key] for key in keys if key in os.environ}
+
+    def cleanup(self, directory: Path) -> None:
+        subprocess.run(
+            [self._executable, "rm", "-f", self._name(directory)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+
+
+def sandbox_backend(
+    *, memory_mb: int = DEFAULT_MEMORY_MB, disk_mb: int = DEFAULT_DISK_MB
+) -> SandboxBackend:
+    """The single Docker boundary, or an explicit fail-closed implementation."""
+    candidate = DockerSandbox(memory_mb=memory_mb, disk_mb=disk_mb)
+    return candidate if candidate.available else UnavailableSandbox(reason=candidate.reason)
+
+
+def _limits(memory_mb: int, cpu_seconds: int, disk_mb: int):
+    """Resource caps applied in the sandboxed child before Python starts."""
+
+    def apply() -> None:  # pragma: no cover - runs in the child process
         import contextlib
         import resource
 
-        limit_bytes = memory_mb * 1024 * 1024
-        caps = ((resource.RLIMIT_AS, limit_bytes), (resource.RLIMIT_DATA, limit_bytes),
-                (resource.RLIMIT_CPU, cpu_seconds))
+        memory_bytes = memory_mb * 1024 * 1024
+        file_bytes = disk_mb * 1024 * 1024
+        caps = (
+            (resource.RLIMIT_AS, memory_bytes),
+            (resource.RLIMIT_DATA, memory_bytes),
+            (resource.RLIMIT_CPU, cpu_seconds),
+            (resource.RLIMIT_FSIZE, file_bytes),
+            (resource.RLIMIT_NOFILE, 64),
+        )
+        if hasattr(resource, "RLIMIT_NPROC"):
+            caps = (*caps, (resource.RLIMIT_NPROC, 32))
         for kind, value in caps:
-            # A platform that will not take one of these still gets the others,
-            # and the wall-clock timeout applies everywhere regardless.
             with contextlib.suppress(ValueError, OSError):
                 resource.setrlimit(kind, (value, value))
+        # Desktop processes already run as the signed-in, unprivileged user.
+        # A service accidentally started as root must not pass that identity to
+        # generated code; 65534 is the conventional nobody uid/gid on both
+        # supported Unix families.
+        if os.geteuid() == 0:
+            os.setgroups([])
+            os.setgid(65534)
+            os.setuid(65534)
 
     return apply
 
 
 class CodeExecutionTool:
-    """Implements `domain.tools.protocols.Tool`.
-
-    Not built on `BaseTool`: the timing, the truncation and the temporary
-    directory are all specific to running a subprocess, and inheriting the
-    generic wrapper would only hide where the failure came from.
-    """
+    """Runs short Python programs only when a supported sandbox is ready."""
 
     def __init__(
         self,
         *,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         memory_mb: int = DEFAULT_MEMORY_MB,
+        disk_mb: int = DEFAULT_DISK_MB,
+        max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
         interpreter: str | None = None,
+        sandbox: SandboxBackend | None = None,
     ) -> None:
         self._timeout = min(timeout_seconds, MAX_TIMEOUT_SECONDS)
-        self._memory_mb = memory_mb
+        self._memory_mb = max(32, memory_mb)
+        self._disk_mb = max(1, disk_mb)
+        self._max_output_chars = max(1_000, max_output_chars)
         self._interpreter = interpreter or sys.executable
+        self._sandbox = sandbox or sandbox_backend(memory_mb=memory_mb, disk_mb=disk_mb)
+        readiness = (
+            f"OS sandbox: {self._sandbox.name}."
+            if self._sandbox.available
+            else f"Unavailable: {self._sandbox.reason}"
+        )
         self._spec = ToolSpec.of(
             "code.run",
-            "Run a short Python program and get back what it printed. The program "
-            "runs in an empty scratch directory with no access to your environment, "
-            "and is stopped if it takes too long. Needs the user's confirmation.",
+            "Run a short Python program in an isolated, network-disabled scratch "
+            f"directory. {readiness} Needs the user's confirmation.",
             Param("code", description="The Python source to run. Print what you need to see."),
             Param(
                 "timeout_seconds",
@@ -100,6 +279,10 @@ class CodeExecutionTool:
     def spec(self) -> ToolSpec:
         return self._spec
 
+    @property
+    def sandbox(self) -> SandboxBackend:
+        return self._sandbox
+
     async def execute(self, input_data: dict[str, object]) -> ToolResult:
         from domain.errors import DomainError
 
@@ -107,6 +290,8 @@ class CodeExecutionTool:
             arguments = self._spec.parameters.validate(input_data)
         except DomainError as error:
             return ToolResult.failure(str(error))
+        if not self._sandbox.available:
+            return ToolResult.failure(self._sandbox.reason)
 
         source = str(arguments["code"])
         timeout = min(float(arguments.get("timeout_seconds", self._timeout)), self._timeout)
@@ -119,9 +304,6 @@ class CodeExecutionTool:
     async def _run(self, source: str, directory: Path, timeout: float) -> ToolResult:
         script = directory / "main.py"
         script.write_text(source, encoding="utf-8")
-
-        # A minimal environment, built rather than filtered: a deny-list of
-        # variable names is one new secret away from being out of date.
         environment = {
             "PATH": os.defpath,
             "HOME": str(directory),
@@ -129,44 +311,220 @@ class CodeExecutionTool:
             "LANG": "C.UTF-8",
             "PYTHONIOENCODING": "utf-8",
         }
-        kwargs = {}
-        if os.name == "posix":
-            kwargs["preexec_fn"] = _limits(self._memory_mb, int(timeout) + 1)
-
-        process = await asyncio.create_subprocess_exec(
-            self._interpreter,
-            "-I",
-            "-B",
-            str(script),
-            cwd=directory,
-            env=environment,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **kwargs,
+        if hasattr(self._sandbox, "environment"):
+            environment = self._sandbox.environment(directory)
+        command = self._sandbox.wrap(
+            [self._interpreter, "-I", "-B", str(script)], directory
         )
+        if self._sandbox.name == "docker":
+            directory.chmod(0o777)
+            script.chmod(0o644)
+        elif os.name == "posix" and os.geteuid() == 0:
+            for path in (directory, *directory.iterdir()):
+                os.chown(path, 65534, 65534)
+        kwargs = {}
+        if os.name == "posix" and getattr(self._sandbox, "uses_host_limits", True):
+            kwargs["preexec_fn"] = _limits(
+                self._memory_mb, max(1, int(timeout) + 1), self._disk_mb
+            )
+
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=directory,
+                env=environment,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=os.name == "posix",
+                **kwargs,
+            )
+        except OSError as error:
+            return ToolResult.failure(
+                f"The {self._sandbox.name} sandbox could not start: {error}"
+            )
+
+        stdout_task = asyncio.create_task(
+            _read_limited(process.stdout, self._max_output_chars)
+        )
+        stderr_task = asyncio.create_task(
+            _read_limited(process.stderr, self._max_output_chars)
+        )
+        resource_task = asyncio.create_task(
+            _enforce_runtime_limits(
+                process,
+                directory,
+                disk_limit=self._disk_mb * 1024 * 1024,
+                memory_limit=self._memory_mb * 1024 * 1024,
+            )
+        )
+        timed_out = False
+        exceeded: str | None = None
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout)
         except TimeoutError:
-            process.kill()
+            timed_out = True
+            _kill_process_group(process)
             await process.wait()
-            log.warning("code.timeout", timeout_seconds=timeout)
+        finally:
+            if resource_task.done() and not resource_task.cancelled():
+                exceeded = resource_task.result()
+            else:
+                resource_task.cancel()
+            await asyncio.gather(resource_task, return_exceptions=True)
+            if hasattr(self._sandbox, "cleanup"):
+                await asyncio.to_thread(self._sandbox.cleanup, directory)
+
+        stdout, stdout_clipped = await stdout_task
+        stderr, stderr_clipped = await stderr_task
+        effects = _file_effects(directory)
+        if timed_out:
+            log.warning("code.timeout", timeout_seconds=timeout, sandbox=self._sandbox.name)
             return ToolResult.failure(
                 f"The program was stopped after {timeout:.0f} seconds without finishing."
             )
+        output = {
+            "stdout": _decode(stdout, stdout_clipped),
+            "stderr": _decode(stderr, stderr_clipped),
+            "exit_code": process.returncode,
+            "sandbox": self._sandbox.name,
+            "network": "denied",
+            "subject": "unprivileged",
+            "effects": effects,
+        }
+        if os.name == "posix":
+            import signal
 
+            if process.returncode == -signal.SIGXFSZ:
+                exceeded = "disk"
+        if exceeded:
+            return ToolResult(
+                success=False,
+                output=output,
+                error=(
+                    f"The program exceeded the {self._disk_mb} MB disk limit."
+                    if exceeded == "disk"
+                    else f"The program exceeded the {self._memory_mb} MB memory limit."
+                ),
+            )
+        error = None
+        if process.returncode != 0:
+            error = f"exited with {process.returncode}"
+            sandbox_error = output["stderr"].strip()
+            if sandbox_error.startswith(("docker:", "Error response from daemon:")):
+                error = f"The {self._sandbox.name} sandbox rejected startup: {sandbox_error}"
         return ToolResult(
             success=process.returncode == 0,
-            output={
-                "stdout": _clip(stdout),
-                "stderr": _clip(stderr),
-                "exit_code": process.returncode,
-            },
-            error=None if process.returncode == 0 else f"exited with {process.returncode}",
+            output=output,
+            error=error,
         )
 
 
-def _clip(raw: bytes) -> str:
+async def _read_limited(
+    stream: asyncio.StreamReader | None, limit: int
+) -> tuple[bytes, bool]:
+    if stream is None:
+        return b"", False
+    kept = bytearray()
+    clipped = False
+    while chunk := await stream.read(8192):
+        remaining = limit - len(kept)
+        if remaining > 0:
+            kept.extend(chunk[:remaining])
+        if len(chunk) > max(remaining, 0):
+            clipped = True
+    return bytes(kept), clipped
+
+
+async def _enforce_runtime_limits(
+    process: asyncio.subprocess.Process,
+    directory: Path,
+    *,
+    disk_limit: int,
+    memory_limit: int,
+) -> str | None:
+    while process.returncode is None:
+        await asyncio.sleep(0.02)
+        size = _directory_size(directory)
+        if size > disk_limit:
+            _kill_process_group(process)
+            return "disk"
+        resident = await _resident_bytes(process.pid)
+        if resident is not None and resident > memory_limit:
+            _kill_process_group(process)
+            return "memory"
+    return None
+
+
+def _directory_size(directory: Path) -> int:
+    """Measure scratch usage while generated code may concurrently mutate it."""
+    size = 0
+    try:
+        paths = tuple(directory.rglob("*"))
+    except OSError:
+        return size
+    for path in paths:
+        try:
+            if path.is_file():
+                size += path.stat().st_size
+        except OSError:
+            continue
+    return size
+
+
+async def _resident_bytes(pid: int) -> int | None:
+    """Current RSS without an optional process-inspection dependency."""
+    status = Path(f"/proc/{pid}/status")
+    if status.exists():
+        try:
+            line = next(
+                item for item in status.read_text(encoding="utf-8").splitlines()
+                if item.startswith("VmRSS:")
+            )
+            return int(line.split()[1]) * 1024
+        except (OSError, StopIteration, ValueError):
+            return None
+    ps = shutil.which("ps")
+    if not ps:
+        return None
+    try:
+        probe = await asyncio.create_subprocess_exec(
+            ps,
+            "-o",
+            "rss=",
+            "-p",
+            str(pid),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await probe.communicate()
+        return int(stdout.strip() or b"0") * 1024
+    except (OSError, ValueError):
+        return None
+
+
+def _file_effects(directory: Path) -> list[dict[str, object]]:
+    ignored = {"main.py"}
+    return [
+        {"path": str(path.relative_to(directory)), "bytes": path.stat().st_size}
+        for path in sorted(directory.rglob("*"))
+        if path.is_file() and path.name not in ignored
+    ]
+
+
+def _kill_process_group(process: asyncio.subprocess.Process) -> None:
+    if os.name == "posix":
+        import signal
+
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            return
+        except ProcessLookupError:
+            return
+    process.kill()
+
+
+def _decode(raw: bytes, clipped: bool) -> str:
     text = raw.decode("utf-8", errors="replace")
-    if len(text) <= MAX_OUTPUT_CHARS:
-        return text
-    return text[:MAX_OUTPUT_CHARS] + f"\n... [truncated, {len(text)} characters total]"
+    if clipped:
+        return text + "\n... [truncated by the output limit]"
+    return text

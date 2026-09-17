@@ -58,8 +58,21 @@ def browser_tools(browser: Browser) -> list[Tool]:
     return [BrowserOpenTool(browser), BrowserExtractTool(browser)]
 
 
-def code_tools(*, timeout_seconds: float = 30.0) -> list[Tool]:
-    return [CodeExecutionTool(timeout_seconds=timeout_seconds)]
+def code_tools(
+    *,
+    timeout_seconds: float = 30.0,
+    memory_mb: int = 512,
+    disk_mb: int = 64,
+    max_output_chars: int = 20_000,
+) -> list[Tool]:
+    return [
+        CodeExecutionTool(
+            timeout_seconds=timeout_seconds,
+            memory_mb=memory_mb,
+            disk_mb=disk_mb,
+            max_output_chars=max_output_chars,
+        )
+    ]
 
 
 def screen_tools(computer: Computer, reader: Callable[[], ScreenReader]) -> list[Tool]:
@@ -73,6 +86,9 @@ def build_registry(
     browser: Callable[[], Browser] | None = None,
     code_execution: bool = True,
     code_timeout_seconds: float = 30.0,
+    code_memory_mb: int = 512,
+    code_disk_mb: int = 64,
+    code_max_output_chars: int = 20_000,
     computers: Callable[[], list[tuple[Computer, Callable[[], ScreenReader]]]] | None = None,
 ) -> InMemoryToolRegistry:
     """Everything this machine can do, before any employee's rights are applied."""
@@ -82,7 +98,12 @@ def build_registry(
     if browser is not None:
         tools += browser_tools(browser())
     if code_execution:
-        tools += code_tools(timeout_seconds=code_timeout_seconds)
+        tools += code_tools(
+            timeout_seconds=code_timeout_seconds,
+            memory_mb=code_memory_mb,
+            disk_mb=code_disk_mb,
+            max_output_chars=code_max_output_chars,
+        )
     if computers is not None:
         # A surface at a time, so the browser one exists whether or not the
         # desktop is switched on. The names differ per surface, which is what

@@ -61,6 +61,15 @@ def console_confirmer(request: ApprovalRequest) -> bool:
     if safe.reason:
         print(f"  why:  {safe.reason}", file=sys.stderr)
     print(f"  risk: {safe.risk_level.value}", file=sys.stderr)
+    if safe.scope:
+        print(
+            f"  scope: {safe.scope.subject} may {safe.scope.action} on "
+            f"{safe.scope.resource}",
+            file=sys.stderr,
+        )
+    if safe.preview:
+        rendered = str(safe.preview)
+        print(f"  preview: {rendered[:2_000]}", file=sys.stderr)
     try:
         answer = input("Allow this action? [y/N] ")
     except (EOFError, KeyboardInterrupt):
@@ -93,6 +102,10 @@ class LocalApprovalService:
         await self._repository.save(approval)
 
         decision, resolved_by = await self._decide(action)
+        # The interface may have attached an exact grant while the confirmer
+        # was waiting. Resolve the current row so that concurrent decision
+        # metadata is not overwritten by the original PENDING value.
+        approval = await self._repository.get(action.id) or approval
         await self._repository.save(
             approval.resolve(decision, resolved_by=resolved_by, comment=action.reason)
         )

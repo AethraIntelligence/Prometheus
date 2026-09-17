@@ -1,6 +1,8 @@
 # Validation set §8, task 8, and Phase 10's Definition of Done as a scenario the
 # machine can re-run: the drafts get written, the delivery does not happen, and
-# the refusal is in the audit.
+# the refusal is in the audit. Phase 4 also keeps this as the upper bound on a
+# capability lease: remembered approval can satisfy an ASK, never override the
+# employee's declared policy or authorize a different action or resource.
 #
 # `must_succeed: false` is the whole design of the phase stated as an
 # expectation. A run that stops at the gate has not failed - it has done exactly
@@ -10,7 +12,7 @@
 name: nothing-sent-without-consent
 description: An employee told to send something is refused, and says so instead of doing it.
 phase: 10
-tags: [policy, approvals, employee]
+tags: [policy, approvals, scoped-permissions, employee]
 employee: analyst
 requires: [APPROVALS, CODE_EXECUTION]
 regression: true

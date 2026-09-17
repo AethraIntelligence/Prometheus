@@ -36,8 +36,8 @@ from typing import Any
 import structlog
 
 from domain.approvals.gate import describe, resolve_risk
-from domain.approvals.models import ApprovalRequest, ApprovalState
-from domain.approvals.protocols import ApprovalService
+from domain.approvals.models import ApprovalRequest, ApprovalState, scope_for
+from domain.approvals.protocols import ApprovalService, CapabilityLeaseRepository
 from domain.audit.protocols import AuditLog, AuditRecord
 from domain.employees.definition import EmployeeDefinition
 from domain.policies.engine import PolicyEngine, PolicyRequest
@@ -45,7 +45,7 @@ from domain.policies.models import Decision
 from domain.policies.rules import RuleBasedPolicyEngine
 from domain.secrets.models import redact
 from domain.tasks.task import Task, TaskStatus
-from domain.tools.protocols import RiskAssessor, Tool
+from domain.tools.protocols import EffectPreviewer, RiskAssessor, Tool
 from domain.workforce import directions
 from domain.workforce.directions import ApprovalChoice
 
@@ -83,10 +83,12 @@ class ApprovalGate:
         *,
         engine: PolicyEngine | None = None,
         audit: AuditLog | None = None,
+        leases: CapabilityLeaseRepository | None = None,
     ) -> None:
         self._service = service
         self._engine = engine or RuleBasedPolicyEngine()
         self._audit = audit
+        self._leases = leases
 
     async def check(
         self,
@@ -118,7 +120,15 @@ class ApprovalGate:
 
         if decision.decision is Decision.DENY:
             log.info("policy.denied", tool=tool.spec.name, reason=decision.reason)
-            await self._record(task, definition, tool, action, "DENIED", decision.reason)
+            await self._record(
+                task,
+                definition,
+                tool,
+                action,
+                "DENIED",
+                decision.reason,
+                policy_source=decision.source,
+            )
             return GateOutcome(
                 allowed=False, reason=_DENIED.format(action=action, reason=decision.reason)
             )
@@ -127,8 +137,36 @@ class ApprovalGate:
             # Checked before the approver, because refusing needs nobody: it is
             # the one answer that is always the person's to give in advance.
             reason = "this request was set to refuse anything that needs approval"
-            await self._record(task, definition, tool, action, "DENIED", reason)
+            await self._record(
+                task,
+                definition,
+                tool,
+                action,
+                "DENIED",
+                reason,
+                policy_source="request_profile:deny",
+            )
             return GateOutcome(allowed=False, reason=_DENIED.format(action=action, reason=reason))
+
+        safe_payload = redact(input_data)
+        scope = scope_for(definition.actor_id, tool.spec.name, safe_payload)
+        if self._leases is not None:
+            lease = await self._leases.find_match(
+                scope,
+                workspace_id=task.workspace_id,
+                task_id=task.id,
+            )
+            if lease is not None:
+                await self._record(
+                    task,
+                    definition,
+                    tool,
+                    action,
+                    "SUCCESS",
+                    lease.reason,
+                    policy_source=f"capability_lease:{lease.id}",
+                )
+                return ALLOWED
 
         if self._service is None:
             # No configured way to ask means no way to say yes. Refusing is the
@@ -137,18 +175,40 @@ class ApprovalGate:
                 f"{tool.spec.name} needs the user's approval and no approver "
                 "is configured on this machine."
             )
-            await self._record(task, definition, tool, action, "DENIED", reason)
+            await self._record(
+                task,
+                definition,
+                tool,
+                action,
+                "DENIED",
+                reason,
+                policy_source=decision.source,
+            )
             return GateOutcome(allowed=False, reason=reason)
+
+        preview: dict[str, Any] = {
+            "effect": tool.spec.effect.value,
+            "resource": scope.resource,
+            "limits": scope.limits,
+        }
+        if isinstance(tool, EffectPreviewer):
+            try:
+                preview = {**preview, **redact(tool.preview(input_data))}
+            except Exception as error:
+                log.warning("approval.preview_failed", tool=tool.spec.name, error=str(error))
 
         request = ApprovalRequest.create(
             task_id=task.id,
             action=action,
             tool=tool.spec.name,
-            payload=redact(input_data),
+            payload=safe_payload,
             risk_level=decision.risk_level,
             workspace_id=task.workspace_id,
             requested_by_employee_id=definition.id,
             reason=decision.reason,
+            scope=scope,
+            preview=preview,
+            policy_source=decision.source,
         )
         log.info(
             "approval.requested",
@@ -158,8 +218,25 @@ class ApprovalGate:
         )
         state = await self._ask(request, status)
         if state is ApprovalState.APPROVED:
+            await self._record(
+                task,
+                definition,
+                tool,
+                action,
+                "SUCCESS",
+                decision.reason,
+                policy_source=decision.source,
+            )
             return ALLOWED
-        await self._record(task, definition, tool, action, "DENIED", decision.reason)
+        await self._record(
+            task,
+            definition,
+            tool,
+            action,
+            "DENIED",
+            decision.reason,
+            policy_source=decision.source,
+        )
         return GateOutcome(
             allowed=False,
             reason=_NOT_APPROVED.format(state=state.value.lower(), reason=decision.reason),
@@ -198,6 +275,8 @@ class ApprovalGate:
         action: str,
         result: str,
         reason: str,
+        *,
+        policy_source: str,
     ) -> None:
         """Write the decision down. Never at the cost of the decision itself."""
         if self._audit is None:
@@ -212,7 +291,12 @@ class ApprovalGate:
                     workspace_id=task.workspace_id,
                     task_id=task.id,
                     tool=tool.spec.name,
-                    details={"reason": reason, "effect": tool.spec.effect.value},
+                    details={
+                        "reason": reason,
+                        "effect": tool.spec.effect.value,
+                        "decision": "APPROVED" if result == "SUCCESS" else "DENIED",
+                        "policy_source": policy_source,
+                    },
                 )
             )
         except Exception as error:

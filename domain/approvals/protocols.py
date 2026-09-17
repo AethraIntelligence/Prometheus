@@ -4,7 +4,13 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from domain.approvals.models import Approval, ApprovalRequest, ApprovalState
+from domain.approvals.models import (
+    Approval,
+    ApprovalRequest,
+    ApprovalScope,
+    ApprovalState,
+    CapabilityLease,
+)
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
 
@@ -66,6 +72,29 @@ class ApprovalRepository(Protocol):
         exists, would both be unsafe.
         """
         ...
+
+
+class CapabilityLeaseRepository(Protocol):
+    """Durable exact grants. Matching and revocation are store operations."""
+
+    async def save(self, lease: CapabilityLease) -> None: ...
+
+    async def get(self, lease_id: UUID) -> CapabilityLease | None: ...
+
+    async def find_match(
+        self,
+        scope: ApprovalScope,
+        *,
+        workspace_id: WorkspaceId,
+        task_id: UUID,
+        now: datetime | None = None,
+    ) -> CapabilityLease | None: ...
+
+    async def list_active(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    ) -> list[CapabilityLease]: ...
+
+    async def revoke(self, lease_id: UUID, *, by: str = "user") -> bool: ...
 
 
 class ApprovalWaiter(Protocol):

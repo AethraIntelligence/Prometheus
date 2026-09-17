@@ -46,6 +46,14 @@ assistant when you ask a question, and works like a team when you ask for work.
 **You need:** Python 3.12+, [uv](https://docs.astral.sh/uv/), Node 20+, the Rust
 toolchain, and either [Ollama](https://ollama.com) (free, local) or a provider key.
 
+Running generated Python additionally needs Docker and one explicit install:
+
+```bash
+docker pull python:3.12-alpine
+```
+
+Without it, the rest of Prometheus works and `code.run` reports itself unavailable.
+
 ```bash
 git clone https://github.com/AethraIntelligence/Prometheus.git && cd Prometheus
 ./start.sh
@@ -209,12 +217,20 @@ automatically repeated.
 - **The filesystem is fenced.** File tools see one folder per task, symlinks
   resolved; anything outside is refused, not approved. The top of the disk and
   your home folder itself cannot be chosen as a task's folder.
+- **Generated code has an OS boundary.** `code.run` uses the same locked-down
+  Docker container on every platform, with no network or user/workspace mounts
+  and explicit CPU, memory, time, disk and output limits. Without a running
+  Docker engine and the sandbox image, it fails closed.
 - **The desktop is opt-in per application.** With no allowed applications, nothing
   on your desktop can be touched, and every desktop action asks each time.
 - **There is a brake.** `prometheus stop` writes a file every screen action reads
   first - it works from a second terminal while a run holds the screen.
 - **Silence is a no.** An unanswered approval expires and is refused. Approvals can
   also reach you on Telegram.
+- **Remembered permission is exact and revocable.** An approval can apply once,
+  to the same employee/action/resource for this task, or become an expiring
+  persistent rule. Settings → Permissions shows and revokes every active rule;
+  a declared denial always wins.
 - **Everything is audited**, including actions that were refused and never ran.
 - **Content is data, not instructions.** A web page, an email or a document is
   quoted to the model inside markers; nothing in it can change a policy or a grant.
@@ -294,7 +310,7 @@ employees/  workflows/  prompts/  validation/scenarios/    declarations and cont
 - **One runtime for every employee.** Employees differ only by declaration.
 - **Layering is enforced**, by `import-linter` and by tests that read the source; the
   frontend follows Feature-Sliced Design with its own architecture test.
-- **Decisions are written down.** Twenty ADRs in [`docs/adr/`](docs/adr) record
+- **Decisions are written down.** Twenty-five ADRs in [`docs/adr/`](docs/adr) record
   what was chosen, what was rejected, and the failure that forced the choice.
 
 <details>

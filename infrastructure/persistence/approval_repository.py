@@ -7,16 +7,23 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from domain.approvals.models import Approval, ApprovalRequest, ApprovalState
+from domain.approvals.models import (
+    Approval,
+    ApprovalGrant,
+    ApprovalRequest,
+    ApprovalScope,
+    ApprovalState,
+    CapabilityLease,
+)
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.policies.models import RiskLevel
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 from infrastructure.persistence.dialect import upsert
-from infrastructure.persistence.models import ApprovalRow
+from infrastructure.persistence.models import ApprovalRow, CapabilityLeaseRow
 from infrastructure.persistence.session import session_scope
 
 
@@ -41,11 +48,18 @@ def _to_values(approval: Approval) -> dict:
         "risk_level": request.risk_level.value,
         "state": approval.state.value,
         "reason": request.reason,
+        "subject": request.scope.subject if request.scope else "",
+        "resource": request.scope.resource if request.scope else "",
+        "limits": request.scope.limits if request.scope else {},
+        "preview": request.preview,
+        "policy_source": request.policy_source,
         "requested_at": request.requested_at,
         "expires_at": request.expires_at,
         "resolved_at": approval.resolved_at,
         "resolved_by": approval.resolved_by,
         "comment": approval.comment,
+        "grant_kind": approval.grant.value,
+        "lease_id": str(approval.lease_id) if approval.lease_id else None,
     }
 
 
@@ -64,12 +78,66 @@ def _to_approval(row: ApprovalRow) -> Approval:
             ),
             requested_at=_aware(row.requested_at),  # type: ignore[arg-type]
             reason=row.reason or "",
+            scope=(
+                ApprovalScope(
+                    subject=row.subject,
+                    action=row.tool or "",
+                    resource=row.resource,
+                    limits=row.limits or {},
+                )
+                if row.subject and row.tool and row.resource
+                else None
+            ),
+            preview=row.preview or {},
+            policy_source=row.policy_source or "risk_threshold",
             expires_at=_aware(row.expires_at),
         ),
         state=ApprovalState(row.state),
         resolved_at=_aware(row.resolved_at),
         resolved_by=row.resolved_by,
         comment=row.comment or "",
+        grant=ApprovalGrant(row.grant_kind or ApprovalGrant.ONCE.value),
+        lease_id=UUID(row.lease_id) if row.lease_id else None,
+    )
+
+
+def _lease_values(lease: CapabilityLease) -> dict:
+    return {
+        "id": str(lease.id),
+        "workspace_id": str(lease.workspace_id),
+        "subject": lease.scope.subject,
+        "action": lease.scope.action,
+        "resource": lease.scope.resource,
+        "limits": lease.scope.limits,
+        "grant_kind": lease.grant.value,
+        "reason": lease.reason,
+        "approval_id": str(lease.approval_id),
+        "task_id": str(lease.task_id) if lease.task_id else None,
+        "created_at": lease.created_at,
+        "expires_at": lease.expires_at,
+        "revoked_at": lease.revoked_at,
+        "revoked_by": lease.revoked_by,
+    }
+
+
+def _to_lease(row: CapabilityLeaseRow) -> CapabilityLease:
+    return CapabilityLease(
+        id=UUID(row.id),
+        workspace_id=WorkspaceId(row.workspace_id),
+        scope=ApprovalScope(
+            subject=row.subject,
+            action=row.action,
+            resource=row.resource,
+            limits=row.limits or {},
+        ),
+        grant=ApprovalGrant(row.grant_kind),
+        reason=row.reason,
+        approval_id=UUID(row.approval_id),
+        task_id=UUID(row.task_id) if row.task_id else None,
+        created_at=_aware(row.created_at),  # type: ignore[arg-type]
+        expires_at=_aware(row.expires_at),
+        revoked_at=_aware(row.revoked_at),
+        revoked_by=row.revoked_by,
     )
 
 
@@ -215,3 +283,142 @@ class InMemoryApprovalRepository:
             ),
             key=lambda approval: approval.request.requested_at,
         )
+
+
+class SqlCapabilityLeaseRepository:
+    """Exact grant storage with matching performed against indexed columns."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def save(self, lease: CapabilityLease) -> None:
+        values = _lease_values(lease)
+        async with session_scope(self._session_factory) as session:
+            statement = upsert(session, CapabilityLeaseRow).values(**values)
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[CapabilityLeaseRow.id],
+                    set_={key: value for key, value in values.items() if key != "id"},
+                )
+            )
+
+    async def get(self, lease_id: UUID) -> CapabilityLease | None:
+        async with session_scope(self._session_factory) as session:
+            row = await session.get(CapabilityLeaseRow, str(lease_id))
+            return _to_lease(row) if row else None
+
+    async def find_match(
+        self,
+        scope: ApprovalScope,
+        *,
+        workspace_id: WorkspaceId,
+        task_id: UUID,
+        now: datetime | None = None,
+    ) -> CapabilityLease | None:
+        moment = now or datetime.now(UTC)
+        async with session_scope(self._session_factory) as session:
+            rows = await session.scalars(
+                select(CapabilityLeaseRow)
+                .where(
+                    CapabilityLeaseRow.workspace_id == str(workspace_id),
+                    CapabilityLeaseRow.subject == scope.subject,
+                    CapabilityLeaseRow.action == scope.action,
+                    CapabilityLeaseRow.resource == scope.resource,
+                    CapabilityLeaseRow.revoked_at.is_(None),
+                    or_(
+                        CapabilityLeaseRow.expires_at.is_(None),
+                        CapabilityLeaseRow.expires_at > moment,
+                    ),
+                    or_(
+                        CapabilityLeaseRow.grant_kind == ApprovalGrant.PERSISTENT.value,
+                        CapabilityLeaseRow.task_id == str(task_id),
+                    ),
+                )
+                .order_by(CapabilityLeaseRow.created_at.desc())
+            )
+            for row in rows:
+                lease = _to_lease(row)
+                if lease.matches(
+                    scope, workspace_id=workspace_id, task_id=task_id, now=moment
+                ):
+                    return lease
+        return None
+
+    async def list_active(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    ) -> list[CapabilityLease]:
+        moment = datetime.now(UTC)
+        async with session_scope(self._session_factory) as session:
+            rows = await session.scalars(
+                select(CapabilityLeaseRow)
+                .where(
+                    CapabilityLeaseRow.workspace_id == str(workspace_id),
+                    CapabilityLeaseRow.revoked_at.is_(None),
+                    or_(
+                        CapabilityLeaseRow.expires_at.is_(None),
+                        CapabilityLeaseRow.expires_at > moment,
+                    ),
+                )
+                .order_by(CapabilityLeaseRow.created_at.desc())
+            )
+            return [_to_lease(row) for row in rows]
+
+    async def revoke(self, lease_id: UUID, *, by: str = "user") -> bool:
+        async with session_scope(self._session_factory) as session:
+            result = await session.execute(
+                update(CapabilityLeaseRow)
+                .where(
+                    CapabilityLeaseRow.id == str(lease_id),
+                    CapabilityLeaseRow.revoked_at.is_(None),
+                )
+                .values(revoked_at=datetime.now(UTC), revoked_by=by)
+            )
+            return bool(result.rowcount)
+
+
+class InMemoryCapabilityLeaseRepository:
+    def __init__(self) -> None:
+        self._leases: dict[UUID, CapabilityLease] = {}
+
+    async def save(self, lease: CapabilityLease) -> None:
+        self._leases[lease.id] = lease
+
+    async def get(self, lease_id: UUID) -> CapabilityLease | None:
+        return self._leases.get(lease_id)
+
+    async def find_match(
+        self,
+        scope: ApprovalScope,
+        *,
+        workspace_id: WorkspaceId,
+        task_id: UUID,
+        now: datetime | None = None,
+    ) -> CapabilityLease | None:
+        matches = [
+            lease
+            for lease in self._leases.values()
+            if lease.matches(
+                scope, workspace_id=workspace_id, task_id=task_id, now=now
+            )
+        ]
+        return max(matches, key=lambda lease: lease.created_at, default=None)
+
+    async def list_active(
+        self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
+    ) -> list[CapabilityLease]:
+        return sorted(
+            (
+                lease
+                for lease in self._leases.values()
+                if lease.workspace_id == workspace_id and lease.is_active()
+            ),
+            key=lambda lease: lease.created_at,
+            reverse=True,
+        )
+
+    async def revoke(self, lease_id: UUID, *, by: str = "user") -> bool:
+        lease = self._leases.get(lease_id)
+        if lease is None or not lease.is_active():
+            return False
+        self._leases[lease_id] = lease.revoke(by=by)
+        return True

@@ -98,6 +98,17 @@ async def test_writing_a_new_file_is_low_risk_and_overwriting_is_not(root: FileR
     assert tool.assess({"path": "notes.txt"}).risk_level is RiskLevel.HIGH
 
 
+def test_an_overwrite_preview_contains_a_bounded_diff(root: FileRoot) -> None:
+    preview = FileWriteTool(root).preview(
+        {"path": "notes.txt", "content": "hello, safely updated\n"}
+    )
+
+    assert preview["kind"] == "file_diff"
+    assert preview["overwrites"] is True
+    assert "-hello" in preview["diff"]
+    assert "+hello, safely updated" in preview["diff"]
+
+
 async def test_moving_into_a_directory_keeps_the_file_name(root: FileRoot) -> None:
     result = await FileMoveTool(root).execute(
         {"source": "notes.txt", "destination": "invoices"}

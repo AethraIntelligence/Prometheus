@@ -45,11 +45,17 @@ from application.knowledge.service import KnowledgeService
 from application.providers.service import ProviderService
 from application.workspaces import folders
 from application.workspaces.service import WorkspaceService
-from domain.approvals.models import ApprovalState
+from domain.approvals.models import (
+    Approval,
+    ApprovalGrant,
+    ApprovalState,
+    CapabilityLease,
+)
 from domain.approvals.protocols import (
     ApprovalRepository,
     ApprovalService,
     ApprovalWaiter,
+    CapabilityLeaseRepository,
 )
 from domain.capabilities.models import Capability
 from domain.configuration.models import SettingValue
@@ -149,6 +155,7 @@ class ServiceDependencies:
     waiter: ApprovalWaiter
     tool_calls: ToolCallLog
     llm_calls: LLMCallLog
+    leases: CapabilityLeaseRepository | None = None
     approval_service: ApprovalService | None = None
     #: None where integrations are switched off. Every method below then
     #: says so rather than pretending there are none: an interface showing
@@ -860,8 +867,13 @@ class PrometheusService:
         run is still an open decision - it is simply one no tool call is parked
         on, and saying which is which beats implying they are the same.
         """
+        workspace_id = await self._active_workspace_id()
+        stored = await self._d.approvals.list_pending(workspace_id)
+        # The row is saved immediately before the waiter is installed. Read in
+        # that order too, then snapshot live state, so the narrow transition
+        # cannot make an actually parked question look orphaned.
         live = {item.id: item for item in self._d.waiter.pending()}
-        stored = await self._d.approvals.list_pending()
+        names = {str(item.id): item.name for item in self._d.employees.list()}
         threads: dict[UUID, UUID | None] = {}
 
         async def thread_of(task_id: UUID) -> UUID | None:
@@ -870,11 +882,22 @@ class PrometheusService:
             return threads[task_id]
 
         return [
-            views.approval(item, live=True, conversation_id=await thread_of(item.task_id))
+            views.approval(
+                item,
+                live=True,
+                conversation_id=await thread_of(item.task_id),
+                subject_name=names.get(item.scope.subject, "") if item.scope else "",
+            )
             for item in live.values()
         ] + [
             views.stored_approval(
-                record, conversation_id=await thread_of(record.request.task_id)
+                record,
+                conversation_id=await thread_of(record.request.task_id),
+                subject_name=(
+                    names.get(record.request.scope.subject, "")
+                    if record.request.scope
+                    else ""
+                ),
             )
             for record in stored
             if record.id not in live
@@ -902,7 +925,13 @@ class PrometheusService:
             return None
 
     async def decide_approval(
-        self, approval_id: UUID, *, approved: bool, comment: str = ""
+        self,
+        approval_id: UUID,
+        *,
+        approved: bool,
+        comment: str = "",
+        grant: ApprovalGrant | str = ApprovalGrant.ONCE,
+        duration_seconds: float | None = None,
     ) -> dict[str, Any]:
         """Answer a question. The interface carries the answer and nothing else.
 
@@ -911,6 +940,45 @@ class PrometheusService:
         person. Nothing in the interface layer gets a vote, which is why there
         is no path here that resolves an approval on its own.
         """
+        grant = ApprovalGrant(grant)
+        record = await self._d.approvals.get(approval_id)
+        if record is None:
+            live_request = next(
+                (item for item in self._d.waiter.pending() if item.id == approval_id),
+                None,
+            )
+            if live_request is None:
+                raise ApprovalsDisabledError(f"Unknown approval: {approval_id}")
+            record = Approval(request=live_request)
+            await self._d.approvals.save(record)
+        if not record.is_pending:
+            return {
+                "id": str(approval_id),
+                "state": record.state.value,
+                "live": False,
+                "grant": record.grant.value,
+                "lease_id": str(record.lease_id) if record.lease_id else None,
+            }
+
+        lease: CapabilityLease | None = None
+        if approved and grant is not ApprovalGrant.ONCE:
+            if self._d.leases is None or record.request.scope is None:
+                raise ApprovalsDisabledError(
+                    "This approval cannot create a scoped permission."
+                )
+            lease = CapabilityLease.create(
+                workspace_id=record.request.workspace_id,
+                scope=record.request.scope,
+                grant=grant,
+                reason=comment or record.request.reason,
+                approval_id=approval_id,
+                task_id=(record.request.task_id if grant is ApprovalGrant.TASK else None),
+                duration_seconds=duration_seconds,
+            )
+            await self._d.leases.save(lease)
+            record = replace(record, grant=grant, lease_id=lease.id)
+            await self._d.approvals.save(record)
+
         state = ApprovalState.APPROVED if approved else ApprovalState.REJECTED
         answered = self._d.waiter.decide(approval_id, approved)
         if not answered:
@@ -920,7 +988,35 @@ class PrometheusService:
                     "Approvals are switched off in this configuration."
                 )
             await service.resolve(approval_id, state, comment=comment)
-        return {"id": str(approval_id), "state": state.value, "live": answered}
+        return {
+            "id": str(approval_id),
+            "state": state.value,
+            "live": answered,
+            "grant": grant.value if approved else ApprovalGrant.ONCE.value,
+            "lease_id": str(lease.id) if lease else None,
+        }
+
+    async def list_capability_leases(self) -> list[dict[str, Any]]:
+        if self._d.leases is None:
+            return []
+        workspace_id = await self._active_workspace_id()
+        names = {str(item.id): item.name for item in self._d.employees.list()}
+        return [
+            views.capability_lease(
+                item, subject_name=names.get(item.scope.subject, "")
+            )
+            for item in await self._d.leases.list_active(workspace_id)
+        ]
+
+    async def revoke_capability_lease(self, lease_id: UUID) -> bool:
+        if self._d.leases is None:
+            return False
+        return await self._d.leases.revoke(lease_id)
+
+    async def _active_workspace_id(self) -> WorkspaceId:
+        if self._d.workspaces is None:
+            return DEFAULT_WORKSPACE_ID
+        return (await self._d.workspaces.active()).id
 
 
     # --- Integrations ---------------------------------------------------------

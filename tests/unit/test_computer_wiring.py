@@ -35,6 +35,9 @@ class Stub:
         self.browser_headless = True
         self.browser_timeout_seconds = 5.0
         self.code_timeout_seconds = 5.0
+        self.code_memory_mb = 512
+        self.code_disk_mb = 64
+        self.code_max_output_chars = 20_000
         self.computer_allowed_applications: tuple[str, ...] = ()
         self.computer_allowed_region: str | None = None
         self.computer_max_actions = 50

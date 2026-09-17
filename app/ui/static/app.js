@@ -230,22 +230,47 @@ async function refreshApprovals() {
   list.innerHTML = "";
   for (const item of approvals) {
     const node = document.createElement("li");
-    node.innerHTML = `<div class="action"></div><p class="why"></p>
+    node.innerHTML = `<div class="action"></div><p class="why"></p><p class="scope"></p>
+      <label>Permission <select class="grant">
+        <option value="ONCE">Only this action</option>
+        <option value="TASK">This exact action for this task</option>
+        <option value="PERSISTENT">Remember this exact rule</option>
+      </select></label>
+      <label class="expiry" hidden>Expires <select>
+        <option value="3600">In 1 hour</option>
+        <option value="86400" selected>In 24 hours</option>
+        <option value="2592000">In 30 days</option>
+        <option value="">Never</option>
+      </select></label>
       <button type="button" class="approve">Approve</button>
       <button type="button" class="secondary reject">Reject</button>`;
     node.querySelector(".action").textContent = item.action;
     node.querySelector(".why").textContent =
       `${item.risk}${item.reason ? ` - ${item.reason}` : ""}`;
-    node.querySelector(".approve").addEventListener("click", () => decide(item.id, true));
+    node.querySelector(".scope").textContent = item.scope
+      ? `Exact scope: ${item.scope.action} on ${item.scope.resource}`
+      : "";
+    const grant = node.querySelector(".grant");
+    const expiry = node.querySelector(".expiry");
+    grant.addEventListener("change", () => { expiry.hidden = grant.value !== "PERSISTENT"; });
+    node.querySelector(".approve").addEventListener("click", () => {
+      const duration = grant.value === "PERSISTENT" ? expiry.querySelector("select").value : "";
+      decide(item.id, true, grant.value, duration ? Number(duration) : null);
+    });
     node.querySelector(".reject").addEventListener("click", () => decide(item.id, false));
     list.append(node);
   }
 }
 
-async function decide(approvalId, approved) {
+async function decide(approvalId, approved, grant = "ONCE", durationSeconds = null) {
   await api(`/api/approvals/${approvalId}`, {
     method: "POST",
-    body: JSON.stringify({ approved, comment: "" }),
+    body: JSON.stringify({
+      approved,
+      comment: "",
+      grant,
+      duration_seconds: durationSeconds,
+    }),
   });
   await refreshApprovals();
 }

@@ -19,6 +19,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      - name: Prepare the code sandbox
+        run: docker pull python:3.12-alpine
+
       - name: Lint
         run: uv run ruff check .
 

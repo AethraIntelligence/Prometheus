@@ -27,6 +27,13 @@ class RiskAssessor(Protocol):
     def assess(self, input_data: dict[str, Any]) -> RiskAssessment | None: ...
 
 
+@runtime_checkable
+class EffectPreviewer(Protocol):
+    """Optional safe preview produced before a tool changes the world."""
+
+    def preview(self, input_data: dict[str, Any]) -> dict[str, Any]: ...
+
+
 class ToolRegistry(Protocol):
     """Permissions are enforced here, not in the caller.
 

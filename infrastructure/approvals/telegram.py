@@ -70,6 +70,8 @@ def format_request(request: ApprovalRequest, *, width: int = 400) -> str:
     if request.reason:
         lines.append(f"why: {request.reason}")
     lines.append(f"risk: {request.risk_level.value}")
+    if request.scope:
+        lines.append(f"scope: {request.scope.action} on {request.scope.resource}")
     return "\n".join(lines)
 
 
@@ -107,6 +109,7 @@ class TelegramApprovalService:
         await self._repository.save(approval)
 
         state, resolved_by = await self._ask(approval.request)
+        approval = await self._repository.get(action.id) or approval
         await self._repository.save(
             approval.resolve(state, resolved_by=resolved_by, comment=action.reason)
         )

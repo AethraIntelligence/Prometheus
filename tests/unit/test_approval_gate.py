@@ -191,9 +191,8 @@ async def test_a_refusal_is_written_to_the_audit_because_nothing_else_records_it
     assert [record.result for record in audit.records] == ["DENIED"]
 
 
-async def test_an_approved_action_is_not_audited_twice() -> None:
-    """The executor audits what actually ran. A second line here would make
-    every approved action appear twice in the one place people count them."""
+async def test_an_approval_decision_records_its_policy_source() -> None:
+    """The decision is distinct from the executor's later record of the effect."""
     audit = InMemoryAuditLog()
     gate = ApprovalGate(ScriptedApprovalService.approving(), audit=audit)
 
@@ -205,7 +204,9 @@ async def test_an_approved_action_is_not_audited_twice() -> None:
     )
 
     assert outcome.allowed is True
-    assert audit.records == []
+    assert len(audit.records) == 1
+    assert audit.records[0].details["decision"] == "APPROVED"
+    assert audit.records[0].details["policy_source"] == "risk_threshold"
 
 
 async def test_the_task_is_parked_while_a_person_is_being_asked() -> None:

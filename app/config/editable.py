@@ -103,6 +103,13 @@ EDITABLE: tuple[Editable, ...] = (
              "Seconds a page may take to load or respond.", NUM, minimum=1),
     Editable("code_timeout_seconds", "Tools", "Code timeout",
              "Seconds a script may run before it is stopped.", NUM, minimum=1),
+    Editable("code_memory_mb", "Tools", "Code memory limit",
+             "Maximum memory in MB available to one generated program.", INT, minimum=32),
+    Editable("code_disk_mb", "Tools", "Code disk limit",
+             "Maximum scratch-disk usage in MB for one generated program.", INT, minimum=1),
+    Editable("code_max_output_chars", "Tools", "Code output limit",
+             "Maximum characters retained from a generated program's output.",
+             INT, minimum=1_000),
     Editable("integration_timeout_seconds", "Tools", "Integration timeout",
              "Seconds a connected service may take to answer one call.", NUM, minimum=1),
     # --- Desktop control ----------------------------------------------------------

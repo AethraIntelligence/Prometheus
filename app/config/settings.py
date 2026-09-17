@@ -185,6 +185,12 @@ class Settings(BaseSettings):
     #: subprocess answers in milliseconds; this is where slow has become gone.
     integration_timeout_seconds: float = 30.0
     code_timeout_seconds: float = 30.0
+    #: Generated code is fail-closed and uses the same Docker boundary on every
+    #: platform. A machine without a running engine and the sandbox image never
+    #: receives a weaker plain-process fallback.
+    code_memory_mb: int = Field(default=512, ge=32, le=16_384)
+    code_disk_mb: int = Field(default=64, ge=1, le=4_096)
+    code_max_output_chars: int = Field(default=20_000, ge=1_000, le=1_000_000)
 
     # --- Computer use --------------------------------------------------------
     #: Applications the desktop surface may act in. Empty means none: acting on

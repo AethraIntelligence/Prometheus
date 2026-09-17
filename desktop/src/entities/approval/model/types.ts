@@ -11,4 +11,33 @@ export interface Approval {
   /** The thread whose work asked. Null for work no thread holds - a terminal, a script. */
   conversation_id?: string | null;
   state?: string;
+  scope?: {
+    subject: string;
+    subject_name?: string;
+    action: string;
+    resource: string;
+    limits: Record<string, number | string>;
+  } | null;
+  preview?: Record<string, unknown>;
+  policy_source?: string;
+  grant?: ApprovalGrant;
+  lease_id?: string | null;
+}
+
+export type ApprovalGrant = "ONCE" | "TASK" | "PERSISTENT";
+
+export interface CapabilityLease {
+  id: string;
+  workspace_id: string;
+  subject: string;
+  subject_name?: string;
+  action: string;
+  resource: string;
+  limits: Record<string, number | string>;
+  grant: Exclude<ApprovalGrant, "ONCE">;
+  reason: string;
+  task_id?: string | null;
+  approval_id: string;
+  created_at: string;
+  expires_at?: string | null;
 }

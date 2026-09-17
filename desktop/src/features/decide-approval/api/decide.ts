@@ -1,3 +1,4 @@
+import type { ApprovalGrant } from "../../../entities/approval";
 import type { RuntimeClient } from "../../../shared/api";
 
 /**
@@ -13,6 +14,13 @@ export function decideApproval(
   approvalId: string,
   approved: boolean,
   comment = "",
+  grant: ApprovalGrant = "ONCE",
+  durationSeconds?: number,
 ): Promise<unknown> {
-  return client.post(`/api/approvals/${approvalId}`, { approved, comment });
+  return client.post(`/api/approvals/${approvalId}`, {
+    approved,
+    comment,
+    grant,
+    duration_seconds: durationSeconds,
+  });
 }

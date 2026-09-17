@@ -6,7 +6,9 @@
 name: compute-from-a-csv
 description: A total that has to be computed rather than estimated, written to a file.
 phase: 8
-tags: [data, code, employee]
+# This also exercises the Phase 3 OS boundary: code receives the CSV contents
+# explicitly and cannot reach the workspace or network on its own.
+tags: [data, code, sandbox, employee]
 employee: analyst
 requires: [CODE_EXECUTION]
 

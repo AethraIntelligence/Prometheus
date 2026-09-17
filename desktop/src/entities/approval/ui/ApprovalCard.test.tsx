@@ -61,8 +61,31 @@ describe("ApprovalCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Reject" }));
 
     expect(onDecide.mock.calls).toEqual([
-      ["a1", true],
-      ["a1", false],
+      ["a1", true, "ONCE", undefined],
+      ["a1", false, "ONCE"],
     ]);
+  });
+
+  it("can bind approval to the exact scope for the task", async () => {
+    const onDecide = vi.fn();
+    render(
+      <ApprovalDecision approvalId="a1" onDecide={onDecide} />,
+    );
+
+    await userEvent.selectOptions(screen.getByLabelText("Permission"), "TASK");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(onDecide).toHaveBeenCalledWith("a1", true, "TASK", undefined);
+  });
+
+  it("makes a remembered exact rule expire by default", async () => {
+    const onDecide = vi.fn();
+    render(<ApprovalDecision approvalId="a1" onDecide={onDecide} />);
+
+    await userEvent.selectOptions(screen.getByLabelText("Permission"), "PERSISTENT");
+    expect(screen.getByLabelText("Expires")).toHaveValue("86400");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(onDecide).toHaveBeenCalledWith("a1", true, "PERSISTENT", 86400);
   });
 });

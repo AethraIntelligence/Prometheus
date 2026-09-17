@@ -15,7 +15,11 @@ from functools import cached_property
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from domain.approvals.protocols import ApprovalRepository, ApprovalService
+from domain.approvals.protocols import (
+    ApprovalRepository,
+    ApprovalService,
+    CapabilityLeaseRepository,
+)
 from domain.audit.protocols import AuditLog
 from domain.browser.protocols import Browser
 from domain.capabilities.models import Capability, CapabilityRequirement
@@ -502,6 +506,9 @@ class Container:
             browser=(lambda: self.browser) if self.settings.browser_tools_enabled else None,
             code_execution=self.settings.code_execution_enabled,
             code_timeout_seconds=self.settings.code_timeout_seconds,
+            code_memory_mb=self.settings.code_memory_mb,
+            code_disk_mb=self.settings.code_disk_mb,
+            code_max_output_chars=self.settings.code_max_output_chars,
             computers=(
                 self._computers
                 if self._screen_reader is not None
@@ -739,6 +746,20 @@ class Container:
 
         return SqlApprovalRepository(self.session_factory)
 
+    @cached_property
+    def capability_leases(self) -> CapabilityLeaseRepository:
+        if self._in_memory:
+            from infrastructure.persistence.approval_repository import (
+                InMemoryCapabilityLeaseRepository,
+            )
+
+            return InMemoryCapabilityLeaseRepository()
+        from infrastructure.persistence.approval_repository import (
+            SqlCapabilityLeaseRepository,
+        )
+
+        return SqlCapabilityLeaseRepository(self.session_factory)
+
     def use_approval_confirmer(self, confirmer: Callable[..., object]) -> None:
         """Have approvals asked somewhere other than the terminal.
 
@@ -838,7 +859,12 @@ class Container:
         available = set()
         if settings.browser_tools_enabled:
             available.add(Requirement.BROWSER)
-        if settings.code_execution_enabled:
+        from infrastructure.tools.code import sandbox_backend
+
+        if (
+            settings.code_execution_enabled
+            and sandbox_backend().available
+        ):
             available.add(Requirement.CODE_EXECUTION)
         if settings.computer_use_enabled:
             available.add(Requirement.COMPUTER_USE)

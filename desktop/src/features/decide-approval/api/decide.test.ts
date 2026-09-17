@@ -16,6 +16,6 @@ describe("decideApproval", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("http://127.0.0.1:9999/api/approvals/a-1");
-    expect(JSON.parse(init.body)).toEqual({ approved: false, comment: "" });
+    expect(JSON.parse(init.body)).toEqual({ approved: false, comment: "", grant: "ONCE" });
   });
 });

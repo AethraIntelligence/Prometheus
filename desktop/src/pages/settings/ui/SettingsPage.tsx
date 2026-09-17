@@ -26,15 +26,24 @@ import {
   GearIcon,
   PlugIcon,
   SparkIcon,
+  WarningIcon,
 } from "../../../shared/ui";
 import { DocumentsSection } from "./sections/DocumentsSection";
 import { GeneralSection } from "./sections/GeneralSection";
 import { MemorySection } from "./sections/MemorySection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { PluginsSection } from "./sections/PluginsSection";
+import { PermissionsSection } from "./sections/PermissionsSection";
 import { WorkspacesSection } from "./sections/WorkspacesSection";
 
-type SectionId = "general" | "workspaces" | "documents" | "memory" | "models" | "plugins";
+type SectionId =
+  | "general"
+  | "permissions"
+  | "workspaces"
+  | "documents"
+  | "memory"
+  | "models"
+  | "plugins";
 
 interface Section {
   id: SectionId;
@@ -49,6 +58,7 @@ interface Section {
  */
 const SECTIONS: Section[] = [
   { id: "general", label: "General", group: "Prometheus", icon: GearIcon },
+  { id: "permissions", label: "Permissions", group: "Prometheus", icon: WarningIcon },
   { id: "workspaces", label: "Workspaces", group: "This machine", icon: FolderIcon },
   { id: "documents", label: "Documents", group: "This machine", icon: BookIcon },
   { id: "memory", label: "Memory", group: "This machine", icon: SparkIcon },
@@ -101,6 +111,7 @@ export function SettingsPage({ onSwitched, onBack, initial }: Props = {}) {
         <div className="stream">
           <section className="col settings" aria-label={current.label}>
             {open === "general" && <GeneralSection />}
+            {open === "permissions" && <PermissionsSection />}
             {open === "workspaces" && <WorkspacesSection onSwitched={onSwitched} />}
             {open === "documents" && <DocumentsSection />}
             {open === "memory" && <MemorySection />}

@@ -380,7 +380,7 @@
     "memory":[["what","One contract"],["written","What is written"],["ranking","Relevance, importance, decay"],["scopes","Scopes are boundaries"],["rules","What is not stored"],["window","Memory in the window"],["cli","From the terminal"],["quiz","Quick check"]],
     "knowledge":[["what","A document is not a memory"],["formats","Adding documents"],["hybrid","Hybrid retrieval"],["floor","The absolute floor"],["models","Embedding models"],["untrusted","Passages are data"]],
     "workspaces":[["what","What a workspace is"],["switch","Switching"],["folders","A folder per thread"],["removing","Removing a workspace"],["cli","Commands"]],
-    "approvals":[["effect","Risk follows the effect"],["threshold","The threshold"],["policies","Named policies"],["catalog","Policy catalog"],["asking","Who gets asked"],["expire","Questions expire"],["quiz","Quick check"]],
+    "approvals":[["effect","Risk follows the effect"],["threshold","The threshold"],["policies","Named policies"],["catalog","Policy catalog"],["asking","Who gets asked"],["scope","Scoped permissions"],["expire","Questions expire"],["quiz","Quick check"]],
     "verification":[["why","Why reports are not enough"],["record","The record outranks the report"],["replan","Replan once, then say so"],["floor","Never the cheapest judge"],["quiz","Quick check"]],
     "audit":[["log","The audit log"],["vs","Audit vs tool calls"],["stop","The brake"],["cancel","Cancelling a task"],["resume","Resuming after a crash"]],
     "workflows":[["what","A process is a file"],["example","An example"],["placeholders","Placeholders"],["failure","Failure and retry"],["run","Running one"]],
@@ -693,7 +693,7 @@ limits: { max_steps: 8, max_cost_usd: 0.50 }`)}
     <tr><td><code>web.search</code></td><td>READ</td><td>Searches the web.</td></tr>
     <tr><td><code>browser.open</code></td><td>READ</td><td>Opens a page in a real browser.</td></tr>
     <tr><td><code>browser.extract</code></td><td>READ</td><td>Extracts text and links from the open page.</td></tr>
-    <tr><td><code>code.run</code></td><td>EXECUTE</td><td>Runs code under a time limit. HIGH — waits for a person.</td></tr>
+    <tr><td><code>code.run</code></td><td>EXECUTE</td><td>Runs code in a network-disabled OS sandbox with resource limits. HIGH — waits for a person.</td></tr>
     <tr><td><code>computer.*</code></td><td>READ / WRITE</td><td>Screen, click, type, press, scroll, verify — inside the page. See <a onclick="go('computer')">Computer use</a>.</td></tr>
   </tbody></table>
   ${code("bash","",`uv run prometheus tools     # every tool, its effect, risk and who holds it`)}
@@ -956,6 +956,9 @@ uv run prometheus workspace-remove <id>`)}
 uv run prometheus approve <id>
 uv run prometheus reject <id>`)}
   ${callout("info","Anything but an explicit yes is a no — including a timeout, a closed page and no approver being reachable at all.")}
+
+  <h2 class="section-title" id="scope">Scoped permissions</h2>
+  <div class="prose"><p>An approval can release only this call, cover the same exact employee, action and resource for this task, or create an expiring persistent rule. Paths, domains, recipients and call limits are matched by the runtime, never by the window. A permission for one path or domain cannot be used for another, and a declared denial is checked before every lease.</p><p>The approval card shows the exact scope and an effect preview; file overwrites include a bounded diff. <strong>Settings → Permissions</strong> lists every active task and persistent lease with its limits and expiry, and revokes it immediately.</p></div>
 
   <h2 class="section-title" id="expire">Questions expire</h2>
   ${code("bash",".env",`PROMETHEUS_APPROVAL_MODE=prompt
@@ -1442,6 +1445,8 @@ defaults`)}
     ${route("PUT","/api/conversations/{id}/folder","Point a thread at a folder")}
     ${route("GET","/api/approvals","Waiting approvals")}
     ${route("POST","/api/approvals/{id}","Approve or reject")}
+    ${route("GET","/api/capability-leases","Active exact permissions")}
+    ${route("DELETE","/api/capability-leases/{id}","Revoke a permission")}
     ${route("GET","/api/tasks","Tasks")}
     ${route("POST","/api/tasks/{id}/cancel","Cancel a task")}
     ${route("GET","/api/employees","The workforce")}
@@ -1496,6 +1501,7 @@ cd desktop && npm test          # frontend tests, no runtime needed`)}
   <h2 class="section-title" id="settings">Settings</h2>
   <table class="api-table"><thead><tr><th>Screen</th><th>For</th></tr></thead><tbody>
     <tr><td>General</td><td>Flags, approvals, timeouts, limits — saved for the next start, with a restart button.</td></tr>
+    <tr><td>Permissions</td><td>Exact task and persistent approval leases, their limits, expiry and revoke action.</td></tr>
     <tr><td>Workspaces</td><td>Workspaces, their roots and saved folders.</td></tr>
     <tr><td>Documents</td><td>Add, reindex and remove documents.</td></tr>
     <tr><td>Memory</td><td>Search, add notes, forget.</td></tr>

@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { watchObjective, type ActivityEvent } from "../../../entities/activity";
-import { approvalApi, type Approval } from "../../../entities/approval";
+import { approvalApi, type Approval, type ApprovalGrant } from "../../../entities/approval";
 import {
   NO_DIRECTIONS,
   conversationApi,
@@ -356,9 +356,14 @@ export function useChat(
   );
 
   const decide = useCallback(
-    async (approvalId: string, approved: boolean) => {
+    async (
+      approvalId: string,
+      approved: boolean,
+      grant: ApprovalGrant = "ONCE",
+      durationSeconds?: number,
+    ) => {
       try {
-        await decideApproval(client, approvalId, approved);
+        await decideApproval(client, approvalId, approved, "", grant, durationSeconds);
         setApprovals((waiting) => waiting.filter((item) => item.id !== approvalId));
       } catch (error) {
         fail(error);

@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from domain.approvals.models import Approval, ApprovalRequest
+from domain.approvals.models import Approval, ApprovalRequest, CapabilityLease
 from domain.configuration.models import Setting
 from domain.conversations.models import Conversation
 from domain.employees.definition import EmployeeDefinition
@@ -116,7 +116,11 @@ def tool_call(call: ToolCallRecord) -> dict[str, Any]:
 
 
 def approval(
-    request: ApprovalRequest, *, live: bool = True, conversation_id: UUID | None = None
+    request: ApprovalRequest,
+    *,
+    live: bool = True,
+    conversation_id: UUID | None = None,
+    subject_name: str = "",
 ) -> dict[str, Any]:
     """A question waiting on a person.
 
@@ -137,6 +141,19 @@ def approval(
         "risk": safe.risk_level.value,
         "reason": safe.reason,
         "payload": safe.payload,
+        "scope": (
+            {
+                "subject": safe.scope.subject,
+                "subject_name": subject_name or safe.scope.subject,
+                "action": safe.scope.action,
+                "resource": safe.scope.resource,
+                "limits": safe.scope.limits,
+            }
+            if safe.scope
+            else None
+        ),
+        "preview": safe.preview,
+        "policy_source": safe.policy_source,
         "requested_at": safe.requested_at.isoformat(),
         "live": live,
         "conversation_id": str(conversation_id) if conversation_id else None,
@@ -144,11 +161,40 @@ def approval(
 
 
 def stored_approval(
-    record: Approval, *, live: bool = False, conversation_id: UUID | None = None
+    record: Approval,
+    *,
+    live: bool = False,
+    conversation_id: UUID | None = None,
+    subject_name: str = "",
 ) -> dict[str, Any]:
     return {
-        **approval(record.request, live=live, conversation_id=conversation_id),
+        **approval(
+            record.request,
+            live=live,
+            conversation_id=conversation_id,
+            subject_name=subject_name,
+        ),
         "state": record.state.value,
+        "grant": record.grant.value,
+        "lease_id": str(record.lease_id) if record.lease_id else None,
+    }
+
+
+def capability_lease(lease: CapabilityLease, *, subject_name: str = "") -> dict[str, Any]:
+    return {
+        "id": str(lease.id),
+        "workspace_id": str(lease.workspace_id),
+        "subject": lease.scope.subject,
+        "subject_name": subject_name or lease.scope.subject,
+        "action": lease.scope.action,
+        "resource": lease.scope.resource,
+        "limits": lease.scope.limits,
+        "grant": lease.grant.value,
+        "reason": lease.reason,
+        "task_id": str(lease.task_id) if lease.task_id else None,
+        "approval_id": str(lease.approval_id),
+        "created_at": lease.created_at.isoformat(),
+        "expires_at": lease.expires_at.isoformat() if lease.expires_at else None,
     }
 
 
