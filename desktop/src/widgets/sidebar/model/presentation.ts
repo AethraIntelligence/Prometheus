@@ -10,6 +10,7 @@ const MARK: Record<ObjectiveStatus, { tone: string; label: string }> = {
   RECEIVED: { tone: "run", label: "Working" },
   PLANNING: { tone: "run", label: "Working" },
   RUNNING: { tone: "run", label: "Working" },
+  PAUSED: { tone: "wait", label: "Paused" },
   DONE: { tone: "", label: "Done" },
   FAILED: { tone: "fail", label: "Failed" },
   ESCALATED: { tone: "wait", label: "Fell short" },

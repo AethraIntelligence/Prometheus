@@ -19,6 +19,7 @@ second consumer of the resume cursor's shape.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -31,6 +32,7 @@ from domain.integrations.models import Integration
 from domain.integrations.specs import spec_for
 from domain.knowledge.models import Document, Passage
 from domain.llm.catalog import ModelEntry
+from domain.llm.telemetry import LLMCallRecord
 from domain.memory.models import MemoryItem
 from domain.policies.risk import at_least
 from domain.policies.rules import APPROVAL_THRESHOLD
@@ -437,6 +439,161 @@ def plan_view(plan: Plan) -> dict[str, Any]:
             }
             for task in plan.tasks
         ],
+    }
+
+
+# --- Work Center -------------------------------------------------------------
+
+
+def work_task(
+    task: Task,
+    *,
+    employee: EmployeeDefinition | None,
+    calls: list[ToolCallRecord],
+    model_calls: list[LLMCallRecord],
+    depends_on: tuple[UUID, ...] = (),
+    objective_terminal: bool = False,
+) -> dict[str, Any]:
+    """One delegated unit, with enough evidence to operate rather than debug it."""
+    limits = employee.limits if employee else None
+    elapsed = max(
+        0.0,
+        ((datetime.now(UTC) if not task.is_terminal else task.updated_at) - task.created_at)
+        .total_seconds(),
+    )
+    models: dict[tuple[str, str], dict[str, Any]] = {}
+    for call in model_calls:
+        key = (call.provider, call.model)
+        entry = models.setdefault(
+            key,
+            {"provider": call.provider, "model": call.model, "calls": 0, "cost_usd": 0.0},
+        )
+        entry["calls"] += 1
+        entry["cost_usd"] = round(float(entry["cost_usd"]) + call.usage.cost_usd, 6)
+    return {
+        **task_summary(task),
+        "parent_id": str(task.parent_id) if task.parent_id else None,
+        "employee": employee.name if employee else "Unassigned",
+        "employee_title": employee.role.title if employee else "",
+        "assignment_reason": task.assignment_reason or "No assignment explanation was recorded.",
+        "depends_on": [str(item) for item in depends_on],
+        "current_step": task.execution.step,
+        "budgets": {
+            "steps": {"used": task.execution.step, "limit": limits.max_steps if limits else None},
+            "cost_usd": {
+                "used": round(task.cost_usd, 6),
+                "limit": limits.max_cost_usd if limits else None,
+            },
+            "wall_time_seconds": {
+                "used": round(elapsed, 1),
+                "limit": limits.max_wall_time_seconds if limits else None,
+            },
+        },
+        "models": list(models.values()),
+        "model_reason": (
+            "Models were routed per planning, execution and verification requirements."
+            if model_calls
+            else "No model call has been recorded for this task yet."
+        ),
+        "tools": [
+            {
+                **tool_call(call),
+                "reason": (
+                    f"Used {call.tool} through {call.interface.value.lower()} because the "
+                    "assigned employee declared this capability."
+                ),
+            }
+            for call in calls
+        ],
+        "result": (
+            {
+                "summary": task.result.summary,
+                "artifacts": list(task.result.artifacts),
+                "evidence": task.result.output,
+            }
+            if task.result
+            else None
+        ),
+        "error": (
+            {
+                "kind": task.error.kind,
+                "message": task.error.message,
+                "details": task.error.details,
+            }
+            if task.error
+            else None
+        ),
+        "controls": {
+            "pause": task.status.value in {"RUNNING", "WAITING_FOR_TOOL"},
+            "resume": task.status.value == "PAUSED",
+            "cancel": not task.is_terminal,
+            "retry": task.status.value in {"FAILED", "CANCELLED"}
+            and (task.plan_id is None or objective_terminal),
+            "handoff": (
+                task.status.value in {"FAILED", "CANCELLED"}
+                and (task.plan_id is None or objective_terminal)
+            )
+            or (task.status.value == "PAUSED" and task.plan_id is None),
+        },
+    }
+
+
+def work_item(
+    objective: Objective,
+    *,
+    plans: list[Plan],
+    tasks: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    thinking: bool,
+) -> dict[str, Any]:
+    statuses = {str(task["status"]) for task in tasks}
+    if "WAITING_FOR_APPROVAL" in statuses:
+        bucket = "WAITING"
+        next_action = "Review the requested approval to let work continue."
+    elif objective.status.value == "PAUSED" or "PAUSED" in statuses:
+        bucket = "BLOCKED"
+        next_action = "Resume the paused work, hand it off, or cancel it."
+    elif objective.status.value == "ESCALATED" or "WAITING_FOR_TOOL" in statuses:
+        bucket = "BLOCKED"
+        next_action = "Review the blocker and decide whether to retry or hand off."
+    elif objective.status.value == "FAILED":
+        bucket = "FAILED"
+        next_action = "Inspect the failure evidence, then retry if the cause is resolved."
+    elif objective.status.value in {"DONE", "CANCELLED"}:
+        bucket = "COMPLETED"
+        next_action = "Review the result and its evidence."
+    else:
+        bucket = "ACTIVE"
+        next_action = "No action is needed while the employees continue working."
+
+    current = next(
+        (
+            task
+            for task in reversed(tasks)
+            if task["status"] not in {"COMPLETED", "FAILED", "CANCELLED"}
+        ),
+        tasks[-1] if tasks else None,
+    )
+    current_plan = next(
+        (plan for plan in reversed(plans) if plan.status.value != "SUPERSEDED"),
+        plans[-1] if plans else None,
+    )
+    return {
+        **objective_detail(objective, thinking=thinking, plans=plans),
+        "conversation_id": str(objective.conversation_id) if objective.conversation_id else None,
+        "bucket": bucket,
+        "next_action": next_action,
+        "current_task_id": current["id"] if current else None,
+        "current_step": current["current_step"] if current else 0,
+        "plan": plan_view(current_plan) if current_plan else None,
+        "tasks": tasks,
+        "artifacts": artifacts,
+        "controls": {
+            "pause": bucket == "ACTIVE" and bool(tasks),
+            "resume": objective.status.value == "PAUSED" or "PAUSED" in statuses,
+            "cancel": objective.status.value not in {"DONE", "FAILED", "CANCELLED"},
+            "retry": objective.status.value in {"FAILED", "ESCALATED", "CANCELLED"},
+        },
     }
 
 

@@ -38,6 +38,10 @@ class DomainError(PrometheusError):
     """A domain rule was violated."""
 
 
+class WorkControlError(DomainError):
+    """A requested run control would make the execution state ambiguous."""
+
+
 class InvalidStateTransitionError(DomainError):
     """A task was asked to move to a status it cannot reach from the current one."""
 

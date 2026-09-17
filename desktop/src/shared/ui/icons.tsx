@@ -224,6 +224,14 @@ export const ClockIcon = (props: Props) => (
   </svg>
 );
 
+export const BriefcaseIcon = (props: Props) => (
+  <svg viewBox="0 0 20 20" {...base} {...props}>
+    <path d="M7 5V3.8c0-.8.6-1.4 1.4-1.4h3.2c.8 0 1.4.6 1.4 1.4V5" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="2.4" y="5" width="15.2" height="11.8" rx="2.4" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M2.4 9.1c2.2 1.1 4.7 1.7 7.6 1.7s5.4-.6 7.6-1.7M8.6 10.8v1.5h2.8v-1.5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+  </svg>
+);
+
 export const ComposeIcon = (props: Props) => (
   <svg viewBox="0 0 20 20" {...base} {...props}>
     <path

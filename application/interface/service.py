@@ -68,6 +68,7 @@ from domain.errors import (
     IntegrationNotFoundError,
     NotFoundError,
     PrometheusError,
+    WorkControlError,
 )
 from domain.integrations.catalog import (
     PLUGIN_KEY,
@@ -89,10 +90,11 @@ from domain.scheduling.models import MIN_INTERVAL_SECONDS, Recurrence, Schedule
 from domain.scheduling.protocols import EventLog, ScheduleRepository
 from domain.secrets.protocols import CredentialStore
 from domain.tasks.repository import TaskRepository
+from domain.tasks.task import Task
 from domain.tools.protocols import ToolRegistry
 from domain.tools.telemetry import ToolCallLog
 from domain.workforce.directions import ApprovalChoice, Directions
-from domain.workforce.protocols import Objective
+from domain.workforce.protocols import Objective, ObjectiveStatus
 from domain.workforce.repository import ObjectiveRepository, PlanRepository
 from domain.workspace.models import DEFAULT_WORKSPACE_ID, WorkspaceId
 
@@ -431,7 +433,7 @@ class PrometheusService:
             return False
         for item in await self._d.objectives.for_conversation(conversation_id):
             if not item.is_terminal:
-                await self._d.runs.cancel_objective(item.id)
+                await self.cancel_objective(item.id)
         deleted = await self._d.conversations.delete(conversation_id)
         log.info("interface.conversation_deleted", conversation_id=str(conversation_id))
         return deleted
@@ -824,6 +826,162 @@ class PrometheusService:
             for task in found
         ]
 
+    async def list_work_items(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+        """Objective-centric work state for people supervising digital employees."""
+        objectives = await self._d.objectives.list_recent(
+            await self._here(), limit=limit or self._d.history_limit
+        )
+        recent = await self._d.tasks.list_recent(await self._here(), limit=200)
+        return [await self._work_item(item, recent) for item in objectives]
+
+    async def get_work_item(self, objective_id: UUID) -> dict[str, Any] | None:
+        objective = await self._d.objectives.get(objective_id)
+        if objective is None:
+            return None
+        recent = await self._d.tasks.list_recent(objective.workspace_id, limit=200)
+        return await self._work_item(objective, recent)
+
+    async def _work_item(
+        self, objective: Objective, recent: list[Task]
+    ) -> dict[str, Any]:
+        plans = await self._d.plans.for_objective(objective.id)
+        plan_ids = {plan.id for plan in plans}
+        planned_ids = {task.id for plan in plans for task in plan.tasks}
+        candidates = {
+            task.id: task
+            for task in recent
+            if task.id in planned_ids or (task.plan_id is not None and task.plan_id in plan_ids)
+        }
+        for task_id in planned_ids - candidates.keys():
+            stored = await self._d.tasks.get(task_id)
+            if stored is not None:
+                candidates[task_id] = stored
+
+        employees = {
+            definition.id: definition
+            for definition in self._d.employees.list(objective.workspace_id)
+        }
+        dependencies = {
+            task.id: tuple(plan.depends_on(task.id))
+            for plan in plans
+            for task in plan.tasks
+        }
+        task_views = []
+        for task in sorted(candidates.values(), key=lambda item: (item.created_at, str(item.id))):
+            model_calls = (
+                await self._d.llm_calls.list_for_task(task.id)
+                if hasattr(self._d.llm_calls, "list_for_task")
+                else []
+            )
+            task_views.append(
+                views.work_task(
+                    task,
+                    employee=employees.get(task.assigned_employee_id),
+                    calls=await self._d.tool_calls.list_for_task(task.id),
+                    model_calls=model_calls,
+                    depends_on=dependencies.get(task.id, ()),
+                    objective_terminal=objective.is_terminal,
+                )
+            )
+        return views.work_item(
+            objective,
+            plans=plans,
+            tasks=task_views,
+            artifacts=await self._artifacts(objective),
+            thinking=self._d.runs.is_thinking(objective.id),
+        )
+
+    async def pause_objective(self, objective_id: UUID) -> dict[str, Any] | None:
+        objective = await self._d.objectives.get(objective_id)
+        if objective is None:
+            return None
+        if objective.is_terminal:
+            return await self.get_work_item(objective_id)
+        for task in await self._objective_tasks(objective_id):
+            await self._d.runs.pause(task.id)
+        await self._d.objectives.save(objective.to(ObjectiveStatus.PAUSED))
+        return await self.get_work_item(objective_id)
+
+    async def resume_objective(self, objective_id: UUID) -> dict[str, Any] | None:
+        objective = await self._d.objectives.get(objective_id)
+        if objective is None:
+            return None
+        if objective.status is not ObjectiveStatus.PAUSED:
+            return await self.get_work_item(objective_id)
+        for task in await self._objective_tasks(objective_id):
+            await self._d.runs.resume(task.id)
+        resumed = objective.to(ObjectiveStatus.RUNNING)
+        await self._d.objectives.save(resumed)
+        self._d.runs.resume_objective(resumed)
+        return await self.get_work_item(objective_id)
+
+    async def retry_objective(self, objective_id: UUID) -> dict[str, Any] | None:
+        objective = await self._d.objectives.get(objective_id)
+        if objective is None:
+            return None
+        if not objective.is_terminal:
+            raise PrometheusError("Only finished, failed, escalated or cancelled work can retry.")
+        retried = await self._d.runs.ask(
+            objective.text,
+            conversation_id=objective.conversation_id,
+            workspace_id=objective.workspace_id,
+            directions=objective.directions,
+        )
+        return await self.get_work_item(retried.id)
+
+    async def handoff_task(self, task_id: UUID, employee: str) -> dict[str, Any] | None:
+        task = await self._d.tasks.get(task_id)
+        if task is None:
+            return None
+        await self._ensure_task_control_is_safe(task)
+        handed = await self._d.runs.handoff(task, employee)
+        return views.task_summary(handed, running=True)
+
+    async def retry_task(self, task_id: UUID) -> dict[str, Any] | None:
+        task = await self._d.tasks.get(task_id)
+        if task is None:
+            return None
+        await self._ensure_task_control_is_safe(task)
+        if task.assigned_employee_id is None:
+            raise PrometheusError("This task has no employee to retry it with.")
+        employee = next(
+            (
+                item.name
+                for item in self._d.employees.list(task.workspace_id)
+                if item.id == task.assigned_employee_id
+            ),
+            None,
+        )
+        if employee is None:
+            raise PrometheusError("The employee assigned to this task no longer exists.")
+        handed = await self._d.runs.handoff(task, employee)
+        return views.task_summary(handed, running=True)
+
+    async def _ensure_task_control_is_safe(self, task: Task) -> None:
+        if task.plan_id is None:
+            return
+        plan = await self._d.plans.get(task.plan_id)
+        objective = await self._d.objectives.get(plan.objective_id) if plan else None
+        if objective is not None and not objective.is_terminal:
+            raise WorkControlError(
+                "Prometheus is still supervising this plan. Cancel the objective before "
+                "retrying or handing off one of its steps."
+            )
+
+    async def _objective_tasks(self, objective_id: UUID) -> list[Task]:
+        found: dict[UUID, Task] = {}
+        objective = await self._d.objectives.get(objective_id)
+        workspace_id = objective.workspace_id if objective is not None else await self._here()
+        plans = await self._d.plans.for_objective(objective_id)
+        plan_ids = {plan.id for plan in plans}
+        for plan in plans:
+            for planned in plan.tasks:
+                found[planned.id] = await self._d.tasks.get(planned.id) or planned
+        for task in await self._d.tasks.list_recent(workspace_id, limit=200):
+            if task.plan_id in plan_ids:
+                found[task.id] = task
+        return list(found.values())
+
     async def get_task(self, task_id: UUID) -> dict[str, Any] | None:
         task = await self._d.tasks.get(task_id)
         if task is None:
@@ -852,6 +1010,8 @@ class PrometheusService:
         return views.task_summary(task, running=self._d.runs.is_running(task_id))
 
     async def cancel_objective(self, objective_id: UUID) -> dict[str, Any] | None:
+        for task in await self._objective_tasks(objective_id):
+            await self._d.runs.signal_cancel(task.id, "The objective was stopped.")
         stopped = await self._d.runs.cancel_objective(objective_id)
         item = await self._d.objectives.get(objective_id)
         if item is None:

@@ -68,7 +68,7 @@ from domain.secrets.models import redact
 from domain.tasks.cancellation import CancellationSignal, NeverCancelled
 from domain.tasks.plan import Observation, TaskPlan
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
-from domain.tasks.task import Task
+from domain.tasks.task import Task, TaskStatus
 from domain.tools.models import ToolResult
 from domain.tools.protocols import Tool, ToolRegistry
 from domain.tools.refusals import REFUSAL_LIMIT, REFUSED, refusal_counts, withheld
@@ -153,6 +153,7 @@ class Executor:
             )
 
         while True:
+            await self._wait_if_paused(task, on_status)
             if self._cancellation.is_cancelled(task.id):
                 log.info("task.cancelled", task_id=str(task.id), steps=transcript.steps)
                 return StepOutcome(
@@ -220,6 +221,7 @@ class Executor:
                     await on_step(transcript)
 
             for call in calls:
+                await self._wait_if_paused(task, on_status)
                 if self._cancellation.is_cancelled(task.id):
                     # Asked to stop between two calls of the same step: the
                     # remaining calls are not made, and the ones already made
@@ -266,6 +268,28 @@ class Executor:
                     step=observation.step,
                     payload={"succeeded": observation.succeeded, **observation.details},
                 )
+
+    async def _wait_if_paused(
+        self,
+        task: Task,
+        status: StatusSink | None,
+    ) -> None:
+        """Park only at a safe boundary, never in the middle of a tool call."""
+        is_paused = getattr(self._cancellation, "is_paused", None)
+        if is_paused is None or not is_paused(task.id):
+            return
+        if status is not None:
+            await status(TaskStatus.PAUSED)
+        await self._announce(
+            task,
+            ProgressKind.STAGE,
+            "Paused safely. Resume continues from this step.",
+        )
+        wait_until_resumed = getattr(self._cancellation, "wait_until_resumed", None)
+        if wait_until_resumed is not None:
+            await wait_until_resumed(task.id)
+        if not self._cancellation.is_cancelled(task.id) and status is not None:
+            await status(TaskStatus.RUNNING)
 
 
     @staticmethod

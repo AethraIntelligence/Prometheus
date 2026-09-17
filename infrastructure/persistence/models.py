@@ -122,6 +122,7 @@ class TaskRow(Base):
     assigned_employee_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("employees.id"), nullable=True
     )
+    assignment_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     plan: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     #: Step cursor and scratch state, saved after every step so a task survives
     #: a restart.

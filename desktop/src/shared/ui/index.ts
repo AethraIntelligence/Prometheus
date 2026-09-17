@@ -3,6 +3,7 @@ export {
   BackIcon,
   BookIcon,
   BoxIcon,
+  BriefcaseIcon,
   CheckIcon,
   ChevronDown,
   ChevronRight,

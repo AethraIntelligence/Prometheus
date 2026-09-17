@@ -64,6 +64,17 @@ def test_only_work_in_progress_is_resumable() -> None:
     assert not completed.is_resumable
 
 
+def test_a_safe_pause_can_resume_without_becoming_terminal() -> None:
+    running, _ = make_task().transition_to(TaskStatus.RUNNING)
+    paused, event = running.transition_to(TaskStatus.PAUSED)
+
+    assert paused.is_resumable
+    assert not paused.is_terminal
+    assert event.to_status is TaskStatus.PAUSED
+    resumed, _ = paused.transition_to(TaskStatus.RUNNING)
+    assert resumed.status is TaskStatus.RUNNING
+
+
 def test_execution_cursor_advances_without_losing_state() -> None:
     task = make_task()
     advanced = task.with_execution(task.execution.advance(cursor="step-1"))

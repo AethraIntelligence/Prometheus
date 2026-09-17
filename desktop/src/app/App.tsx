@@ -4,6 +4,7 @@ import type { ConversationKind } from "../entities/conversation";
 import { ChatPage } from "../pages/chat";
 import { SchedulesPage } from "../pages/schedules";
 import { SettingsPage } from "../pages/settings";
+import { WorkCenterPage } from "../pages/work-center";
 import { RuntimeProvider, type RuntimeClient } from "../shared/api";
 import { Sidebar } from "../widgets/sidebar";
 
@@ -33,7 +34,7 @@ const narrow = () => typeof window !== "undefined" && window.innerWidth < NARROW
  * weight, and the way back is one button that says so.
  */
 export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: string }) {
-  const [showing, setShowing] = useState<"work" | "settings" | "schedules">("work");
+  const [showing, setShowing] = useState<"work" | "settings" | "schedules" | "center">("work");
   const [workspace, setWorkspace] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const [newKind, setNewKind] = useState<ConversationKind>("TASK");
@@ -49,7 +50,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
     setWorkspace((count) => count + 1);
     setOpen(null);
   };
-  const go = (page: "work" | "settings" | "schedules", thread: string | null = open) => {
+  const go = (page: "work" | "settings" | "schedules" | "center", thread: string | null = open) => {
     setShowing(page);
     setOpen(thread);
     if (narrow()) setRailOpen(false);
@@ -76,6 +77,8 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           selected={showing === "work" ? open : null}
           settingsOpen={false}
           schedulesOpen={showing === "schedules"}
+          workCenterOpen={showing === "center"}
+          onWorkCenter={() => go("center", null)}
           onSchedules={() => go("schedules")}
           onRepeat={(thread) => {
             setRepeat(thread);
@@ -119,6 +122,13 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
               setSection("general");
               go("settings");
             }}
+          />
+        ) : showing === "center" ? (
+          <WorkCenterPage
+            key={`center-${workspace}`}
+            railOpen={railOpen}
+            onOpenRail={() => setRailOpen(true)}
+            onOpenThread={(thread) => go("work", thread)}
           />
         ) : (
           <ChatPage

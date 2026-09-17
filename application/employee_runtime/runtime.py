@@ -216,6 +216,9 @@ class EmployeeRuntime:
         self, task: Task, state: RunState, definition: EmployeeDefinition
     ) -> tuple[Task, RunState, TaskResult, StepOutcome]:
         current = task
+        if current.status is TaskStatus.PAUSED:
+            current, resumed = current.transition_to(TaskStatus.RUNNING)
+            await self._deps.tasks.save(current, resumed)
         noted = 0
 
         async def persist(transcript: Transcript) -> None:

@@ -30,6 +30,7 @@ class ObjectiveStatus(StrEnum):
     RECEIVED = "RECEIVED"
     PLANNING = "PLANNING"
     RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
     DONE = "DONE"
     FAILED = "FAILED"
     ESCALATED = "ESCALATED"

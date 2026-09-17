@@ -395,7 +395,12 @@ class Supervisor:
             workspace_id=planned.workspace_id,
         )
         finished = await self._execution.start(
-            replace(planned, assigned_employee_id=chosen.id), assignment
+            replace(
+                planned,
+                assigned_employee_id=chosen.id,
+                assignment_reason=why,
+            ),
+            assignment,
         )
         # §88: the manager checks before accepting. Read off what the run did,
         # not asked of a second model - a claim of success with nothing behind

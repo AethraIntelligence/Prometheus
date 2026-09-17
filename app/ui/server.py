@@ -349,6 +349,10 @@ class Cancellation(BaseModel):
     reason: str = ""
 
 
+class Handoff(BaseModel):
+    employee: str = Field(min_length=1, max_length=120)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -520,6 +524,24 @@ def _routes(app: FastAPI) -> None:
         found = await _guarded(_service(request).cancel_task(task_id, body.reason))
         return _found(found, f"Unknown task: {task_id}")
 
+    @app.post("/api/tasks/{task_id}/retry", status_code=201)
+    async def retry_task(request: Request, task_id: UUID) -> dict[str, Any]:
+        try:
+            found = await _guarded(_service(request).retry_task(task_id))
+        except PrometheusError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return _found(found, f"Unknown task: {task_id}")
+
+    @app.post("/api/tasks/{task_id}/handoff", status_code=201)
+    async def handoff_task(
+        request: Request, task_id: UUID, body: Handoff
+    ) -> dict[str, Any]:
+        try:
+            found = await _guarded(_service(request).handoff_task(task_id, body.employee))
+        except PrometheusError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return _found(found, f"Unknown task: {task_id}")
+
     # --- Conversations --------------------------------------------------------
 
     @app.post("/api/conversations", status_code=201)
@@ -615,6 +637,35 @@ def _routes(app: FastAPI) -> None:
     @app.post("/api/objectives/{objective_id}/cancel")
     async def stop_objective(request: Request, objective_id: UUID) -> dict[str, Any]:
         found = await _guarded(_service(request).cancel_objective(objective_id))
+        return _found(found, f"Unknown objective: {objective_id}")
+
+    # --- Work Center ---------------------------------------------------------
+
+    @app.get("/api/work")
+    async def work(request: Request) -> dict[str, Any]:
+        return {"items": await _guarded(_service(request).list_work_items())}
+
+    @app.get("/api/work/{objective_id}")
+    async def work_item(request: Request, objective_id: UUID) -> dict[str, Any]:
+        found = await _guarded(_service(request).get_work_item(objective_id))
+        return _found(found, f"Unknown objective: {objective_id}")
+
+    @app.post("/api/work/{objective_id}/pause")
+    async def pause_work(request: Request, objective_id: UUID) -> dict[str, Any]:
+        found = await _guarded(_service(request).pause_objective(objective_id))
+        return _found(found, f"Unknown objective: {objective_id}")
+
+    @app.post("/api/work/{objective_id}/resume")
+    async def resume_work(request: Request, objective_id: UUID) -> dict[str, Any]:
+        found = await _guarded(_service(request).resume_objective(objective_id))
+        return _found(found, f"Unknown objective: {objective_id}")
+
+    @app.post("/api/work/{objective_id}/retry", status_code=201)
+    async def retry_work(request: Request, objective_id: UUID) -> dict[str, Any]:
+        try:
+            found = await _guarded(_service(request).retry_objective(objective_id))
+        except PrometheusError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         return _found(found, f"Unknown objective: {objective_id}")
 
     @app.get("/api/approvals")

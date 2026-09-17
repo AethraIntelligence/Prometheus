@@ -19,6 +19,7 @@ class TaskStatus(StrEnum):
     RUNNING = "RUNNING"
     WAITING_FOR_TOOL = "WAITING_FOR_TOOL"
     WAITING_FOR_APPROVAL = "WAITING_FOR_APPROVAL"
+    PAUSED = "PAUSED"
     VERIFYING = "VERIFYING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
@@ -55,16 +56,17 @@ ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
             TaskStatus.WAITING_FOR_APPROVAL,
             TaskStatus.VERIFYING,
             TaskStatus.PLANNING,
+            TaskStatus.PAUSED,
             TaskStatus.COMPLETED,
             TaskStatus.FAILED,
             TaskStatus.CANCELLED,
         }
     ),
     TaskStatus.WAITING_FOR_TOOL: frozenset(
-        {TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        {TaskStatus.RUNNING, TaskStatus.PAUSED, TaskStatus.FAILED, TaskStatus.CANCELLED}
     ),
     TaskStatus.WAITING_FOR_APPROVAL: frozenset(
-        {TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        {TaskStatus.RUNNING, TaskStatus.PAUSED, TaskStatus.FAILED, TaskStatus.CANCELLED}
     ),
     # A rejected result goes back to planning, not straight back to work: the
     # second attempt has to be better informed than the first, and that is a
@@ -74,6 +76,16 @@ ALLOWED_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
             TaskStatus.COMPLETED,
             TaskStatus.PLANNING,
             TaskStatus.RUNNING,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+            TaskStatus.PAUSED,
+        }
+    ),
+    TaskStatus.PAUSED: frozenset(
+        {
+            TaskStatus.PLANNING,
+            TaskStatus.RUNNING,
+            TaskStatus.VERIFYING,
             TaskStatus.FAILED,
             TaskStatus.CANCELLED,
         }
@@ -151,6 +163,7 @@ class Task:
     plan_id: UUID | None = None
     workflow_run_id: UUID | None = None
     assigned_employee_id: UUID | None = None
+    assignment_reason: str = ""
     plan: TaskPlan | None = None
     execution: Execution = field(default_factory=Execution)
     result: TaskResult | None = None
@@ -185,7 +198,7 @@ class Task:
 
     @property
     def is_resumable(self) -> bool:
-        return self.status in RESUMABLE_STATUSES
+        return self.status in RESUMABLE_STATUSES or self.status is TaskStatus.PAUSED
 
     def transition_to(self, status: TaskStatus, **changes: Any) -> tuple[Task, TaskEvent]:
         """Move to `status`, returning the new task and the event that records it.

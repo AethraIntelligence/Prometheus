@@ -42,9 +42,23 @@ class Cancellations(CancellationSignal, Protocol):
 
     def clear(self, task_id: UUID) -> None: ...
 
+    def pause(self, task_id: UUID) -> None: ...
+
+    def resume(self, task_id: UUID) -> None: ...
+
+    def is_paused(self, task_id: UUID) -> bool: ...
+
+    async def wait_until_resumed(self, task_id: UUID) -> None: ...
+
 
 class NeverCancelled:
     """The default: nothing is asking this run to stop."""
 
     def is_cancelled(self, task_id: UUID) -> bool:
         return False
+
+    def is_paused(self, task_id: UUID) -> bool:
+        return False
+
+    async def wait_until_resumed(self, task_id: UUID) -> None:
+        return None

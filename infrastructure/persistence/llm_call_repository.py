@@ -11,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.errors import StorageError, StorageNotInitializedError
+from domain.llm.models import Usage
 from domain.llm.telemetry import LLMCallRecord, SpendSummary
 from infrastructure.persistence.models import LLMCallRow
 from infrastructure.persistence.session import session_scope
@@ -70,6 +71,31 @@ class SqlLLMCallLog:
             cost_usd=float(cost),
         )
 
+    async def list_for_task(self, task_id: UUID) -> list[LLMCallRecord]:
+        async with self._session() as session:
+            rows = await session.scalars(
+                select(LLMCallRow)
+                .where(LLMCallRow.task_id == str(task_id))
+                .order_by(LLMCallRow.created_at, LLMCallRow.id)
+            )
+            return [
+                LLMCallRecord(
+                    provider=row.provider,
+                    model=row.model,
+                    usage=Usage(
+                        prompt_tokens=row.prompt_tokens,
+                        output_tokens=row.output_tokens,
+                        cost_usd=row.cost_usd,
+                        latency_ms=row.latency_ms,
+                    ),
+                    success=row.success,
+                    task_id=task_id,
+                    error=row.error,
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ]
+
 
 class InMemoryLLMCallLog:
     """Implements `domain.llm.telemetry.LLMCallLog` for tests and dry runs."""
@@ -88,3 +114,6 @@ class InMemoryLLMCallLog:
             output_tokens=sum(c.usage.output_tokens for c in selected),
             cost_usd=sum(c.usage.cost_usd for c in selected),
         )
+
+    async def list_for_task(self, task_id: UUID) -> list[LLMCallRecord]:
+        return [call for call in self.calls if call.task_id == task_id]

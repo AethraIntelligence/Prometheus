@@ -12,6 +12,7 @@ it was, and can be cancelled again.
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID
 
 from infrastructure.observability.logging import get_logger
@@ -24,9 +25,12 @@ class InMemoryCancellations:
 
     def __init__(self) -> None:
         self._reasons: dict[UUID, str] = {}
+        self._paused: set[UUID] = set()
+        self._wake: dict[UUID, asyncio.Event] = {}
 
     def cancel(self, task_id: UUID, reason: str = "") -> None:
         self._reasons[task_id] = reason
+        self._event(task_id).set()
         log.info("task.cancel_requested", task_id=str(task_id), reason=reason)
 
     def is_cancelled(self, task_id: UUID) -> bool:
@@ -37,3 +41,25 @@ class InMemoryCancellations:
 
     def clear(self, task_id: UUID) -> None:
         self._reasons.pop(task_id, None)
+        self._paused.discard(task_id)
+        self._wake.pop(task_id, None)
+
+    def pause(self, task_id: UUID) -> None:
+        self._paused.add(task_id)
+        self._event(task_id).clear()
+        log.info("task.pause_requested", task_id=str(task_id))
+
+    def resume(self, task_id: UUID) -> None:
+        self._paused.discard(task_id)
+        self._event(task_id).set()
+        log.info("task.resume_requested", task_id=str(task_id))
+
+    def is_paused(self, task_id: UUID) -> bool:
+        return task_id in self._paused
+
+    async def wait_until_resumed(self, task_id: UUID) -> None:
+        while self.is_paused(task_id) and not self.is_cancelled(task_id):
+            await self._event(task_id).wait()
+
+    def _event(self, task_id: UUID) -> asyncio.Event:
+        return self._wake.setdefault(task_id, asyncio.Event())

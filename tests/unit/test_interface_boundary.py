@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 import pytest
@@ -35,7 +36,7 @@ from domain.errors import PrometheusError
 from domain.llm.telemetry import SpendSummary
 from domain.tasks.progress import ProgressEvent, ProgressKind
 from domain.tasks.task import Task, TaskResult, TaskStatus
-from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
+from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus, Plan
 from domain.workspace.models import WorkspaceId
 from infrastructure.persistence.approval_repository import (
     InMemoryApprovalRepository,
@@ -124,14 +125,18 @@ class EmptyLog:
 
 
 class NoPlans:
+    def __init__(self) -> None:
+        self.items: list[Plan] = []
+
     async def save(self, plan):
+        self.items = [item for item in self.items if item.id != plan.id] + [plan]
         return None
 
     async def get(self, plan_id):
-        return None
+        return next((item for item in self.items if item.id == plan_id), None)
 
     async def for_objective(self, objective_id):
-        return []
+        return [item for item in self.items if item.objective_id == objective_id]
 
 
 class Stream:
@@ -163,6 +168,8 @@ def build(
     conversations = InMemoryConversationRepository()
     tasks = InMemoryTaskRepository()
     manager = RecordingManager(objectives)
+    plans = NoPlans()
+    cancellations = _NoCancellations()
     approvals = approvals or _NoApprovals()
     parts = {
         "objectives": objectives,
@@ -171,6 +178,8 @@ def build(
         "manager": manager,
         "waiter": waiter or NoWaiter(),
         "approvals": approvals,
+        "plans": plans,
+        "cancellations": cancellations,
     }
     service = PrometheusService(
         ServiceDependencies(
@@ -179,15 +188,15 @@ def build(
                 manager=manager,  # type: ignore[arg-type]
                 tasks=tasks,
                 objectives=objectives,
-                cancellations=_NoCancellations(),
+                cancellations=cancellations,
                 approvals=parts["waiter"],
             ),
             activity=Activity(
-                Stream(), tasks=tasks, objectives=objectives, plans=NoPlans()
+                Stream(), tasks=tasks, objectives=objectives, plans=plans
             ),
             conversations=conversations,
             objectives=objectives,
-            plans=NoPlans(),
+            plans=plans,
             tasks=tasks,
             employees=FakeRegistry(),
             approvals=approvals,
@@ -202,14 +211,35 @@ def build(
 
 
 class _NoCancellations:
+    def __init__(self) -> None:
+        self.paused: set[UUID] = set()
+        self.cancelled: set[UUID] = set()
+
     def cancel(self, task_id, reason=""):
+        self.cancelled.add(task_id)
         return None
 
     def clear(self, task_id):
+        self.cancelled.discard(task_id)
+        self.paused.discard(task_id)
         return None
 
     def is_cancelled(self, task_id):
-        return False
+        return task_id in self.cancelled
+
+    def pause(self, task_id):
+        self.paused.add(task_id)
+        return None
+
+    def resume(self, task_id):
+        self.paused.discard(task_id)
+        return None
+
+    def is_paused(self, task_id):
+        return task_id in self.paused
+
+    async def wait_until_resumed(self, task_id):
+        return None
 
     def reason(self, task_id):
         return ""
@@ -666,6 +696,37 @@ async def test_stopping_an_objective_nobody_is_carrying_closes_it() -> None:
     record = await parts["objectives"].get(left_behind.id)
     assert record.status is ObjectiveStatus.CANCELLED
     assert record.result is not None, "an answered turn is one no interface shows as busy"
+
+
+async def test_work_center_pauses_only_the_objectives_own_tasks() -> None:
+    service, parts = build()
+    objective = replace(Objective.create("Prepare the report"), status=ObjectiveStatus.RUNNING)
+    other = replace(Objective.create("Unrelated work"), status=ObjectiveStatus.RUNNING)
+    task, _ = Task.create("Collect figures").transition_to(TaskStatus.RUNNING)
+    unrelated, _ = Task.create("Send notes").transition_to(TaskStatus.RUNNING)
+    plan = Plan.create(objective.id, tasks=(replace(task, plan_id=None),))
+    other_plan = Plan.create(other.id, tasks=(replace(unrelated, plan_id=None),))
+    task = replace(task, plan_id=plan.id, assignment_reason="best research match")
+    unrelated = replace(unrelated, plan_id=other_plan.id)
+    plan = replace(plan, tasks=(task,))
+    other_plan = replace(other_plan, tasks=(unrelated,))
+    await parts["objectives"].save(objective)
+    await parts["objectives"].save(other)
+    await parts["plans"].save(plan)
+    await parts["plans"].save(other_plan)
+    await parts["tasks"].save(task)
+    await parts["tasks"].save(unrelated)
+
+    item = await service.pause_objective(objective.id)
+
+    assert item is not None
+    assert item["bucket"] == "BLOCKED"
+    assert item["next_action"].startswith("Resume")
+    assert item["tasks"][0]["assignment_reason"] == "best research match"
+    assert parts["cancellations"].paused == {task.id}
+
+    await service.cancel_objective(objective.id)
+    assert parts["cancellations"].cancelled == {task.id}
 
 
 async def test_a_thread_can_be_renamed_and_keeps_the_name() -> None:

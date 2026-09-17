@@ -43,10 +43,13 @@ import structlog
 from application.prometheus.manager import PrometheusManager
 from application.task_runner import TaskRunner
 from domain.approvals.protocols import ApprovalWaiter
+from domain.errors import WorkControlError
+from domain.policies.models import ActorKind
 from domain.tasks.cancellation import Cancellations
 from domain.tasks.repository import TaskRepository
 from domain.tasks.task import Task, TaskResult, TaskStatus
 from domain.workforce import directions as carried
+from domain.workforce.assignment import SharedContext
 from domain.workforce.directions import NONE, Directions
 from domain.workforce.protocols import Objective, ObjectiveResult, ObjectiveStatus
 from domain.workforce.repository import ObjectiveRepository
@@ -121,6 +124,8 @@ class Runs:
         """Resume every durable objective left incomplete by an earlier process."""
         recovered = 0
         for objective in await self._objectives_store.list_incomplete():
+            if objective.status is ObjectiveStatus.PAUSED:
+                continue
             if objective.id in self._objectives:
                 continue
             self._schedule(objective, objective.directions, resume=True)
@@ -180,6 +185,9 @@ class Runs:
     def is_running(self, task_id: UUID) -> bool:
         return task_id in self._running
 
+    def is_objective_running(self, objective_id: UUID) -> bool:
+        return objective_id in self._objectives
+
     @property
     def running(self) -> frozenset[UUID]:
         return frozenset(self._running)
@@ -190,6 +198,73 @@ class Runs:
         return len(self._running) + len(self._objectives)
 
     # --- Stopping -------------------------------------------------------------
+
+    async def pause(self, task_id: UUID) -> Task | None:
+        """Ask a task to park at its next safe execution boundary."""
+        task = await self._tasks.get(task_id)
+        if task is None or task.is_terminal:
+            return task
+        self._cancellations.pause(task_id)
+        log.info("task.pause_signalled", task_id=str(task_id))
+        return task
+
+    async def resume(self, task_id: UUID) -> Task | None:
+        """Release a cooperative pause without restarting completed work."""
+        task = await self._tasks.get(task_id)
+        if task is None or task.is_terminal:
+            return task
+        self._cancellations.resume(task_id)
+        return task
+
+    async def handoff(self, task: Task, employee: str) -> Task:
+        """Continue stopped work as a new child task with explicit ownership.
+
+        A running task must be paused first. Replacing its employee in place
+        would let two runtimes believe they own one cursor and one call ledger.
+        """
+        if task.status not in {
+            TaskStatus.PAUSED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        }:
+            raise WorkControlError(
+                "Pause the task before handing it off, or hand off a failed task."
+            )
+        if task.status is TaskStatus.PAUSED and task.plan_id is not None:
+            raise WorkControlError(
+                "A planned task cannot change owners while its objective is active. "
+                "Cancel the objective first, then retry the task with another employee."
+            )
+        if task.status is TaskStatus.PAUSED:
+            self._cancellations.cancel(task.id, f"Handed off to {employee}.")
+            self._approvals.release(task.id)
+        context = SharedContext(
+            facts=(f"Continue task {task.id}; preserve its completed work.",),
+            artifacts=task.result.artifacts if task.result else (),
+        )
+        child, assignment = await self._runner.submit(
+            task.goal,
+            employee,
+            created_by=task.created_by,
+            assigned_by=ActorKind.USER,
+            context=context,
+            workspace_id=task.workspace_id,
+            parent_id=task.id,
+            plan_id=task.plan_id,
+            assignment_reason=f"handed off by the user from task {task.id}",
+        )
+        run = asyncio.create_task(
+            self._runner.run(child, assignment),
+            name=f"prometheus-handoff-{child.id}",
+        )
+        self._running[child.id] = run
+        run.add_done_callback(lambda _: self._finished(child.id))
+        return child
+
+    def resume_objective(self, objective: Objective) -> None:
+        """Continue a paused durable objective when no live coroutine owns it."""
+        if objective.id not in self._objectives:
+            self._schedule(objective, objective.directions, resume=True)
 
     async def cancel(self, task_id: UUID, reason: str = "") -> Task | None:
         """Ask a task to stop. Returns the task, or None if there is no such task."""
@@ -220,6 +295,20 @@ class Runs:
         log.info("task.cancelled_while_idle", task_id=str(task_id), status=task.status.value)
         return cancelled
 
+    async def signal_cancel(self, task_id: UUID, reason: str = "") -> Task | None:
+        """Ask known objective work to stop without guessing that it is idle.
+
+        Manager-owned tasks are awaited inside the objective coroutine rather
+        than registered in ``_running``. Their employee run is shielded from
+        the manager cancellation and observes this signal at a safe boundary.
+        """
+        task = await self._tasks.get(task_id)
+        if task is None or task.is_terminal:
+            return task
+        self._cancellations.cancel(task_id, reason)
+        self._approvals.release(task_id)
+        return task
+
     async def cancel_objective(self, objective_id: UUID) -> bool:
         """Stop Prometheus working on one objective, and every task it has running.
 
@@ -235,9 +324,6 @@ class Runs:
         showing it as work in progress for good.
         """
         work = self._objectives.get(objective_id)
-        for task_id in list(self._running):
-            self._cancellations.cancel(task_id, "The objective was stopped.")
-            self._approvals.release(task_id)
         if work is not None:
             work.cancel()
             await asyncio.gather(work, return_exceptions=True)

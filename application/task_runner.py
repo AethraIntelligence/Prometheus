@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from uuid import UUID
 
 import structlog
 
@@ -73,6 +74,9 @@ class TaskRunner:
         assigned_by: ActorKind = ActorKind.USER,
         context: SharedContext | None = None,
         workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
+        parent_id: UUID | None = None,
+        plan_id: UUID | None = None,
+        assignment_reason: str = "chosen directly by the user",
     ) -> tuple[Task, TaskAssignment]:
         """Record the task and who it went to, before any work starts.
 
@@ -81,8 +85,15 @@ class TaskRunner:
         """
         definition = self._registry.get(employee_name)
         task = replace(
-            Task.create(goal, workspace_id=workspace_id, created_by=created_by),
+            Task.create(
+                goal,
+                workspace_id=workspace_id,
+                created_by=created_by,
+                parent_id=parent_id,
+            ),
             assigned_employee_id=definition.id,
+            plan_id=plan_id,
+            assignment_reason=assignment_reason,
         )
         await self._tasks.save(task)
 
@@ -171,7 +182,11 @@ class TaskRunner:
             f"Starting: {task.goal}",
             payload={"assigned_by": assignment.assigned_by.value},
         )
-        return await self.run(task, assignment)
+        # Cancelling the manager must not interrupt an employee in the middle
+        # of an external action. The interface signals cooperative cancellation
+        # first; the shielded run reaches its next safe boundary and records
+        # what actually happened even after the objective coroutine closes.
+        return await asyncio.shield(self.run(task, assignment))
 
     async def submit_and_run(
         self, goal: str, employee_name: str, **kwargs: object
@@ -204,7 +219,9 @@ class TaskRunner:
             status=task.status.value,
             step=task.execution.step,
         )
-        return await self.run(task, assignments[0] if assignments else None)
+        return await asyncio.shield(
+            self.run(task, assignments[0] if assignments else None)
+        )
 
     async def resume_all(
         self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID

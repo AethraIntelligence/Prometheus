@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
+
+import pytest
 
 from application.employee_runtime.executor import Executor
 from application.employee_runtime.runtime import EmployeeRuntime, RuntimeDependencies
@@ -55,6 +58,34 @@ async def test_a_cancelled_run_stops_between_steps() -> None:
     assert outcome.cancelled
     assert outcome.finished
     assert llm.call_count == 0, "cancelled before it spent anything"
+
+
+async def test_a_paused_run_spends_nothing_until_it_is_resumed() -> None:
+    task = Task.create("Wait safely")
+    employee = definition()
+    llm = FakeLLM([reply("Finished after resume.")])
+    cancellations = InMemoryCancellations()
+    cancellations.pause(task.id)
+    statuses: list[TaskStatus] = []
+
+    async def status(value: TaskStatus) -> None:
+        statuses.append(value)
+
+    run = asyncio.create_task(
+        Executor(llm, InMemoryToolRegistry(), cancellation=cancellations).run(
+            task, employee, opening(task, employee), on_status=status
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert statuses == [TaskStatus.PAUSED]
+    assert llm.call_count == 0
+    assert not run.done()
+
+    cancellations.resume(task.id)
+    outcome = await run
+    assert statuses[-1] is TaskStatus.RUNNING
+    assert outcome.answer == "Finished after resume."
 
 
 async def test_the_work_already_done_is_kept() -> None:
@@ -166,3 +197,24 @@ def test_the_registry_forgets_a_request_once_it_is_cleared() -> None:
     cancellations.clear(task_id)
     assert not cancellations.is_cancelled(task_id)
     assert cancellations.reason_for(task_id) == ""
+
+
+@pytest.mark.asyncio
+async def test_a_pause_waits_until_resume_and_cancel_also_releases_it() -> None:
+    cancellations = InMemoryCancellations()
+    task_id = uuid4()
+    cancellations.pause(task_id)
+
+    parked = asyncio.create_task(cancellations.wait_until_resumed(task_id))
+    await asyncio.sleep(0)
+    assert not parked.done()
+
+    cancellations.resume(task_id)
+    await parked
+    assert not cancellations.is_paused(task_id)
+
+    cancellations.pause(task_id)
+    parked = asyncio.create_task(cancellations.wait_until_resumed(task_id))
+    cancellations.cancel(task_id, "stop instead")
+    await parked
+    assert cancellations.is_cancelled(task_id)

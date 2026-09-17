@@ -29,6 +29,7 @@ import { report, useRuntime } from "../../../shared/api";
 import { avatarUrl } from "../../../shared/assets";
 import { describe } from "../../../shared/lib";
 import {
+  BriefcaseIcon,
   ClockIcon,
   ComposeIcon,
   GearIcon,
@@ -45,6 +46,7 @@ interface Props {
   settingsOpen: boolean;
   /** Whether the schedules page is the one shown. */
   schedulesOpen?: boolean;
+  workCenterOpen?: boolean;
   /** Changes when the page did something the list should show at once. */
   refresh: number;
   onSelect: (conversationId: string) => void;
@@ -52,6 +54,7 @@ interface Props {
   onAsk: () => void;
   onSettings: (section?: "plugins") => void;
   onSchedules?: () => void;
+  onWorkCenter?: () => void;
   /** Make a schedule out of this thread's request. */
   onRepeat?: (conversationId: string) => void;
   onClose: () => void;
@@ -63,12 +66,14 @@ export function Sidebar({
   selected,
   settingsOpen,
   schedulesOpen = false,
+  workCenterOpen = false,
   refresh,
   onSelect,
   onNew,
   onAsk,
   onSettings,
   onSchedules,
+  onWorkCenter,
   onRepeat,
   onClose,
   onThreadChanged,
@@ -151,6 +156,17 @@ export function Sidebar({
           <SparkIcon />
           Ask
         </button>
+        {onWorkCenter && (
+          <button
+            type="button"
+            className={workCenterOpen ? "navrow on" : "navrow"}
+            aria-current={workCenterOpen ? "page" : undefined}
+            onClick={onWorkCenter}
+          >
+            <BriefcaseIcon />
+            Work Center
+          </button>
+        )}
         {onSchedules && (
           <button
             type="button"

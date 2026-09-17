@@ -12,6 +12,7 @@ export type ObjectiveStatus =
   | "RECEIVED"
   | "PLANNING"
   | "RUNNING"
+  | "PAUSED"
   | "DONE"
   | "FAILED"
   | "ESCALATED"
