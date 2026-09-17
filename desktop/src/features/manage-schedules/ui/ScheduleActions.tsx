@@ -8,6 +8,7 @@ export function ScheduleActions({
   onRunNow,
   onEdit,
   onOpen,
+  onOpenTrace,
   onToggle,
   onDelete,
 }: {
@@ -15,6 +16,7 @@ export function ScheduleActions({
   onRunNow: () => Promise<void>;
   onEdit?: () => void;
   onOpen?: () => void;
+  onOpenTrace?: () => void;
   onToggle: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
@@ -49,6 +51,11 @@ export function ScheduleActions({
       {onOpen && schedule.conversation_id && (
         <button type="button" aria-label={`Open results of ${label}`} onClick={onOpen}>
           Open results
+        </button>
+      )}
+      {onOpenTrace && (
+        <button type="button" aria-label={`Open last trace of ${label}`} onClick={onOpenTrace}>
+          Open trace
         </button>
       )}
       <button

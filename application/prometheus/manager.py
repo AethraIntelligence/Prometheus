@@ -76,6 +76,9 @@ from application.prometheus.synthesis import NOTHING_WAS_DONE, Synthesizer, acti
 from application.prometheus.verification import ObjectiveVerifier
 from domain.employees.protocols import EmployeeRegistry
 from domain.errors import DelegationError
+from domain.observability.context import TraceContext, tracing
+from domain.observability.models import SpanKind, SpanStatus, TraceEvent, stable_span_id
+from domain.observability.protocols import TraceSink
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.workforce import directions as carried_directions
 from domain.workforce.assignment import SharedContext
@@ -122,6 +125,7 @@ class PrometheusManager:
         memory: WorkspaceMemory | None = None,
         knowledge: WorkspaceKnowledge | None = None,
         session: SessionMemory | None = None,
+        traces: TraceSink | None = None,
     ) -> None:
         self._intent = intent
         self._planner = planner
@@ -146,6 +150,7 @@ class PrometheusManager:
         # Optional like memory: without it a thread is its last few turns, the
         # arrangement before Phase 9, which is still bounded - only forgetful.
         self._session = session
+        self._traces = traces
 
     # --- The whole of it ------------------------------------------------------
 
@@ -175,6 +180,21 @@ class PrometheusManager:
             **({"conversation_id": conversation_id} if conversation_id is not None else {}),
         )
         await self._objectives.save(objective)
+        await self._trace(
+            TraceEvent(
+                trace_id=objective.id,
+                span_id=stable_span_id(objective.id, SpanKind.OBJECTIVE, str(objective.id)),
+                kind=SpanKind.OBJECTIVE,
+                status=SpanStatus.RUNNING,
+                name="User request received",
+                workspace_id=objective.workspace_id,
+                entity_type="objective",
+                entity_id=str(objective.id),
+                actor="user",
+                reason_code="RECEIVED",
+                attributes={"content": "not captured"},
+            )
+        )
         log.info("prometheus.objective_received", objective_id=str(objective.id))
         return objective
 
@@ -191,11 +211,19 @@ class PrometheusManager:
         waiting - the CLI, a schedule, the validation harness - classify it by
         its type.
         """
-        try:
-            return await self._carry(objective)
-        except Exception as error:
-            await self._fail(objective, error)
-            raise
+        root = stable_span_id(objective.id, SpanKind.OBJECTIVE, str(objective.id))
+        with tracing(
+            TraceContext(
+                trace_id=objective.id,
+                parent_id=root,
+                workspace_id=objective.workspace_id,
+            )
+        ):
+            try:
+                return await self._carry(objective)
+            except Exception as error:
+                await self._fail(objective, error)
+                raise
 
     async def resume_objective(self, objective: Objective) -> ObjectiveResult:
         """Continue durable manager work left by a previous process."""
@@ -204,6 +232,25 @@ class PrometheusManager:
                 raise ValueError(f"Terminal objective {objective.id} has no result.")
             return objective.result
 
+        root = stable_span_id(objective.id, SpanKind.OBJECTIVE, str(objective.id))
+        await self._trace(
+            TraceEvent(
+                trace_id=objective.id,
+                span_id=stable_span_id(
+                    objective.id, SpanKind.RESUME, f"{objective.id}:{objective.status.value}"
+                ),
+                parent_id=root,
+                causation_id=root,
+                kind=SpanKind.RESUME,
+                status=SpanStatus.RUNNING,
+                name="Objective resumed",
+                workspace_id=objective.workspace_id,
+                entity_type="objective",
+                entity_id=str(objective.id),
+                actor="prometheus",
+                reason_code=objective.status.value,
+            )
+        )
         plans = await self._plans.for_objective(objective.id)
         active = next(
             (
@@ -219,10 +266,25 @@ class PrometheusManager:
             return await self.handle_objective(objective)
 
         try:
-            return await self._resume_plan(objective, active)
+            with tracing(
+                TraceContext(
+                    trace_id=objective.id,
+                    parent_id=root,
+                    workspace_id=objective.workspace_id,
+                )
+            ):
+                return await self._resume_plan(objective, active)
         except Exception as error:
             await self._fail(objective, error)
             raise
+
+    async def _trace(self, event: TraceEvent) -> None:
+        if self._traces is None:
+            return
+        try:
+            await self._traces.emit(event)
+        except Exception as error:
+            log.warning("trace.emit_failed", error=str(error))
 
     async def _resume_plan(self, objective: Objective, plan: Plan) -> ObjectiveResult:
         await self._announce(

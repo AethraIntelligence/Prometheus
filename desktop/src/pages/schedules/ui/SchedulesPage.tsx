@@ -35,6 +35,7 @@ interface Props {
   repeat?: string | null;
   onRepeatTaken?: () => void;
   onOpenSettings?: () => void;
+  onOpenTrace?: (objectiveId: string) => void;
 }
 
 export function SchedulesPage({
@@ -44,6 +45,7 @@ export function SchedulesPage({
   repeat = null,
   onRepeatTaken,
   onOpenSettings,
+  onOpenTrace,
 }: Props = {}) {
   const client = useRuntime();
   const page = useSchedules(client);
@@ -207,6 +209,11 @@ export function SchedulesPage({
                         onOpen={
                           onOpenThread && schedule.conversation_id
                             ? () => onOpenThread(schedule.conversation_id!)
+                            : undefined
+                        }
+                        onOpenTrace={
+                          onOpenTrace && schedule.recent_runs?.[0]?.objective_id
+                            ? () => onOpenTrace(schedule.recent_runs![0].objective_id)
                             : undefined
                         }
                         onToggle={() => page.toggle(schedule)}

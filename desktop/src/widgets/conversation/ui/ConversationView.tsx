@@ -28,6 +28,8 @@ interface Props {
   onOpenFile?: (message: Message, artifact: Artifact) => void;
   /** Offer "Memory used" under each answer. Off where no runtime is behind the view. */
   explainMemory?: boolean;
+  /** Open the durable causal trace for a turn. */
+  onOpenTrace?: (objectiveId: string) => void;
 }
 
 export function ConversationView({
@@ -38,6 +40,7 @@ export function ConversationView({
   empty,
   onOpenFile,
   explainMemory = false,
+  onOpenTrace,
 }: Props) {
   if (messages.length === 0) {
     return (
@@ -62,6 +65,11 @@ export function ConversationView({
                 <MemoryUsedButton objectiveId={message.id} />
               ) : undefined
             }
+            actions={message.answered && onOpenTrace ? (
+              <button type="button" className="worked still" onClick={() => onOpenTrace(message.id)}>
+                Open trace
+              </button>
+            ) : undefined}
             onOpenFile={onOpenFile}
           />
         );

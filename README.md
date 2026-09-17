@@ -136,6 +136,15 @@ wrote appear under its answer and open in a preview beside the conversation: PDF
 images, Markdown and text. A PDF is written from Markdown by the local browser
 engine, so any alphabet prints.
 
+### Explains a run without exposing its contents
+
+The desktop **Observability** view follows one run from request through plans,
+employees, model routing, tools and approvals to its result. It marks the first
+causal failure and the recovery that followed, while keeping prompts, responses,
+files, screenshots and raw tool payloads out of the trace. Health, scoped SLO
+metrics, explicit diagnostic export and `prometheus audit --verify` use the same
+application boundary. See [Observability and diagnostics](docs/observability.md).
+
 ### Knows your documents
 
 Add PDF, Word (`.docx`), Markdown, HTML, CSV, JSON or plain text from the system

@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import type { ConversationKind } from "../entities/conversation";
 import { ApprovalInboxPage } from "../pages/approval-inbox";
 import { ChatPage } from "../pages/chat";
+import { ObservabilityPage } from "../pages/observability";
 import { SchedulesPage } from "../pages/schedules";
 import { SettingsPage } from "../pages/settings";
 import { WorkCenterPage } from "../pages/work-center";
@@ -36,7 +37,7 @@ const narrow = () => typeof window !== "undefined" && window.innerWidth < NARROW
  * weight, and the way back is one button that says so.
  */
 export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: string }) {
-  const [showing, setShowing] = useState<"work" | "settings" | "schedules" | "center" | "approvals" | "workforce">("work");
+  const [showing, setShowing] = useState<"work" | "settings" | "schedules" | "center" | "approvals" | "workforce" | "observability">("work");
   const [workspace, setWorkspace] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const [newKind, setNewKind] = useState<ConversationKind>("TASK");
@@ -47,13 +48,14 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
   // A thread somebody asked to repeat, held until the schedules page has read it.
   const [repeat, setRepeat] = useState<string | null>(null);
   const [centerObjective, setCenterObjective] = useState<string | null>(null);
+  const [traceId, setTraceId] = useState<string | null>(null);
   const repeatTaken = useCallback(() => setRepeat(null), []);
 
   const switched = () => {
     setWorkspace((count) => count + 1);
     setOpen(null);
   };
-  const go = (page: "work" | "settings" | "schedules" | "center" | "approvals" | "workforce", thread: string | null = open) => {
+  const go = (page: "work" | "settings" | "schedules" | "center" | "approvals" | "workforce" | "observability", thread: string | null = open) => {
     setShowing(page);
     setOpen(thread);
     if (narrow()) setRailOpen(false);
@@ -89,6 +91,11 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           onApprovals={() => go("approvals", null)}
           workforceOpen={showing === "workforce"}
           onWorkforce={() => go("workforce", null)}
+          observabilityOpen={showing === "observability"}
+          onObservability={() => {
+            setTraceId(null);
+            go("observability", null);
+          }}
           onSchedules={() => go("schedules")}
           onRepeat={(thread) => {
             setRepeat(thread);
@@ -132,6 +139,10 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
               setSection("general");
               go("settings");
             }}
+            onOpenTrace={(id) => {
+              setTraceId(id);
+              go("observability", null);
+            }}
           />
         ) : showing === "center" ? (
           <WorkCenterPage
@@ -140,6 +151,17 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
             railOpen={railOpen}
             onOpenRail={() => setRailOpen(true)}
             onOpenThread={(thread) => go("work", thread)}
+            onOpenTrace={(id) => {
+              setTraceId(id);
+              go("observability", null);
+            }}
+          />
+        ) : showing === "observability" ? (
+          <ObservabilityPage
+            key={`observability-${workspace}:${traceId ?? "recent"}`}
+            initialTraceId={traceId}
+            railOpen={railOpen}
+            onOpenRail={() => setRailOpen(true)}
           />
         ) : showing === "workforce" ? (
           <WorkforcePage
@@ -169,6 +191,10 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
             newKind={newKind}
             onOpened={setOpen}
             onChanged={() => setHeard((count) => count + 1)}
+            onOpenTrace={(id) => {
+              setTraceId(id);
+              go("observability", null);
+            }}
             refresh={renamed}
             onSwitched={switched}
             railOpen={railOpen}

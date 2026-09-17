@@ -53,3 +53,7 @@ class AuditTrail(Protocol):
         task_id: UUID | None = None,
         workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
     ) -> list[AuditRecord]: ...
+
+    async def verify(self, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID):
+        """Verify the hash chain and its durable head checkpoint."""
+        ...

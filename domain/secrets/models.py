@@ -13,6 +13,7 @@ provider on the next step.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,6 +34,19 @@ SENSITIVE_NAMES = frozenset(
         "secret",
         "token",
     }
+)
+
+# Values in free text need a second line of defence. Field-name redaction cannot
+# protect an exception such as ``401 for Bearer ...`` or a copied ``API_KEY=``
+# line. The patterns intentionally recognise credentials rather than arbitrary
+# long words: over-redacting ids makes a diagnostic trace useless.
+_TEXT_SECRETS = (
+    re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(
+        r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|"
+        r"password|passwd|private[_-]?key|secret)\s*[:=]\s*([^\s,;]+)"
+    ),
+    re.compile(r"\b(sk-[A-Za-z0-9_-]{8,})\b"),
 )
 
 
@@ -62,14 +76,30 @@ def is_sensitive(name: str) -> bool:
     return any(marker in lowered for marker in SENSITIVE_NAMES)
 
 
-def redact(value: Any) -> Any:
-    """Mask secret-looking values anywhere in a nested structure."""
+def redact_text(value: str, *, known_values: tuple[str, ...] = ()) -> str:
+    """Mask credentials embedded in prose, headers and exception messages."""
+    safe = value
+    for secret in known_values:
+        if secret:
+            safe = safe.replace(secret, MASK)
+    safe = _TEXT_SECRETS[0].sub(lambda match: f"{match.group(1)}{MASK}", safe)
+    safe = _TEXT_SECRETS[1].sub(lambda match: f"{match.group(1)}={MASK}", safe)
+    return _TEXT_SECRETS[2].sub(MASK, safe)
+
+
+def redact(value: Any, *, known_values: tuple[str, ...] = ()) -> Any:
+    """Mask secret-looking names and free-text values in a nested structure."""
     if isinstance(value, Secret):
         return MASK
+    if isinstance(value, BaseException):
+        return redact_text(f"{type(value).__name__}: {value}", known_values=known_values)
+    if isinstance(value, str):
+        return redact_text(value, known_values=known_values)
     if isinstance(value, dict):
         return {
-            key: MASK if is_sensitive(str(key)) else redact(item) for key, item in value.items()
+            key: MASK if is_sensitive(str(key)) else redact(item, known_values=known_values)
+            for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
-        return [redact(item) for item in value]
+        return [redact(item, known_values=known_values) for item in value]
     return value

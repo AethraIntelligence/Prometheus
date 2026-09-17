@@ -2651,6 +2651,47 @@ article > .actions {
   color: var(--grey-2);
 }
 
+/* Observability keeps causal order visible without pretending parallel spans
+   are a serial checklist. The line belongs to each span; timestamps remain the
+   ordering authority. */
+.observability { padding: 20px 24px 48px; overflow: auto; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.health-grid article { border: 1px solid var(--hair); border-radius: 12px; padding: 12px; background: var(--panel-2); }
+.health-grid span, .health-grid b { display: block; }
+.health-grid span { color: var(--grey); font-size: .75rem; margin-bottom: 5px; }
+.health-grid b { font-size: .84rem; font-weight: 600; }
+.trace-layout { display: grid; grid-template-columns: minmax(210px, 280px) minmax(0, 1fr); min-height: 520px; border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; background: var(--panel-2); }
+.trace-list { border-right: 1px solid var(--hair); padding: 8px; overflow: auto; }
+.trace-list button { width: 100%; padding: 11px; border: 0; border-radius: 9px; background: transparent; color: inherit; text-align: left; }
+.trace-list button:hover, .trace-list button.on { background: var(--hover); }
+.trace-list b, .trace-list span, .trace-list small { display: block; }
+.trace-list span, .trace-list small { color: var(--grey); margin-top: 3px; }
+.trace-detail { padding: 18px 24px; overflow: auto; }
+.trace-detail > header { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
+.trace-detail h2 { font: 500 .88rem var(--mono); overflow-wrap: anywhere; margin: 4px 0 16px; }
+.trace-detail header span, .trace-detail header small { color: var(--grey); font-size: .72rem; }
+.trace-timeline { list-style: none; margin: 8px 0; padding: 0; }
+.trace-event { position: relative; display: grid; grid-template-columns: 18px 1fr; gap: 10px; padding-bottom: 18px; }
+.trace-event::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--grey); margin: 5px 0 0 3px; z-index: 1; }
+.trace-event .trace-line { position: absolute; left: 7px; top: 13px; bottom: -5px; width: 1px; background: var(--hair); }
+.trace-event:last-child .trace-line { display: none; }
+.trace-event.ok::before { background: var(--add); }
+.trace-event.error::before, .trace-event.denied::before { background: var(--del); }
+.trace-event.cancelled::before, .trace-event.degraded::before { background: var(--wait); }
+.trace-event.causal > div { border-left: 3px solid var(--del); padding-left: 12px; }
+.trace-event p { margin: 0 0 4px; }
+.trace-event p span { color: var(--grey); font-size: .7rem; margin-left: 8px; }
+.trace-event small { color: var(--grey); }
+.trace-event strong { display: block; color: var(--del); font-size: .75rem; margin-top: 5px; }
+.trace-event details { margin-top: 7px; }
+.trace-event pre, .diagnostic-export pre, .metrics pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: var(--panel); border-radius: 8px; padding: 10px; font-size: .72rem; }
+.trace-reason { color: var(--grey); font-size: .78rem; margin-top: 5px !important; }
+.diagnostic-export, .metrics { margin-top: 18px; border: 1px solid var(--hair); border-radius: 14px; padding: 16px; background: var(--panel-2); }
+.diagnostic-export > div p { color: var(--grey); max-width: 760px; }
+.diagnostic-export label { display: grid; gap: 6px; margin: 12px 0; }
+.diagnostic-export input { width: 100%; }
+@media (max-width: 760px) { .trace-layout { grid-template-columns: 1fr; } .trace-list { border-right: 0; border-bottom: 1px solid var(--hair); max-height: 220px; } }
+
 .memory-uses {
   list-style: none;
   margin: 0;

@@ -37,6 +37,7 @@ from domain.llm.protocols import LLM, ModelRouter
 from domain.llm.telemetry import LLMCallLog
 from domain.memory.protocols import Memory, MemoryMaintenance
 from domain.memory.usage import MemoryUseLog
+from domain.observability.protocols import TraceRepository
 from domain.scheduling.protocols import EventLog, ScheduleRepository
 from domain.search.protocols import SearchEngine
 from domain.secrets.protocols import CredentialStore, SecretResolver
@@ -924,6 +925,17 @@ class Container:
         from infrastructure.persistence.audit_repository import SqlAuditLog
 
         return SqlAuditLog(self.session_factory)
+
+    @cached_property
+    def traces(self) -> TraceRepository:
+        """The safe causal read model; never an execution dependency."""
+        if self._in_memory:
+            from infrastructure.persistence.trace_repository import InMemoryTraceRepository
+
+            return InMemoryTraceRepository()
+        from infrastructure.persistence.trace_repository import SqlTraceRepository
+
+        return SqlTraceRepository(self.session_factory)
 
     @cached_property
     def employee_repository(self):

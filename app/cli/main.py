@@ -700,6 +700,7 @@ def policies() -> None:
 def audit(
     limit: int = typer.Option(30, "--limit", "-n", help="How many lines to show."),
     task: str = typer.Option("", "--task", "-t", help="Only this task's actions."),
+    verify: bool = typer.Option(False, "--verify", help="Verify the tamper-evident chain."),
 ) -> None:
     """What was done on this machine, newest first.
 
@@ -712,6 +713,20 @@ def audit(
         container = build_container()
         try:
             trail = container.audit
+            if verify:
+                checked = await trail.verify()  # type: ignore[attr-defined]
+                if checked.valid:
+                    typer.secho(
+                        f"Audit chain verified: {checked.checked} record(s).", fg="green"
+                    )
+                    return
+                typer.secho(
+                    f"Audit chain is invalid at {checked.first_invalid_sequence or 'checkpoint'}: "
+                    f"{checked.reason}.",
+                    fg="red",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
             records = await trail.recent(  # type: ignore[attr-defined]
                 limit=limit, task_id=UUID(task) if task else None
             )

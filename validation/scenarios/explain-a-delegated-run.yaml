@@ -1,0 +1,32 @@
+# Phase 12 keeps this as a real delegated request. The deterministic tests
+# inspect its causal trace, redaction and export; this scenario keeps the user
+# path in the repeatable capability suite.
+
+name: explain-a-delegated-run
+description: >
+  A multi-step delegated request with independent reads, a hand-off, a tool
+  action and durable evidence that can be explained from one trace.
+phase: 12
+tags: [observability, delegation, evidence, parallel]
+
+request: >
+  Read "inputs/north.txt" and "inputs/south.txt" independently, add the two
+  totals, and write "reports/combined.md" with the combined total and one short
+  sentence explaining the calculation. Do not modify either input.
+
+reset: [reports]
+approve: [fs.write]
+
+setup:
+  inputs/north.txt: |
+    North total: 18
+  inputs/south.txt: |
+    South total: 24
+
+expect:
+  files_exist: [reports/combined.md]
+  file_contains:
+    reports/combined.md: "42"
+  min_employees: 1
+  tools_forbidden: [fs.move]
+  max_steps: 60

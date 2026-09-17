@@ -285,3 +285,56 @@ def test_workforce_migration_keeps_old_assignments_unrecorded_and_downgrades(
         assert "decision" not in columns
         assert "workflow_suggestions" not in inspect(connection).get_table_names()
         assert connection.execute(text("SELECT COUNT(*) FROM task_assignments")).scalar() == 1
+
+
+def test_observability_migration_chains_legacy_audit_and_downgrades_cleanly(
+    tmp_path: Path,
+) -> None:
+    from alembic import command
+
+    database = tmp_path / "legacy-audit.db"
+    config = _alembic_config(f"sqlite+aiosqlite:///{database}")
+    command.upgrade(config, "041")
+    engine = create_engine(f"sqlite:///{database}")
+    with engine.begin() as connection:
+        for action, when in (
+            ("first", "2026-08-31 23:59:00"),
+            ("second", "2026-09-01 00:01:00"),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO audit_log (ts, workspace_id, actor_kind, action, result, "
+                    "details) VALUES (:ts, 'default', 'USER', :action, 'SUCCESS', '{}')"
+                ),
+                {"ts": when, "action": action},
+            )
+
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT chain_version, chain_id, previous_hash, record_hash "
+                "FROM audit_log ORDER BY id"
+            )
+        ).all()
+        checkpoint = connection.execute(
+            text("SELECT sequence, record_hash, record_count FROM audit_checkpoints")
+        ).one()
+    assert [row.chain_id for row in rows] == ["2026-08", "2026-09"]
+    assert rows[0].chain_version == 1
+    assert rows[0].previous_hash == "0" * 64
+    assert rows[1].previous_hash == rows[0].record_hash
+    assert tuple(checkpoint) == (2, rows[1].record_hash, 2)
+
+    command.downgrade(config, "041")
+    inspector = inspect(engine)
+    assert "trace_events" not in inspector.get_table_names()
+    assert "audit_checkpoints" not in inspector.get_table_names()
+    assert "record_hash" not in {
+        column["name"] for column in inspector.get_columns("audit_log")
+    }
+    with engine.connect() as connection:
+        actions = connection.execute(
+            text("SELECT action FROM audit_log ORDER BY id")
+        ).scalars()
+        assert actions.all() == ["first", "second"]

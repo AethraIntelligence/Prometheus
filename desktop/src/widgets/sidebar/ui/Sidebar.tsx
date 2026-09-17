@@ -37,6 +37,7 @@ import {
   PanelIcon,
   PeopleIcon,
   PlugIcon,
+  PulseIcon,
   SearchIcon,
   SparkIcon,
 } from "../../../shared/ui";
@@ -52,6 +53,7 @@ interface Props {
   workCenterOpen?: boolean;
   approvalsOpen?: boolean;
   workforceOpen?: boolean;
+  observabilityOpen?: boolean;
   /** Changes when the page did something the list should show at once. */
   refresh: number;
   onSelect: (conversationId: string) => void;
@@ -62,6 +64,7 @@ interface Props {
   onWorkCenter?: () => void;
   onApprovals?: () => void;
   onWorkforce?: () => void;
+  onObservability?: () => void;
   /** Make a schedule out of this thread's request. */
   onRepeat?: (conversationId: string) => void;
   onClose: () => void;
@@ -76,6 +79,7 @@ export function Sidebar({
   workCenterOpen = false,
   approvalsOpen = false,
   workforceOpen = false,
+  observabilityOpen = false,
   refresh,
   onSelect,
   onNew,
@@ -85,6 +89,7 @@ export function Sidebar({
   onWorkCenter,
   onApprovals,
   onWorkforce,
+  onObservability,
   onRepeat,
   onClose,
   onThreadChanged,
@@ -212,6 +217,17 @@ export function Sidebar({
           >
             <ClockIcon />
             Scheduled
+          </button>
+        )}
+        {onObservability && (
+          <button
+            type="button"
+            className={observabilityOpen ? "navrow on" : "navrow"}
+            aria-current={observabilityOpen ? "page" : undefined}
+            onClick={onObservability}
+          >
+            <PulseIcon />
+            Observability
           </button>
         )}
         <button type="button" className="navrow" onClick={() => onSettings("plugins")}>

@@ -45,6 +45,7 @@ interface Props {
   onOpenRail?: () => void;
   /** Which promise a new, not-yet-persisted thread makes. */
   newKind?: ConversationKind;
+  onOpenTrace?: (objectiveId: string) => void;
 }
 
 export function ChatPage({
@@ -56,6 +57,7 @@ export function ChatPage({
   railOpen = true,
   onOpenRail,
   newKind = "TASK",
+  onOpenTrace,
 }: Props = {}) {
   const client = useRuntime();
   const {
@@ -111,6 +113,7 @@ export function ChatPage({
         empty={blank ? null : <WorkforcePanel employees={employees} />}
         onOpenFile={(message, artifact) => setPreview({ objectiveId: message.id, artifact })}
         explainMemory
+        onOpenTrace={onOpenTrace}
       />
       {approvals.map((approval) => (
         <ApprovalCard

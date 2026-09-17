@@ -22,10 +22,12 @@ from application.prometheus.supervisor import Supervisor
 from application.prometheus.synthesis import NOTHING_WAS_DONE, Synthesizer, actions
 from application.prometheus.verification import ObjectiveVerifier
 from domain.errors import ProviderUnavailableError
+from domain.observability.models import SpanKind
 from domain.tasks.task import Task, TaskCreatedBy, TaskResult, TaskStatus
 from domain.workforce.protocols import Objective, ObjectiveStatus, Plan, PlanStatus
 from infrastructure.persistence.objective_repository import InMemoryObjectiveRepository
 from infrastructure.persistence.plan_repository import InMemoryPlanRepository
+from infrastructure.persistence.trace_repository import InMemoryTraceRepository
 from infrastructure.progress.broadcaster import InMemoryProgressBroadcaster
 from tests.fakes.employees import definition
 from tests.fakes.llm import FakeLLM, reply
@@ -79,6 +81,7 @@ def build(
     knowledge=None,
     reconciler=None,
     session=None,
+    traces: InMemoryTraceRepository | None = None,
     #: Supply one to read back what each stage was actually told.
     llm: FakeLLM | None = None,
 ) -> tuple[
@@ -117,6 +120,7 @@ def build(
         memory=memory,
         knowledge=knowledge,
         session=session,
+        traces=traces,
     )
     return manager, runs, objective_store, plan_store
 
@@ -157,11 +161,13 @@ async def test_restart_reuses_completed_work_and_resumes_only_the_interrupted_ta
     execution = RecordingExecution()
     objectives = InMemoryObjectiveRepository()
     plans = InMemoryPlanRepository()
+    traces = InMemoryTraceRepository()
     manager, _, _, _ = build(
         script=[verdict(True), "The recovered work is complete."],
         execution=execution,
         objectives=objectives,
         plans=plans,
+        traces=traces,
     )
     objective = replace(
         Objective.create("Read and summarise the notes"),
@@ -194,6 +200,11 @@ async def test_restart_reuses_completed_work_and_resumes_only_the_interrupted_ta
     assert result.summary == "The recovered work is complete."
     assert [task.id for task, _ in execution.started] == [second.id]
     assert execution.started[0][0].status is TaskStatus.RUNNING
+    trace = await traces.get(objective.id)
+    assert trace is not None
+    [resume] = [event for event in trace.events if event.kind is SpanKind.RESUME]
+    assert resume.trace_id == objective.id
+    assert resume.parent_id is not None
 
 
 async def test_the_answer_carries_the_evidence_behind_it() -> None:

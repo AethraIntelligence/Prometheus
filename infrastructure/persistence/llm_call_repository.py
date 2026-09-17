@@ -35,6 +35,7 @@ class SqlLLMCallLog:
             raise StorageError(message) from error
 
     async def record(self, call: LLMCallRecord) -> None:
+        call = call.redacted()
         async with self._session() as session:
             session.add(
                 LLMCallRow(
@@ -112,7 +113,7 @@ class InMemoryLLMCallLog:
         self.calls: list[LLMCallRecord] = []
 
     async def record(self, call: LLMCallRecord) -> None:
-        self.calls.append(call)
+        self.calls.append(call.redacted())
 
     async def total(self, task_id: UUID | None = None) -> SpendSummary:
         selected = [c for c in self.calls if task_id is None or c.task_id == task_id]

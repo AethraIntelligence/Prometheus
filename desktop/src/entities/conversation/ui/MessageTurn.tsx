@@ -44,11 +44,13 @@ interface Props {
   work?: ReactNode;
   /** Which memories the answer was given, and why - composed by the widget. */
   memory?: ReactNode;
+  /** Run-level actions composed by the page, such as opening its causal trace. */
+  actions?: ReactNode;
   /** Opening a file the turn produced. Without it the cards are shown and do nothing. */
   onOpenFile?: (message: Message, artifact: Artifact) => void;
 }
 
-export function MessageTurn({ message, work, memory, onOpenFile }: Props) {
+export function MessageTurn({ message, work, memory, actions, onOpenFile }: Props) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const took = workedFor(message);
@@ -125,6 +127,7 @@ export function MessageTurn({ message, work, memory, onOpenFile }: Props) {
               </section>
             )}
             {memory}
+            {actions}
             {message.answer && (
               <div className="react">
                 <button type="button" aria-label={copied ? "Copied" : "Copy"} onClick={copy}>

@@ -13,6 +13,7 @@ from typing import Protocol
 from uuid import UUID
 
 from domain.llm.models import Usage
+from domain.secrets.models import redact
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,21 @@ class LLMCallRecord:
     entry: str = ""
     reason: str = ""
     escalation_level: int = 0
+
+    def redacted(self) -> LLMCallRecord:
+        return LLMCallRecord(
+            provider=self.provider,
+            model=self.model,
+            usage=self.usage,
+            success=self.success,
+            task_id=self.task_id,
+            error=redact(self.error),
+            created_at=self.created_at,
+            task_kind=self.task_kind,
+            entry=self.entry,
+            reason=redact(self.reason),
+            escalation_level=self.escalation_level,
+        )
 
 
 @dataclass(frozen=True, slots=True)

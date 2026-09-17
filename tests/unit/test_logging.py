@@ -38,3 +38,15 @@ def test_chatty_libraries_are_quietened() -> None:
 
     for name in NOISY_LOGGERS:
         assert logging.getLogger(name).level >= logging.WARNING
+
+
+def test_credentials_are_redacted_before_the_log_renderer(capsys) -> None:
+    structlog.get_logger("test").error(
+        "provider.failed",
+        authorization="Bearer log-canary-token",
+        error=RuntimeError("api_key=exception-canary-value"),
+    )
+
+    rendered = capsys.readouterr().out
+    assert "canary" not in rendered
+    assert "***" in rendered

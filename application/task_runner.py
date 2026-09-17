@@ -19,6 +19,10 @@ from application.orchestrator import Failure, classify
 from domain.employees.definition import EmployeeDefinition
 from domain.employees.protocols import EmployeeRegistry
 from domain.llm import escalation, routing
+from domain.observability import context as trace_context
+from domain.observability.context import TraceContext, tracing
+from domain.observability.models import SpanKind, SpanStatus, TraceEvent, stable_span_id
+from domain.observability.protocols import TraceSink
 from domain.policies.models import ActorKind
 from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, ProgressSink
 from domain.tasks.repository import TaskRepository
@@ -49,6 +53,7 @@ class TaskRunner:
         max_attempts: int = MAX_TASK_ATTEMPTS,
         progress: ProgressSink | None = None,
         workspaces: WorkspaceContext | None = None,
+        traces: TraceSink | None = None,
     ) -> None:
         self._tasks = tasks
         self._assignments = assignments
@@ -65,6 +70,7 @@ class TaskRunner:
         # A failure classified here never reaches the runtime's announcer: the
         # run it would have announced from is the one that just died.
         self._progress = progress or NullProgress()
+        self._traces = traces
 
     # --- Starting -------------------------------------------------------------
 
@@ -134,10 +140,17 @@ class TaskRunner:
 
     async def run(self, task: Task, assignment: TaskAssignment | None = None) -> Task:
         """Carry one task to a terminal state, retrying transient failures."""
-        if self._workspaces is None:
-            return await self._run(task, assignment)
-        with self._workspaces.enter(task.workspace_id):
-            return await self._run(task, assignment)
+        inherited = trace_context.current()
+        context = inherited or TraceContext(
+            trace_id=task.id,
+            parent_id=stable_span_id(task.id, SpanKind.TASK, str(task.id)),
+            workspace_id=task.workspace_id,
+        )
+        with tracing(context):
+            if self._workspaces is None:
+                return await self._run(task, assignment)
+            with self._workspaces.enter(task.workspace_id):
+                return await self._run(task, assignment)
 
     async def _run(self, task: Task, assignment: TaskAssignment | None = None) -> Task:
         attempt = 1
@@ -169,6 +182,7 @@ class TaskRunner:
                 )
                 if failure.is_retryable and attempt < self._max_attempts:
                     attempt += 1
+                    await self._trace_retry(task, attempt, failure.kind.value)
                     task = await self._reload(task)
                     await asyncio.sleep(0)
                     continue
@@ -178,7 +192,73 @@ class TaskRunner:
         final = await self._reload(task)
         if assignment is not None:
             await self._close(assignment, final)
+        await self._trace_finished(final)
         return final
+
+    async def _trace_retry(self, task: Task, attempt: int, reason: str) -> None:
+        context = trace_context.current()
+        if self._traces is None or context is None:
+            return
+        await self._emit_trace(
+            TraceEvent(
+                trace_id=context.trace_id,
+                span_id=stable_span_id(
+                    context.trace_id, SpanKind.RETRY, f"{task.id}:{attempt}"
+                ),
+                parent_id=stable_span_id(context.trace_id, SpanKind.TASK, str(task.id)),
+                causation_id=context.causation_id,
+                kind=SpanKind.RETRY,
+                status=SpanStatus.RUNNING,
+                name="Task retry",
+                workspace_id=task.workspace_id,
+                entity_type="task",
+                entity_id=str(task.id),
+                actor=str(task.assigned_employee_id or "prometheus"),
+                reason_code=reason,
+                attributes={"attempt": attempt},
+            )
+        )
+
+    async def _trace_finished(self, task: Task) -> None:
+        context = trace_context.current()
+        if self._traces is None or context is None:
+            return
+        status = {
+            TaskStatus.COMPLETED: SpanStatus.OK,
+            TaskStatus.CANCELLED: SpanStatus.CANCELLED,
+        }.get(task.status, SpanStatus.ERROR)
+        await self._emit_trace(
+            TraceEvent(
+                trace_id=context.trace_id,
+                span_id=stable_span_id(context.trace_id, SpanKind.TASK, str(task.id)),
+                parent_id=context.parent_id,
+                causation_id=context.causation_id,
+                kind=SpanKind.TASK,
+                status=status,
+                name="Task execution",
+                workspace_id=task.workspace_id,
+                entity_type="task",
+                entity_id=str(task.id),
+                actor=str(task.assigned_employee_id or "prometheus"),
+                reason_code=task.error.kind if task.error else task.status.value,
+                started_at=task.created_at,
+                ended_at=task.updated_at,
+                duration_ms=int((task.updated_at - task.created_at).total_seconds() * 1000),
+                attributes={
+                    "attempts": task.attempts,
+                    "cost_usd": task.cost_usd,
+                    "goal": "not captured",
+                },
+            )
+        )
+
+    async def _emit_trace(self, event: TraceEvent) -> None:
+        if self._traces is None:
+            return
+        try:
+            await self._traces.emit(event)
+        except Exception as error:
+            log.warning("trace.emit_failed", error=str(error))
 
     async def start(self, task: Task, assignment: TaskAssignment) -> Task:
         """Run a task somebody else composed. Implements `TaskExecution`.

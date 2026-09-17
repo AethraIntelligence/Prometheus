@@ -8,6 +8,9 @@ is for. See docs/adr/0001.
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from app.config.general import FileSettingsEditor
 from app.config.settings import Settings, get_settings
 from application.computer.screen_reader import LLMScreenReader
@@ -33,6 +36,7 @@ from application.memory.distiller import OutcomeDistiller
 from application.memory.recorder import MemoryRecorder
 from application.memory.revision import MemoryReviser
 from application.memory.workspace import WorkspaceMemory
+from application.observability.service import ObservabilityService
 from application.prometheus.delegation import CapabilityDelegator
 from application.prometheus.intent import IntentReader
 from application.prometheus.language import DEFAULT_LANGUAGE
@@ -339,6 +343,7 @@ def build_manager(container: Container) -> PrometheusManager:
             if container.retriever is not None
             else None
         ),
+        traces=container.traces,
     )
 
 
@@ -434,6 +439,7 @@ def build_task_runner(container: Container) -> TaskRunner:
         build_runtime=_runtime,
         progress=container.progress,
         workspaces=container.workspaces,
+        traces=container.traces,
     )
 
 
@@ -551,8 +557,70 @@ def build_service(
                 if container.settings.workflows_enabled
                 else None
             ),
+            observability=_observability(container, scheduler_running),
         )
     )
+
+
+def _observability(container: Container, scheduler_running: bool) -> ObservabilityService:
+    """Describe this runtime without reading secrets or probing the network."""
+    from infrastructure.tools.code import sandbox_backend
+
+    settings = container.settings
+
+    def health() -> dict[str, object]:
+        return {
+            "database": {"status": "configured", "backend": settings.storage_backend},
+            "model_providers": {
+                "status": "configured",
+                "profiles": len(container.model_catalog.entries),
+            },
+            "sandbox": {
+                "status": "available" if sandbox_backend().available else "unavailable"
+            },
+            "integrations": {
+                "status": "enabled" if settings.integrations_enabled else "disabled"
+            },
+            "scheduler": {"status": "running" if scheduler_running else "stopped"},
+        }
+
+    def flags() -> dict[str, bool]:
+        return {
+            "approvals": settings.approvals_enabled,
+            "browser_tools": settings.browser_tools_enabled,
+            "code_execution": settings.code_execution_enabled,
+            "computer_use": settings.computer_use_enabled,
+            "integrations": settings.integrations_enabled,
+            "knowledge": settings.knowledge_enabled,
+            "memory": settings.memory_enabled,
+            "scheduler": scheduler_running,
+            "workflows": settings.workflows_enabled,
+        }
+
+    def fingerprints() -> list[str]:
+        profiles = []
+        for entry in container.model_catalog.entries:
+            value = json.dumps(
+                {
+                    "name": entry.name,
+                    "provider": entry.provider,
+                    "model": entry.model,
+                    "capabilities": sorted(capability.value for capability in entry.capabilities),
+                    "privacy": entry.privacy.value,
+                },
+                sort_keys=True,
+            ).encode()
+            profiles.append(hashlib.sha256(value).hexdigest())
+        return profiles
+
+    return ObservabilityService(
+        container.traces,
+        container.audit,  # the adapter deliberately implements both audit protocols
+        health=health,
+        schema_revision="042",
+        feature_flags=flags,
+        profile_fingerprints=fingerprints,
+    )  # type: ignore[arg-type]
 
 
 def _settings_editor(container: Container) -> FileSettingsEditor | None:

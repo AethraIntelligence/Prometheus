@@ -244,6 +244,75 @@ def test_the_trace_shows_the_manager_and_its_employee_as_one_story(tmp_path: Pat
         ), "including what its tools came back with"
 
 
+def test_the_durable_trace_connects_the_request_plan_model_tool_and_result(
+    tmp_path: Path,
+) -> None:
+    settings = settings_for(tmp_path)
+    create_schema(settings)
+    (tmp_path / "workspace").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "workspace" / "notes.txt").write_text("trace-canary-secret", encoding="utf-8")
+    llm = script(
+        intent(),
+        plan("Read the notes"),
+        chooses("researcher"),
+        steps("Read the file"),
+        tool_reply(ToolCallRequest(id="c1", name="fs.read", arguments={"path": "notes.txt"})),
+        "The note contains trace-canary-secret.",
+        verdict(True),
+        REMEMBERED,
+        verdict(True),
+        "Done.",
+    )
+
+    with client_for(settings, llm) as client:
+        objective_id = client.post(
+            "/api/objectives",
+            json={"request": "Read api_key=request-canary-value from the notes."},
+        ).json()["id"]
+        wait_for(client, objective_id, "DONE", "FAILED", "ESCALATED")
+
+        response = client.get(f"/api/traces/{objective_id}")
+        assert response.status_code == 200
+        trace = response.json()
+        events = trace["events"]
+        assert {event["trace_id"] for event in events} == {objective_id}
+        assert {"OBJECTIVE", "PLAN", "TASK", "ASSIGNMENT", "TOOL"}.issubset(
+            {event["kind"] for event in events}
+        )
+        by_span = {event["span_id"]: event for event in events}
+        task = next(event for event in events if event["kind"] == "TASK")
+        tool = next(event for event in events if event["kind"] == "TOOL")
+        assert task["parent_id"] in by_span
+        assert tool["parent_id"] == task["span_id"]
+        rendered = json.dumps(trace)
+        assert "request-canary" not in rendered
+        assert "trace-canary" not in rendered
+        assert tool["attributes"]["input"] == "redacted"
+        assert tool["attributes"]["output"] == "redacted"
+
+        bundle = client.get(
+            f"/api/diagnostics/bundle?trace_id={objective_id}"
+        ).json()
+        assert "canary" not in json.dumps(bundle)
+        assert "raw database" in bundle["excluded"]
+
+        export = tmp_path / "diagnostics.json"
+        saved = client.post(
+            "/api/diagnostics/export",
+            json={"path": str(export), "trace_ids": [objective_id]},
+        )
+        assert saved.status_code == 201
+        assert "canary" not in export.read_text(encoding="utf-8")
+
+        export.write_text("keep the existing file", encoding="utf-8")
+        occupied = client.post(
+            "/api/diagnostics/export",
+            json={"path": str(export), "trace_ids": [objective_id]},
+        )
+        assert occupied.status_code == 409
+        assert export.read_text(encoding="utf-8") == "keep the existing file"
+
+
 def test_an_unmet_objective_is_escalated_with_what_is_missing(tmp_path: Path) -> None:
     settings = settings_for(tmp_path)
     create_schema(settings)

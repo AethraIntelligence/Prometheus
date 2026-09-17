@@ -20,6 +20,7 @@ export {
   PencilIcon,
   PeopleIcon,
   PlugIcon,
+  PulseIcon,
   PlusIcon,
   SearchIcon,
   SparkIcon,

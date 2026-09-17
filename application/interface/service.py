@@ -28,7 +28,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -44,6 +44,7 @@ from application.interface.contracts import RequestSource, UserRequest
 from application.interface.runs import Runs
 from application.knowledge.service import KnowledgeService
 from application.memory.revision import MemoryReviser
+from application.observability.service import ObservabilityService
 from application.providers.service import ProviderService
 from application.workflows.engine import WorkflowEngine
 from application.workflows.suggestions import WorkflowSuggestions
@@ -103,6 +104,7 @@ from domain.memory.models import (
 )
 from domain.memory.protocols import Memory, MemoryMaintenance
 from domain.memory.usage import MemoryUseLog
+from domain.observability.models import RunKind
 from domain.policies.models import ActorKind, SimpleActor
 from domain.policies.risk import Effect
 from domain.scheduling.models import MIN_INTERVAL_SECONDS, Recurrence, Schedule
@@ -260,6 +262,9 @@ class ServiceDependencies:
     #: Recurring processes offered as workflow drafts. None where workflows
     #: are off; the screen then says suggestions are unavailable.
     workflow_suggestions: WorkflowSuggestions | None = None
+    #: One durable, sanitized explanation of a run. None only for narrowly
+    #: constructed tests and older embedding applications.
+    observability: ObservabilityService | None = None
 
 
 class PrometheusService:
@@ -2545,6 +2550,57 @@ class PrometheusService:
             "output_tokens": summary.output_tokens,
             "cost_usd": round(summary.cost_usd, 6),
         }
+
+    # --- Observability -------------------------------------------------------
+
+    def _observability(self) -> ObservabilityService:
+        if self._d.observability is None:
+            raise PrometheusError("Observability is unavailable on this runtime.")
+        return self._d.observability
+
+    async def trace(self, identifier: UUID) -> dict[str, Any] | None:
+        return await self._observability().get(identifier)
+
+    async def traces(
+        self, *, limit: int = DEFAULT_LIMIT, entity_type: str = "", entity_id: str = ""
+    ) -> list[dict[str, Any]]:
+        return await self._observability().recent(
+            await self._here(),
+            limit=limit,
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+
+    async def observability_health(self) -> dict[str, Any]:
+        return await self._observability().health(await self._here())
+
+    async def observability_metrics(
+        self, *, days: int = 30, run_kind: str = "", model_profile: str = ""
+    ) -> dict[str, Any]:
+        kind = RunKind(run_kind.upper()) if run_kind else None
+        return await self._observability().metrics(
+            await self._here(), days=days, run_kind=kind, model_profile=model_profile
+        )
+
+    async def diagnostic_bundle(self, trace_ids: tuple[UUID, ...] = ()) -> dict[str, Any]:
+        return await self._observability().diagnostic_bundle(await self._here(), trace_ids)
+
+    async def export_diagnostic_bundle(
+        self, path: Path, trace_ids: tuple[UUID, ...] = ()
+    ) -> dict[str, str]:
+        written = await self._observability().export_bundle(
+            path, await self._here(), trace_ids
+        )
+        return {"path": str(written)}
+
+    async def prune_traces(self, *, retention_days: int = 30) -> dict[str, int]:
+        removed = await self._observability().prune(
+            await self._here(), retention_days=retention_days
+        )
+        return {"removed": removed, "retention_days": retention_days}
+
+    async def verify_audit(self) -> dict[str, Any]:
+        return asdict(await self._observability().verify_audit(await self._here()))
 
     async def aclose(self) -> None:
         """Stop carrying work, without leaving a run half-written.

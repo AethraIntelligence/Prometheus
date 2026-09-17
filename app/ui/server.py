@@ -176,6 +176,15 @@ class ScheduleEdit(BaseModel):
     enabled: bool
 
 
+class DiagnosticExport(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    trace_ids: tuple[UUID, ...] = Field(default=(), max_length=20)
+
+
+class TracePrune(BaseModel):
+    retention_days: int = Field(default=30, ge=1, le=3650)
+
+
 class WorkflowInvocation(BaseModel):
     version: int | None = Field(default=None, ge=1)
     inputs: dict[str, Any] = Field(default_factory=dict)
@@ -1246,6 +1255,91 @@ def _routes(app: FastAPI) -> None:
     @app.get("/api/spend")
     async def spend(request: Request) -> dict[str, Any]:
         return await _guarded(_service(request).spend())
+
+    # --- Observability -------------------------------------------------------
+
+    @app.get("/api/traces")
+    async def traces(
+        request: Request,
+        limit: int = 50,
+        entity_type: str = "",
+        entity_id: str = "",
+    ) -> list[dict[str, Any]]:
+        return await _guarded(
+            _service(request).traces(
+                limit=max(1, min(limit, 200)),
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+        )
+
+    @app.get("/api/traces/{trace_id}")
+    async def trace(request: Request, trace_id: UUID) -> dict[str, Any]:
+        found = await _guarded(_service(request).trace(trace_id))
+        if found is None:
+            raise HTTPException(status_code=404, detail="Trace not found.")
+        return found
+
+    @app.get("/api/diagnostics/health")
+    async def diagnostic_health(request: Request) -> dict[str, Any]:
+        return await _guarded(_service(request).observability_health())
+
+    @app.get("/api/diagnostics/metrics")
+    async def diagnostic_metrics(
+        request: Request,
+        days: int = 30,
+        run_kind: str = "",
+        model_profile: str = "",
+    ) -> dict[str, Any]:
+        try:
+            return await _guarded(
+                _service(request).observability_metrics(
+                    days=max(1, min(days, 3650)),
+                    run_kind=run_kind,
+                    model_profile=model_profile,
+                )
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/diagnostics/bundle")
+    async def diagnostic_bundle(
+        request: Request, trace_id: list[UUID] | None = None
+    ) -> dict[str, Any]:
+        return await _guarded(
+            _service(request).diagnostic_bundle(tuple((trace_id or [])[:20]))
+        )
+
+    @app.post("/api/diagnostics/export", status_code=201)
+    async def export_diagnostic_bundle(
+        request: Request, body: DiagnosticExport
+    ) -> dict[str, str]:
+        try:
+            return await _guarded(
+                _service(request).export_diagnostic_bundle(
+                    Path(body.path), body.trace_ids
+                )
+            )
+        except FileExistsError as error:
+            raise HTTPException(
+                status_code=409,
+                detail="The export path already exists; no file was replaced.",
+            ) from error
+        except OSError as error:
+            raise HTTPException(
+                status_code=507,
+                detail=f"The diagnostic bundle could not be saved: {error}",
+            ) from error
+
+    @app.post("/api/traces/prune")
+    async def prune_traces(request: Request, body: TracePrune) -> dict[str, int]:
+        return await _guarded(
+            _service(request).prune_traces(retention_days=body.retention_days)
+        )
+
+    @app.get("/api/audit/verify")
+    async def verify_audit(request: Request) -> dict[str, Any]:
+        return await _guarded(_service(request).verify_audit())
 
     @app.get("/api/events")
     async def events(

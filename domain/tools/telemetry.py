@@ -49,7 +49,7 @@ class ToolCallRecord:
             task_id=self.task_id,
             input_data=redact(self.input_data),
             output=redact(self.output),
-            error=self.error,
+            error=redact(self.error),
             call_id=self.call_id,
             completed=self.completed,
             interface=self.interface,

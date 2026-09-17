@@ -621,6 +621,55 @@ class AuditRow(Base):
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    chain_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    chain_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    previous_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    record_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+
+
+class AuditCheckpointRow(Base):
+    """Durable chain head, so removing the newest audit row is detectable."""
+
+    __tablename__ = "audit_checkpoints"
+
+    workspace_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    record_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+
+
+class TraceEventRow(Base):
+    """A sanitized causal event; execution state remains in its own tables."""
+
+    __tablename__ = "trace_events"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_trace_events_event_id"),
+        Index("ix_trace_events_trace", "trace_id", "sequence"),
+        Index("ix_trace_events_workspace", "workspace_id", "started_at"),
+        Index("ix_trace_events_entity", "entity_type", "entity_id"),
+    )
+
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    trace_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    span_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    causation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    entity_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    actor: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    started_at: Mapped[datetime] = mapped_column(nullable=False, default=_utcnow)
+    ended_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attributes: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
 class WorkflowRunRow(Base):

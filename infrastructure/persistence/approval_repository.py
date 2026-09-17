@@ -34,7 +34,7 @@ def _aware(value: datetime | None) -> datetime | None:
 
 
 def _to_values(approval: Approval) -> dict:
-    request = approval.request
+    request = approval.request.redacted()
     return {
         "id": str(request.id),
         "workspace_id": str(request.workspace_id),

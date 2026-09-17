@@ -121,13 +121,14 @@ function TaskDetail({
   );
 }
 
-function WorkDetail({ item, page, onOpenThread }: { item: WorkItem; page: ReturnType<typeof useWorkCenter>; onOpenThread?: (id: string) => void }) {
+function WorkDetail({ item, page, onOpenThread, onOpenTrace }: { item: WorkItem; page: ReturnType<typeof useWorkCenter>; onOpenThread?: (id: string) => void; onOpenTrace?: (id: string) => void }) {
   const employeeNames = page.employees.map((employee) => employee.name);
   return (
     <section className="work-detail" aria-label="Work details">
       <div className="work-title">
         <div><span className={`work-state ${item.bucket.toLowerCase()}`}>{item.bucket}</span><h2>{item.text}</h2></div>
         {item.conversation_id && onOpenThread && <button type="button" onClick={() => onOpenThread(item.conversation_id!)}>Open conversation</button>}
+        {onOpenTrace && <button type="button" onClick={() => onOpenTrace(item.id)}>Open trace</button>}
       </div>
       <div className="work-next"><b>Next action</b><p>{item.next_action}</p></div>
       <div className="work-actions">
@@ -155,7 +156,7 @@ function WorkDetail({ item, page, onOpenThread }: { item: WorkItem; page: Return
   );
 }
 
-export function WorkCenterPage({ initialObjectiveId = null, railOpen = true, onOpenRail, onOpenThread }: { initialObjectiveId?: string | null; railOpen?: boolean; onOpenRail?: () => void; onOpenThread?: (id: string) => void }) {
+export function WorkCenterPage({ initialObjectiveId = null, railOpen = true, onOpenRail, onOpenThread, onOpenTrace }: { initialObjectiveId?: string | null; railOpen?: boolean; onOpenRail?: () => void; onOpenThread?: (id: string) => void; onOpenTrace?: (id: string) => void }) {
   const page = useWorkCenter(useRuntime());
   const [bucket, setBucket] = useState<WorkBucket>("ACTIVE");
   const [selected, setSelected] = useState<string | null>(initialObjectiveId);
@@ -178,7 +179,7 @@ export function WorkCenterPage({ initialObjectiveId = null, railOpen = true, onO
           <aside className="work-list" aria-label={`${bucket} work`}>
             {!page.ready ? <p className="card-empty">Loading work…</p> : shown.length === 0 ? <p className="card-empty">Nothing here.</p> : shown.map((entry) => <button type="button" className={entry.id === item?.id ? "on" : ""} key={entry.id} onClick={() => setSelected(entry.id)}><b>{entry.text}</b><span>{entry.next_action}</span><small>${entry.cost_usd.toFixed(4)} · {entry.tasks.length} step(s)</small></button>)}
           </aside>
-          {item ? <WorkDetail item={item} page={page} onOpenThread={onOpenThread} /> : <section className="work-detail empty"><p>Select another state to inspect its work.</p></section>}
+          {item ? <WorkDetail item={item} page={page} onOpenThread={onOpenThread} onOpenTrace={onOpenTrace} /> : <section className="work-detail empty"><p>Select another state to inspect its work.</p></section>}
         </div>
       </div>
     </main>

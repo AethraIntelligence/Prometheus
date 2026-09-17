@@ -232,6 +232,12 @@ export const BriefcaseIcon = (props: Props) => (
   </svg>
 );
 
+export const PulseIcon = (props: Props) => (
+  <svg viewBox="0 0 20 20" {...base} {...props}>
+    <path d="M2 10h3l1.8-4.7 3.1 9.4 2.2-6.5 1.4 1.8H18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export const InboxIcon = (props: Props) => (
   <svg viewBox="0 0 20 20" {...base} {...props}>
     <path d="M3.2 4.1h13.6l1 8.1v2.1c0 .9-.7 1.6-1.6 1.6H3.8c-.9 0-1.6-.7-1.6-1.6v-2.1l1-8.1Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />

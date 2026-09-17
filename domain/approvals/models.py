@@ -236,7 +236,27 @@ class ApprovalRequest:
 
     def redacted(self) -> ApprovalRequest:
         """The form that is safe to show and to store."""
-        return replace(self, payload=redact(self.payload))
+        scope = (
+            replace(
+                self.scope,
+                subject=redact(self.scope.subject),
+                action=redact(self.scope.action),
+                resource=redact(self.scope.resource),
+                limits=redact(self.scope.limits),
+            )
+            if self.scope
+            else None
+        )
+        return replace(
+            self,
+            action=redact(self.action),
+            payload=redact(self.payload),
+            reason=redact(self.reason),
+            scope=scope,
+            preview=redact(self.preview),
+            policy_source=redact(self.policy_source),
+            context_sources=tuple(redact(self.context_sources)),
+        )
 
     def expiring_in(self, seconds: float | None) -> ApprovalRequest:
         """The same question with a deadline on it. None leaves it open."""

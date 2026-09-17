@@ -15,12 +15,21 @@ from uuid import uuid4
 
 import structlog
 
+from domain.secrets.models import redact
+
 CORRELATION_KEYS = ("correlation_id", "objective_id", "plan_id", "task_id", "assignment_id")
 
 
 #: Libraries that log every request at INFO. Their traffic is ours, already
 #: recorded with cost and latency, so their version of it is noise on a terminal.
 NOISY_LOGGERS = ("httpx", "httpcore", "aiosqlite", "asyncio")
+
+
+def _redact_event(
+    _logger: object, _method: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Sanitize the complete record before any renderer or sink sees it."""
+    return redact(event_dict)
 
 
 def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
@@ -41,6 +50,7 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
+            _redact_event,
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(
