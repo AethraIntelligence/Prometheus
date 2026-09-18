@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -136,10 +138,36 @@ def test_docker_receives_the_same_locked_down_contract_on_every_host(tmp_path: P
     assert "--user 65534:65534" in rendered
     assert "--pull never" in rendered
     assert command.count("--mount") == 1
-    assert f"type=bind,src={tmp_path.resolve()},dst=/workspace,rw" in command
+    # Fields only, and no bare `rw`: this assertion used to carry the same
+    # invalid argument the command did, so the shape was tested against itself
+    # and `docker run` refused every container with exit 125. What the grammar
+    # is remains Docker's to say - the two tests below are the ones that ask it.
+    assert f"type=bind,src={tmp_path.resolve()},dst=/workspace" in command
+    assert not any("," in part and part.endswith(",rw") for part in command)
     assert "--env" not in command
     assert "--tmpfs" in command
     assert rendered.endswith("python -I -B /workspace/main.py")
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="No docker command on this machine")
+def test_docker_accepts_every_flag_of_that_contract(tmp_path: Path) -> None:
+    """Ask Docker whether the command is a command, which no assertion can.
+
+    The contract above is a list of strings this repository writes and this
+    repository checks, so a flag that Docker does not accept passes it happily -
+    `--mount ...,rw` did, and every container refused to start with exit 125 on
+    the only machines that ran one. The CLI parses its arguments before it talks
+    to the daemon, so this needs the binary and not an engine: 125 is "that is
+    not a command", anything else means the grammar was accepted and the rest is
+    this machine's business.
+    """
+    sandbox = DockerSandbox(memory_mb=64, disk_mb=8, executable="docker", check_readiness=False)
+
+    answer = subprocess.run(
+        sandbox.wrap(["ignored"], tmp_path), capture_output=True, text=True, timeout=60
+    )
+
+    assert answer.returncode != 125, answer.stderr
 
 
 async def test_file_effects_are_reported_before_the_scratch_directory_is_removed() -> None:

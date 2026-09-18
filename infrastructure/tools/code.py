@@ -160,7 +160,12 @@ class DockerSandbox:
             "--workdir",
             "/workspace",
             "--mount",
-            f"type=bind,src={scratch},dst=/workspace,rw",
+            # No `rw`: writable is what a bind mount already is, and `--mount`
+            # takes key=value fields, so the word on its own is not a weaker
+            # option but a parse error - `docker run` refuses the whole command
+            # with exit 125 before the container exists. The one flag here that
+            # does take bare mount options is `--tmpfs` below.
+            f"type=bind,src={scratch},dst=/workspace",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,size=16m",
             self._image,
