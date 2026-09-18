@@ -2192,8 +2192,12 @@ html[data-shell="mac"] .settings-rail {
   margin: 22px 0 10px;
 }
 
+/* A dialog is drawn into the body, so it is inside no screen's subtree and
+   has to be named alongside one. */
 .settings .note,
-.settings .meta {
+.settings .meta,
+.modal .note,
+.modal .meta {
   color: var(--grey);
   font-size: 13px;
   margin: 0 0 12px;
@@ -2216,6 +2220,7 @@ html[data-shell="mac"] .settings-rail {
 .model,
 .workspace,
 .document,
+.process,
 .plugin {
   padding: 13px 15px;
   margin: 0;
@@ -2239,6 +2244,7 @@ html[data-shell="mac"] .settings-rail {
 .model header,
 .workspace header,
 .document header,
+.process header,
 .plugin header {
   display: flex;
   align-items: center;
@@ -2257,9 +2263,21 @@ html[data-shell="mac"] .settings-rail {
 }
 
 .workspace strong,
-.document strong {
+.document strong,
+.process strong {
   font-size: 14px;
   font-weight: 500;
+}
+
+/* The version belongs to the name and is not a fact about the process, so it
+   is set beside it rather than joined to it with a separator. */
+.process-version {
+  color: var(--grey);
+  font-size: 12px;
+}
+
+.process .badge {
+  margin-left: auto;
 }
 
 .workspace > p:not(.note) {
@@ -2336,7 +2354,8 @@ article > .actions {
    every form's submit is its ink pill. */
 .settings article button,
 .settings .actions button,
-.settings .confirm button {
+.settings .confirm button,
+.modal .actions button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2351,16 +2370,19 @@ article > .actions {
 
 .settings article button:hover,
 .settings .actions button:hover,
-.settings .confirm button:hover {
+.settings .confirm button:hover,
+.modal .actions button:hover {
   background: var(--panel);
   border-color: var(--hair-2);
 }
 
-.settings button.danger {
+.settings button.danger,
+.modal button.danger {
   color: var(--del);
 }
 
-.settings button:disabled {
+.settings button:disabled,
+.modal .actions button:disabled {
   opacity: 0.45;
 }
 
@@ -2472,7 +2494,9 @@ article > .actions {
 }
 
 .settings input:not([type="checkbox"]),
-.settings select {
+.settings select,
+.modal input:not([type="checkbox"]),
+.modal select {
   border: 1px solid var(--hair);
   border-radius: 10px;
   background: var(--field);
@@ -2485,11 +2509,30 @@ article > .actions {
 }
 
 .settings input:not([type="checkbox"]):focus,
-.settings select:focus {
+.settings select:focus,
+.modal input:not([type="checkbox"]):focus,
+.modal select:focus {
   border-color: var(--hair-2);
 }
 
-.settings input::placeholder {
+/* A field draws its own frame, and darkens it when it has the caret. The
+   platform's focus ring on top of that is a second frame saying the same
+   thing, in a heavier weight than anything else on the screen - and a text
+   input matches :focus-visible on a plain click, so it appeared every time
+   anybody typed.
+
+   Written against the elements rather than against a screen, because a dialog
+   is drawn into the body and is inside no screen's subtree. A tick box and a
+   radio have no frame to darken, so those keep the ring: without it there is
+   nothing at all to say where the keyboard is. */
+input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+.settings input::placeholder,
+.modal input::placeholder {
   color: var(--grey-2);
 }
 
@@ -2498,7 +2541,8 @@ article > .actions {
    is taken off, which left every list looking like a different application.
    The chevron is two gradients rather than an image: the content security
    policy allows no image the window did not ship, a data URI included. */
-.settings select {
+.settings select,
+.modal select {
   -webkit-appearance: none;
   appearance: none;
   padding-right: 30px;
@@ -2514,7 +2558,8 @@ article > .actions {
   background-repeat: no-repeat;
 }
 
-.settings select:disabled {
+.settings select:disabled,
+.modal select:disabled {
   cursor: default;
   color: var(--grey-2);
 }
@@ -2524,11 +2569,13 @@ article > .actions {
   width: 100%;
 }
 
-.settings input[type="checkbox"] {
+.settings input[type="checkbox"],
+.modal input[type="checkbox"] {
   accent-color: var(--ink);
 }
 
-.settings fieldset {
+.settings fieldset,
+.modal fieldset {
   border: 1px solid var(--hair);
   border-radius: 10px;
   padding: 8px 12px 10px;
@@ -2537,7 +2584,8 @@ article > .actions {
   background: var(--bg);
 }
 
-.settings legend {
+.settings legend,
+.modal legend {
   padding: 0 4px;
   font-size: 12.5px;
   color: var(--grey);
@@ -2554,13 +2602,15 @@ article > .actions {
   gap: 10px;
 }
 
-.settings .hint {
+.settings .hint,
+.modal .hint {
   display: inline;
   font-size: 11.5px;
   margin: 0 0 0 4px;
 }
 
-.settings form > button[type="submit"] {
+.settings form > button[type="submit"],
+.modal form > button[type="submit"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2573,7 +2623,8 @@ article > .actions {
   justify-self: start;
 }
 
-.settings form > button[type="submit"]:disabled {
+.settings form > button[type="submit"]:disabled,
+.modal form > button[type="submit"]:disabled {
   opacity: 0.35;
 }
 
@@ -2825,6 +2876,10 @@ article > .actions {
   padding: 18px;
 }
 
+.modal.wide {
+  width: min(880px, 100%);
+}
+
 .modal-head {
   display: flex;
   align-items: center;
@@ -2995,7 +3050,8 @@ article > .actions {
   align-self: center;
 }
 
-.settings textarea {
+.settings textarea,
+.modal textarea {
   width: 100%;
   border: 1px solid var(--hair);
   border-radius: 10px;
@@ -3009,11 +3065,13 @@ article > .actions {
   transition: border-color 0.16s;
 }
 
-.settings textarea:focus {
+.settings textarea:focus,
+.modal textarea:focus {
   border-color: var(--hair-2);
 }
 
-.settings textarea::placeholder {
+.settings textarea::placeholder,
+.modal textarea::placeholder {
   color: var(--grey-2);
 }
 
@@ -3944,8 +4002,12 @@ article > .actions {
   min-width: 0;
 }
 
+/* The name is what the eye lands on: a card is read by it, and at the size of
+   the lines under it the two were the same weight of information. */
 .schedule-head strong {
-  font-weight: 500;
+  font-size: 15.5px;
+  font-weight: 550;
+  letter-spacing: -0.015em;
   overflow-wrap: anywhere;
 }
 
@@ -3965,11 +4027,83 @@ article > .actions {
   color: var(--grey);
 }
 
+/* When it goes again, which is the one thing a glance is for. */
+.schedule-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 9px 0 0;
+  font-size: 13px;
+}
+
+.schedule-when b {
+  font-weight: 550;
+}
+
+.schedule-when span {
+  color: var(--grey);
+}
+
+.schedule-when span::before {
+  content: "· ";
+}
+
+.settings .schedule .note.schedule-meta {
+  margin-top: 2px;
+}
+
+/* Everything else about a schedule is the same question - what has this been
+   doing - and it is asked deliberately. */
+.schedule-history {
+  margin-top: 9px;
+  border-top: 1px solid var(--hair);
+  padding-top: 7px;
+}
+
+.schedule-history > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--grey);
+  font-size: 12.5px;
+  user-select: none;
+}
+
+.schedule-history > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A caret that turns, rather than the platform's own triangle: the row is a
+   line of text and a disclosure arrow it drew itself is the wrong weight. */
+.schedule-history > summary::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.16s;
+}
+
+.schedule-history[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.schedule-history > summary:hover {
+  color: var(--text);
+}
+
+.schedule-history > summary span::before {
+  content: "· ";
+}
+
 .schedule-runs {
   list-style: none;
-  margin: 9px 0 0;
-  padding: 7px 0 0;
-  border-top: 1px solid var(--hair);
+  margin: 7px 0 0;
+  padding: 0;
 }
 
 .schedule-runs li {
@@ -4007,9 +4141,48 @@ article > .actions {
   text-transform: uppercase;
 }
 
-.schedule > .actions {
-  margin-top: 10px;
-  justify-content: flex-end;
+/* The actions are choices about this one card, not calls to action: plain grey
+   text in the middle, under a rule. Six bordered buttons in a row read as the
+   most important thing on a card whose point is the work above them. */
+.schedule-foot {
+  margin-top: 11px;
+  border-top: 1px solid var(--hair);
+  padding-top: 9px;
+}
+
+.schedule-foot .actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 2px;
+}
+
+.schedule-foot .actions button {
+  border: 0;
+  background: none;
+  padding: 4px 9px;
+  border-radius: 8px;
+  color: var(--grey);
+  font-size: 12.5px;
+  transition: color 0.14s, background 0.14s;
+}
+
+.schedule-foot .actions button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.schedule-foot .actions button.danger {
+  color: var(--grey);
+}
+
+.schedule-foot .actions button.danger:hover:not(:disabled) {
+  color: var(--del);
+  background: var(--del-bg);
+}
+
+.schedule-foot .actions button:disabled {
+  opacity: 0.5;
 }
 
 .schedules-empty {
@@ -4080,7 +4253,8 @@ article > .actions {
   accent-color: var(--ink);
 }
 
-.settings .new-schedule .when .note {
+.settings .new-schedule .when .note,
+.modal .new-schedule .when .note {
   margin: 0;
 }
 
@@ -4118,10 +4292,6 @@ article > .actions {
   border: 1px solid var(--hair);
   border-radius: 11px;
   background: var(--panel);
-}
-
-.schedule-workflow b {
-  color: var(--text);
 }
 
 @media (max-width: 720px) {
@@ -4529,6 +4699,176 @@ article > .actions {
   height: 9px;
   border-radius: 2px;
   background: currentColor;
+}
+
+/* The stop in settings is part of the page, not floating over it; the button
+   keeps its own shape and loses only its corner. */
+/* What a schedule settled into, on its own card. The offer is a panel because
+   it is a question; the settled state is one quiet line, because it is not. */
+.schedule-order {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.schedule-order.offered {
+  display: block;
+  margin: 10px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.schedule-order.offered p {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.schedule-order.offered .actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.schedule-order.offered small {
+  color: var(--grey);
+  font-size: 12.5px;
+}
+
+/* ── the schedule dialog ────────────────── */
+
+/* Four rows, one question each, across the whole width of a dialog that is
+   wide rather than tall. */
+.new-schedule {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.new-schedule > button[type="submit"] {
+  justify-self: end;
+  min-width: 160px;
+}
+
+/* The timing block has the room to put each choice on its own line without
+   wrapping, which is the whole reason the dialog is wide. */
+.new-schedule .when label.checkbox {
+  min-height: 30px;
+}
+
+.new-schedule textarea {
+  min-height: 118px;
+}
+
+/* Two settings that belong together and are each one line. */
+.field-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.field-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+@media (max-width: 720px) {
+  .field-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── the mark that explains a field ─────── */
+
+.hint-mark {
+  position: relative;
+  display: inline-flex;
+}
+
+.hint-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--hair-2);
+  color: var(--grey);
+  font-size: 9.5px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.14s, border-color 0.14s;
+}
+
+.hint-mark:hover .hint-dot,
+.hint-dot:focus-visible {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.hint-bubble {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: -8px;
+  z-index: 40;
+  display: grid;
+  gap: 6px;
+  width: 268px;
+  padding: 9px 11px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 14px 34px -16px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.14s;
+}
+
+.hint-mark:hover .hint-bubble,
+.hint-dot:focus-visible + .hint-bubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+.estop-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.estop-section .estop {
+  position: static;
+  flex: none;
+}
+
+.estop-section .estop-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.estop-section .estop-text small {
+  color: var(--grey);
+  font-size: 12.5px;
+}
+
+.estop-section.stopped {
+  background: var(--del-bg);
+  border-radius: 12px;
+}
+
+.estop-section.stopped .estop-resume {
+  flex: none;
 }
 
 .estop-banner {

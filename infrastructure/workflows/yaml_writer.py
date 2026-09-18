@@ -6,6 +6,14 @@ saved over an existing workflow would replace a process somebody wrote by hand
 with one inferred from runs, and a name clash is a question for the person, not
 a merge.
 
+A *later version* of a name it already holds is the one exception, and it is
+still not an overwrite: version 1 is `<name>.yaml`, and everything after it is
+`<name>.v<version>.yaml` beside it, which is the naming the registry already
+reads. That is how a process is improved - what ran before stays on disk and
+stays loadable, so a schedule pinned to the old version keeps working and a
+person can read what changed. Writing over the version itself is refused, here
+as everywhere.
+
 The file is written in the same shape `yaml_registry` reads and is read back
 through it before it is kept, so a draft this build cannot load is never left
 on disk as a declaration that breaks the next start.
@@ -36,16 +44,22 @@ class YamlWorkflowWriter:
             raise ConfigurationError(
                 "A workflow name is 2-63 lowercase letters, digits and hyphens."
             )
+        if definition.version < 1:
+            raise ConfigurationError("A workflow version is a whole number of 1 or more.")
         self._directory.mkdir(parents=True, exist_ok=True)
         taken = {path.stem.split(".v")[0] for path in self._directory.glob("*.yaml")}
-        target = self._directory / f"{definition.name}.yaml"
+        target = self._directory / (
+            f"{definition.name}.yaml"
+            if definition.version == 1
+            else f"{definition.name}.v{definition.version}.yaml"
+        )
         header = (
             "# Saved from a workflow suggestion: a structure seen in several successful\n"
             "# runs, confirmed by a person. Manual, unscheduled, and granting nothing -\n"
             "# each step runs with its employee's own declaration.\n\n"
         )
         content = header + yaml.safe_dump(_document(definition), sort_keys=False)
-        if definition.name in taken:
+        if definition.name in taken and definition.version == 1:
             # A process may stop after the file was made and before the
             # suggestion status was saved. Repeating the same confirmation is
             # recovery, not an overwrite; a different file remains protected.
@@ -53,6 +67,14 @@ class YamlWorkflowWriter:
                 return str(target)
             raise ConfigurationError(
                 f"A workflow called '{definition.name}' already exists. Choose another name."
+            )
+        if target.exists():
+            # Same recovery, one version down: the file this confirmation would
+            # have written is already exactly there.
+            if target.read_text(encoding="utf-8") == content:
+                return str(target)
+            raise ConfigurationError(
+                f"Version {definition.version} of '{definition.name}' already exists."
             )
         with target.open("x", encoding="utf-8") as handle:
             handle.write(content)

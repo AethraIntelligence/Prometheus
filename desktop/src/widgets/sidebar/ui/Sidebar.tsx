@@ -12,6 +12,19 @@
  * worth noticing. A second line of "Done" under every finished thread was a
  * list that said the same word twenty times.
  *
+ * Ordered by what it costs to press. Ask is first because it is the cheapest
+ * thing here - a question, answered - and New task is the one that sets work
+ * going; then a clock, then what work can act through, then what came back.
+ * The inbox is last because it is where a person arrives rather than where
+ * they set out, and it says "Inbox" - what is in it is already approvals, and
+ * the badge beside it is what makes anybody look.
+ *
+ * Only what a person acts on from here is listed. The Work Center, the
+ * workforce and the traces are read rather than acted on - they answer "what
+ * has been going on", not "what happens next" - so they live under settings,
+ * where the rest of the machine is inspected. A place in this list is a place
+ * somebody starts work from.
+ *
  * A thread nobody has said anything in is not listed. Those exist - a window
  * used to open one every time it started - and a list of blank rows is a list
  * that teaches a person to stop reading it.
@@ -29,15 +42,12 @@ import { report, useRuntime } from "../../../shared/api";
 import { avatarUrl } from "../../../shared/assets";
 import { describe } from "../../../shared/lib";
 import {
-  BriefcaseIcon,
   ClockIcon,
   ComposeIcon,
   GearIcon,
   InboxIcon,
   PanelIcon,
-  PeopleIcon,
   PlugIcon,
-  PulseIcon,
   SearchIcon,
   SparkIcon,
 } from "../../../shared/ui";
@@ -50,10 +60,7 @@ interface Props {
   settingsOpen: boolean;
   /** Whether the schedules page is the one shown. */
   schedulesOpen?: boolean;
-  workCenterOpen?: boolean;
   approvalsOpen?: boolean;
-  workforceOpen?: boolean;
-  observabilityOpen?: boolean;
   /** Changes when the page did something the list should show at once. */
   refresh: number;
   onSelect: (conversationId: string) => void;
@@ -61,10 +68,7 @@ interface Props {
   onAsk: () => void;
   onSettings: (section?: "plugins") => void;
   onSchedules?: () => void;
-  onWorkCenter?: () => void;
   onApprovals?: () => void;
-  onWorkforce?: () => void;
-  onObservability?: () => void;
   /** Make a schedule out of this thread's request. */
   onRepeat?: (conversationId: string) => void;
   onClose: () => void;
@@ -76,20 +80,14 @@ export function Sidebar({
   selected,
   settingsOpen,
   schedulesOpen = false,
-  workCenterOpen = false,
   approvalsOpen = false,
-  workforceOpen = false,
-  observabilityOpen = false,
   refresh,
   onSelect,
   onNew,
   onAsk,
   onSettings,
   onSchedules,
-  onWorkCenter,
   onApprovals,
-  onWorkforce,
-  onObservability,
   onRepeat,
   onClose,
   onThreadChanged,
@@ -165,49 +163,14 @@ export function Sidebar({
       </div>
 
       <nav className="rail-nav" aria-label="Places">
-        <button type="button" className="navrow" onClick={onNew}>
-          <ComposeIcon />
-          New task
-        </button>
         <button type="button" className="navrow" onClick={onAsk}>
           <SparkIcon />
           Ask
         </button>
-        {onWorkCenter && (
-          <button
-            type="button"
-            className={workCenterOpen ? "navrow on" : "navrow"}
-            aria-current={workCenterOpen ? "page" : undefined}
-            onClick={onWorkCenter}
-          >
-            <BriefcaseIcon />
-            Work Center
-          </button>
-        )}
-        {onApprovals && (
-          <button
-            type="button"
-            className={approvalsOpen ? "navrow on" : "navrow"}
-            aria-current={approvalsOpen ? "page" : undefined}
-            onClick={onApprovals}
-          >
-            <InboxIcon />
-            Approval Inbox
-            {approvalBadge.count > 0 && <span className="nav-count">{approvalBadge.count}</span>}
-            {approvalBadge.fresh > 0 && <span className="sr-only" role="status">{approvalBadge.fresh} new approval request(s)</span>}
-          </button>
-        )}
-        {onWorkforce && (
-          <button
-            type="button"
-            className={workforceOpen ? "navrow on" : "navrow"}
-            aria-current={workforceOpen ? "page" : undefined}
-            onClick={onWorkforce}
-          >
-            <PeopleIcon />
-            Workforce
-          </button>
-        )}
+        <button type="button" className="navrow" onClick={onNew}>
+          <ComposeIcon />
+          New task
+        </button>
         {onSchedules && (
           <button
             type="button"
@@ -219,21 +182,24 @@ export function Sidebar({
             Scheduled
           </button>
         )}
-        {onObservability && (
-          <button
-            type="button"
-            className={observabilityOpen ? "navrow on" : "navrow"}
-            aria-current={observabilityOpen ? "page" : undefined}
-            onClick={onObservability}
-          >
-            <PulseIcon />
-            Observability
-          </button>
-        )}
         <button type="button" className="navrow" onClick={() => onSettings("plugins")}>
           <PlugIcon />
           Plugins
         </button>
+        {onApprovals && (
+          <button
+            type="button"
+            className={approvalsOpen ? "navrow on" : "navrow"}
+            aria-current={approvalsOpen ? "page" : undefined}
+            title="Approvals waiting for you"
+            onClick={onApprovals}
+          >
+            <InboxIcon />
+            Inbox
+            {approvalBadge.count > 0 && <span className="nav-count">{approvalBadge.count}</span>}
+            {approvalBadge.fresh > 0 && <span className="sr-only" role="status">{approvalBadge.fresh} new approval request(s)</span>}
+          </button>
+        )}
       </nav>
 
       {searching && (

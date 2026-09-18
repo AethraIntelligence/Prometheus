@@ -341,6 +341,54 @@ async def test_saving_writes_a_manual_workflow_once_and_never_over_another(
         await service.save(shown.suggestion.id, "default", name="figures-digest-2")
 
 
+async def test_a_confirmation_can_be_written_as_a_later_version(
+    session_factory, tmp_path: Path
+) -> None:
+    """An improvement on a process already saved here is written beside it.
+
+    Which version anything *runs* is decided by whoever pinned it, never here.
+    That is why this is a write and not a replacement: a schedule still pointing
+    at version 1 has to keep working while a person reads what changed.
+    """
+    await SqlEmployeeRepository(session_factory).sync([GATHERER, WRITER])
+    service = _service(session_factory, tmp_path)
+    (tmp_path / "figures-digest.yaml").write_text(
+        "name: figures-digest\nversion: 1\nsteps:\n"
+        "  - name: a\n    employee: gatherer\n    instruction: do\n",
+        encoding="utf-8",
+    )
+    for _ in range(MIN_OCCURRENCES):
+        await _succeeded_twice_step_run(session_factory)
+    [shown] = await service.refresh("default")
+
+    _, where = await service.save(
+        shown.suggestion.id, "default", name="figures-digest", version=2
+    )
+
+    assert Path(where).name == "figures-digest.v2.yaml"
+    assert (tmp_path / "figures-digest.yaml").exists(), "version 1 is still on disk"
+    registry = YamlWorkflowRegistry(tmp_path)
+    assert registry.get("figures-digest", 1).version == 1
+    assert [step.employee for step in registry.get("figures-digest", 2).steps] == [
+        "gatherer",
+        "writer",
+    ]
+
+
+def test_the_writer_refuses_writing_over_a_version_it_already_holds(tmp_path: Path) -> None:
+    from domain.workflows.definition import WorkflowDefinition, WorkflowStep
+
+    writer = YamlWorkflowWriter(tmp_path)
+    definition = WorkflowDefinition(
+        name="weekly", version=2, steps=(WorkflowStep("a", "gatherer", "do"),)
+    )
+    writer.write(definition)
+
+    assert writer.write(definition).endswith("weekly.v2.yaml"), "the same write is recovery"
+    with pytest.raises(ConfigurationError, match="already exists"):
+        writer.write(replace(definition, steps=(WorkflowStep("a", "gatherer", "do it"),)))
+
+
 def test_the_writer_refuses_a_name_that_is_taken(tmp_path: Path) -> None:
     (tmp_path / "weekly.yaml").write_text("name: weekly\n", encoding="utf-8")
     from domain.workflows.definition import WorkflowDefinition, WorkflowStep

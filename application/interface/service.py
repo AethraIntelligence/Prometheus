@@ -2350,6 +2350,135 @@ class PrometheusService:
             raise NotFoundError("No schedule with that id.")
         return await store.delete(schedule_id)
 
+    # --- A schedule's own settled order ---------------------------------------
+    #
+    # A person setting work on a clock is not choosing a process, and until
+    # Phase 20 the schedule form asked them to. The platform already noticed
+    # when it kept replanning the same thing; what was missing was addressing
+    # the offer to the standing request it was found in, where the words mean
+    # something to whoever wrote them.
+    #
+    # Which schedule a pattern belongs to is read off the record and stored
+    # nowhere: a schedule's firings are written into its thread, so a suggestion
+    # is that schedule's exactly when every run it was found in is one of that
+    # thread's objectives. No owner column, and no rule forbidding a process to
+    # be used twice - there is simply no longer anywhere to choose one from.
+
+    async def _schedule_suggestions(self, schedule: Schedule) -> list[Any]:
+        """What this schedule's own successful runs keep repeating."""
+        if self._d.workflow_suggestions is None or schedule.conversation_id is None:
+            return []
+        mine = {
+            objective.id
+            for objective in await self._d.objectives.for_conversation(schedule.conversation_id)
+        }
+        if not mine:
+            return []
+        shown = await self._d.workflow_suggestions.refresh(schedule.workspace_id)
+        return [
+            item
+            for item in shown
+            if item.suggestion.sources and set(item.suggestion.sources) <= mine
+        ]
+
+    async def list_schedule_suggestions(self, schedule_id: UUID) -> dict[str, Any]:
+        found = await self._schedules().get(schedule_id)
+        if found is None:
+            raise NotFoundError("No schedule with that id.")
+        if self._d.workflow_suggestions is None:
+            return {"available": False, "suggestions": []}
+        return {
+            "available": True,
+            "suggestions": [
+                views.workflow_suggestion(item, effects={}, ready={})
+                for item in await self._schedule_suggestions(found)
+            ],
+        }
+
+    async def pin_schedule_order(self, schedule_id: UUID, suggestion_id: UUID) -> dict[str, Any]:
+        """Confirm the order this schedule keeps arriving at, and run it that way.
+
+        Two acts, in this order: the process is written as a declaration, and
+        only then does the schedule point at it. A failed write leaves the
+        schedule exactly as it was, still asking its request the long way.
+
+        An improvement is a later version of the same declaration, never an
+        edit of it: what ran before stays on disk and stays loadable, so
+        unpinning or reading back what changed is possible afterwards.
+        """
+        store = self._schedules()
+        found = await store.get(schedule_id)
+        if found is None:
+            raise NotFoundError("No schedule with that id.")
+        _, registry = self._workflow_components()
+        shown = await self._schedule_suggestions(found)
+        chosen = next((item for item in shown if item.suggestion.id == suggestion_id), None)
+        if chosen is None:
+            raise NotFoundError("That suggestion is not open for this schedule.")
+        name, version = self._next_declaration(found, registry)
+        await self._suggestions().save(
+            suggestion_id,
+            found.workspace_id,
+            name=name,
+            description=f"The order {found.name or found.request} settled into.",
+            version=version,
+        )
+        # The registry is reloaded by the save itself, through the callable the
+        # composition root handed the suggestions service.
+        definition = registry.get(name, version)
+        updated = replace(
+            found,
+            workflow_name=name,
+            workflow_version=version,
+            # The schedule keeps its own words; only the route is fixed.
+            workflow_inputs={"request": found.request},
+            workflow_snapshot=definition.to_snapshot(),
+        )
+        await store.save(updated)
+        log.info(
+            "schedule.order_pinned",
+            schedule_id=str(updated.id),
+            workflow=name,
+            version=version,
+        )
+        return views.schedule(updated)
+
+    async def unpin_schedule_order(self, schedule_id: UUID) -> dict[str, Any]:
+        """Back to asking the request the long way. The declaration stays on disk."""
+        store = self._schedules()
+        found = await store.get(schedule_id)
+        if found is None:
+            raise NotFoundError("No schedule with that id.")
+        updated = replace(
+            found, workflow_name="", workflow_version=None, workflow_inputs={}, workflow_snapshot={}
+        )
+        await store.save(updated)
+        log.info("schedule.order_unpinned", schedule_id=str(updated.id))
+        return views.schedule(updated)
+
+    def _next_declaration(
+        self, schedule: Schedule, registry: WorkflowRegistry
+    ) -> tuple[str, int]:
+        """The name and version this schedule's confirmed order is written as.
+
+        Improving what this schedule already runs is the next version of that
+        same name. Anything else starts at version 1 under a name nothing here
+        holds - a first confirmation must never read as a revision of a process
+        somebody else wrote.
+        """
+        declared: dict[str, int] = {}
+        for definition in registry.list_all():
+            declared[definition.name] = max(declared.get(definition.name, 0), definition.version)
+        if schedule.workflow_name and schedule.workflow_name in declared:
+            return schedule.workflow_name, declared[schedule.workflow_name] + 1
+        base = _slug(schedule.name or schedule.request)
+        if base not in declared:
+            return base, 1
+        suffix = 2
+        while f"{base}-{suffix}" in declared:
+            suffix += 1
+        return f"{base}-{suffix}", 1
+
     async def run_schedule_now(self, schedule_id: UUID) -> dict[str, Any]:
         """The request, asked now, in the schedule's thread - through the one way in.
 
@@ -2778,6 +2907,19 @@ class PrometheusService:
             # stop anybody sees.
             "stop": self.stop_state(),
         }
+
+
+def _slug(text: str) -> str:
+    """A declaration name out of a person's words.
+
+    The same shape the writer enforces - lowercase letters, digits and hyphens,
+    two to sixty-three of them. Nobody types this and nobody is shown it; it
+    exists because a file needs a name, so a request that slugs to nothing at
+    all still gets one rather than a refusal a person cannot act on.
+    """
+    cleaned = re.sub(r"[^a-z0-9]+", "-", text.strip().lower()).strip("-")
+    trimmed = cleaned[:63].rstrip("-")
+    return trimmed if len(trimmed) >= 2 else "settled-order"
 
 
 def _approval_choice(value: str) -> ApprovalChoice:

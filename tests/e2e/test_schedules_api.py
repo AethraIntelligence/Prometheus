@@ -3,6 +3,11 @@
 A schedule made from the window gets a thread, reads back with what the
 scheduler will do with it, pauses, resumes, runs now into its own thread and is
 deleted without taking the thread with it.
+
+The workflow half declares its own process in a temporary directory, the way
+`test_governance.py` does. Nothing ships in `workflows/` any more: a person
+setting work on a clock never chooses a process, so a catalog entry on a fresh
+installation was a question with no answer behind it.
 """
 
 from __future__ import annotations
@@ -20,10 +25,39 @@ from app.ui.server import create_app
 from tests.e2e.test_memory_settings import create_schema, settings_for
 from tests.fakes.llm import FakeLLM, reply
 
+WORKFLOW = """
+name: weekly-report
+version: 1
+description: A declared process, for the half of this file that needs one.
+trigger: MANUAL
+inputs:
+  folder:
+    type: STRING
+    default: "."
+    description: Folder containing the source material.
+  report:
+    type: STRING
+    default: weekly-report.md
+    description: Output file written by the final step.
+budget:
+  max_steps: 4
+steps:
+  - name: survey
+    employee: organizer
+    instruction: List everything under {folder} and say what is there.
+  - name: write_up
+    employee: researcher
+    depends_on: [survey]
+    instruction: Write {report} from {steps.survey}.
+"""
+
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    settings = settings_for(tmp_path)
+    declared = tmp_path / "workflows"
+    declared.mkdir()
+    (declared / "weekly-report.yaml").write_text(WORKFLOW, encoding="utf-8")
+    settings = settings_for(tmp_path).model_copy(update={"workflows_dir": declared})
     create_schema(settings)
 
     def build(resolved: Settings):
@@ -107,6 +141,63 @@ def test_a_workflow_is_checked_and_pinned_before_it_is_scheduled(
     assert schedule["retry_policy"] == "DECLARED"
     assert schedule["misfire_policy"] == "COALESCE"
     assert schedule["overlap_policy"] == "SKIP"
+
+
+def test_a_schedule_with_nothing_repeated_is_offered_no_order(client: TestClient) -> None:
+    """The quiet case, and the one every schedule starts in.
+
+    A settled order is offered off the record of a schedule's own successful
+    runs. A schedule that has not run has no record, so the answer is an empty
+    list rather than a suggestion somebody has to decide about.
+    """
+    made = client.post(
+        "/api/schedules", json={"request": "Check the news", "daily_at": "09:00"}
+    ).json()
+
+    offered = client.get(f"/api/schedules/{made['id']}/suggestions")
+
+    assert offered.status_code == 200, offered.text
+    assert offered.json() == {"available": True, "suggestions": []}
+
+
+def test_an_order_is_unpinned_and_the_schedule_asks_the_long_way_again(
+    client: TestClient,
+) -> None:
+    """Unpinning is a way back, and it destroys nothing.
+
+    The declaration stays on disk - which is what makes confirming one a
+    reversible decision rather than a door in one direction.
+    """
+    made = client.post(
+        "/api/schedules",
+        json={
+            "workflow_name": "weekly-report",
+            "workflow_version": 1,
+            "daily_at": "09:00",
+            "name": "Weekly sales report",
+        },
+    ).json()
+    assert made["workflow_name"] == "weekly-report"
+
+    loosened = client.delete(f"/api/schedules/{made['id']}/order")
+
+    assert loosened.status_code == 200, loosened.text
+    assert loosened.json()["workflow_name"] == ""
+    assert loosened.json()["workflow_version"] is None
+    assert client.get("/api/workflows").json()["workflows"], "the declaration is still declared"
+
+
+def test_an_order_nobody_was_offered_is_refused(client: TestClient) -> None:
+    made = client.post(
+        "/api/schedules", json={"request": "Check the news", "daily_at": "09:00"}
+    ).json()
+
+    refused = client.post(
+        f"/api/schedules/{made['id']}/order",
+        json={"suggestion_id": "00000000-0000-0000-0000-000000000001"},
+    )
+
+    assert refused.status_code == 404, refused.text
 
 
 @pytest.mark.parametrize(

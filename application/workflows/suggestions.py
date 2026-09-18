@@ -14,7 +14,7 @@ read off the task that delivered it, not off the plan's intent.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -132,25 +132,41 @@ class WorkflowSuggestions:
         return snoozed
 
     async def save(
-        self, suggestion_id: UUID, workspace_id: WorkspaceId, *, name: str, description: str = ""
+        self,
+        suggestion_id: UUID,
+        workspace_id: WorkspaceId,
+        *,
+        name: str,
+        description: str = "",
+        version: int = 1,
     ) -> tuple[Suggestion, str]:
         """The person's confirmation: write the workflow, and nothing else.
 
         Refused unless the suggestion is currently shown - a dismissed or
         already-saved one is not a draft anybody confirmed. The file is written
         before the status changes, so a failed write leaves the suggestion open.
+
+        `version` above 1 is an improvement on a process of that name already
+        saved here: it is written beside the old one rather than over it, and
+        nothing about the old one stops working. Which version anything *uses*
+        is decided by whoever pinned it, not here.
         """
         if self._writer is None:
             raise PrometheusError("Workflows cannot be saved on this machine.")
         item = await self._owned(suggestion_id, workspace_id)
         if not item.visible(self._clock()):
             raise PrometheusError("This suggestion is not open; there is nothing to save.")
-        definition = draft(item, name.strip(), description.strip())
+        definition = replace(draft(item, name.strip(), description.strip()), version=version)
         where = self._writer.write(definition)
         self._reload()
         saved = item.saved(definition.name, self._clock())
         await self._suggestions.save(saved)
-        log.info("workflow_suggestion.saved", id=str(item.id), workflow=definition.name)
+        log.info(
+            "workflow_suggestion.saved",
+            id=str(item.id),
+            workflow=definition.name,
+            version=definition.version,
+        )
         return saved, where
 
     async def _owned(self, suggestion_id: UUID, workspace_id: WorkspaceId) -> Suggestion:

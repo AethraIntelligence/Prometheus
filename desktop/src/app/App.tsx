@@ -6,7 +6,7 @@ import { ApprovalInboxPage } from "../pages/approval-inbox";
 import { ChatPage } from "../pages/chat";
 import { ObservabilityPage } from "../pages/observability";
 import { SchedulesPage } from "../pages/schedules";
-import { SettingsPage } from "../pages/settings";
+import { SettingsPage, type SectionId } from "../pages/settings";
 import { WorkCenterPage } from "../pages/work-center";
 import { WorkforcePage } from "../pages/workforce";
 import { RuntimeProvider, type RuntimeClient } from "../shared/api";
@@ -16,6 +16,8 @@ import { Sidebar } from "../widgets/sidebar";
 const NARROW = 900;
 
 const narrow = () => typeof window !== "undefined" && window.innerWidth < NARROW;
+
+type Page = "work" | "settings" | "schedules" | "approvals";
 
 /**
  * The application: one provider, a sidebar, a page, and which workspace they
@@ -33,22 +35,29 @@ const narrow = () => typeof window !== "undefined" && window.innerWidth < NARROW
  * is read the way the thread list is - what is coming, what happened - and
  * its results open as the threads they were written into.
  *
- * The emergency stop is outside every page, on both branches: a brake that is
- * only on some screens is a brake somebody has to navigate to.
+ * The Work Center, the workforce and the traces are the opposite case. They
+ * are read rather than started, so they live under settings' own menu - handed
+ * to it as panels, because a page may not import another page, and the frame
+ * already owns both. They keep their state here, so a trace opened from a
+ * conversation still arrives at the one that was asked for.
+ *
+ * A stop set anywhere shows on every screen, and the press that sets it is one
+ * of those settings sections: a brake nobody is reaching for was a red mark in
+ * the corner of every conversation.
  *
  * Settings take the whole window and bring their own menu. A list of threads
  * beside a screen that has nothing to do with any of them is a column of dead
  * weight, and the way back is one button that says so.
  */
 export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: string }) {
-  const [showing, setShowing] = useState<"work" | "settings" | "schedules" | "center" | "approvals" | "workforce" | "observability">("work");
+  const [showing, setShowing] = useState<Page>("work");
   const [workspace, setWorkspace] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const [newKind, setNewKind] = useState<ConversationKind>("TASK");
   const [railOpen, setRailOpen] = useState(() => !narrow());
   const [heard, setHeard] = useState(0);
   const [renamed, setRenamed] = useState(0);
-  const [section, setSection] = useState<"plugins" | "general" | "models" | undefined>(undefined);
+  const [section, setSection] = useState<SectionId | undefined>(undefined);
   // A thread somebody asked to repeat, held until the schedules page has read it.
   const [repeat, setRepeat] = useState<string | null>(null);
   const [centerObjective, setCenterObjective] = useState<string | null>(null);
@@ -59,10 +68,19 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
     setWorkspace((count) => count + 1);
     setOpen(null);
   };
-  const go = (page: "work" | "settings" | "schedules" | "center" | "approvals" | "workforce" | "observability", thread: string | null = open) => {
+  const go = (page: Page, thread: string | null = open) => {
     setShowing(page);
     setOpen(thread);
     if (narrow()) setRailOpen(false);
+  };
+  /** Settings, opened on one of its sections. */
+  const goSettings = (to: SectionId) => {
+    setSection(to);
+    go("settings");
+  };
+  const openTrace = (id: string) => {
+    setTraceId(id);
+    goSettings("observability");
   };
 
   if (showing === "settings") {
@@ -74,6 +92,30 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           initial={section}
           onSwitched={switched}
           onBack={() => go("work")}
+          panels={{
+            "work-center": (
+              <WorkCenterPage
+                key={`center-${workspace}`}
+                initialObjectiveId={centerObjective}
+                onOpenThread={(thread) => go("work", thread)}
+                onOpenTrace={openTrace}
+              />
+            ),
+            workforce: (
+              <WorkforcePage
+                key={`workforce-${workspace}`}
+                onRecover={(place) =>
+                  setSection(place === "PLUGINS" ? "plugins" : place === "MODELS" ? "models" : "general")
+                }
+              />
+            ),
+            observability: (
+              <ObservabilityPage
+                key={`observability-${workspace}:${traceId ?? "recent"}`}
+                initialTraceId={traceId}
+              />
+            ),
+          }}
         />
       </RuntimeProvider>
     );
@@ -88,20 +130,8 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
           selected={showing === "work" ? open : null}
           settingsOpen={false}
           schedulesOpen={showing === "schedules"}
-          workCenterOpen={showing === "center"}
           approvalsOpen={showing === "approvals"}
-          onWorkCenter={() => {
-            setCenterObjective(null);
-            go("center", null);
-          }}
           onApprovals={() => go("approvals", null)}
-          workforceOpen={showing === "workforce"}
-          onWorkforce={() => go("workforce", null)}
-          observabilityOpen={showing === "observability"}
-          onObservability={() => {
-            setTraceId(null);
-            go("observability", null);
-          }}
           onSchedules={() => go("schedules")}
           onRepeat={(thread) => {
             setRepeat(thread);
@@ -117,10 +147,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
             setNewKind("ASK");
             go("work", null);
           }}
-          onSettings={(to) => {
-            setSection(to);
-            go("settings");
-          }}
+          onSettings={(to) => goSettings(to ?? "general")}
           onClose={() => setRailOpen(false)}
           onThreadChanged={(thread, change) => {
             if (thread !== open) return;
@@ -141,43 +168,8 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
             onOpenThread={(thread) => go("work", thread)}
             repeat={repeat}
             onRepeatTaken={repeatTaken}
-            onOpenSettings={() => {
-              setSection("general");
-              go("settings");
-            }}
-            onOpenTrace={(id) => {
-              setTraceId(id);
-              go("observability", null);
-            }}
-          />
-        ) : showing === "center" ? (
-          <WorkCenterPage
-            key={`center-${workspace}`}
-            initialObjectiveId={centerObjective}
-            railOpen={railOpen}
-            onOpenRail={() => setRailOpen(true)}
-            onOpenThread={(thread) => go("work", thread)}
-            onOpenTrace={(id) => {
-              setTraceId(id);
-              go("observability", null);
-            }}
-          />
-        ) : showing === "observability" ? (
-          <ObservabilityPage
-            key={`observability-${workspace}:${traceId ?? "recent"}`}
-            initialTraceId={traceId}
-            railOpen={railOpen}
-            onOpenRail={() => setRailOpen(true)}
-          />
-        ) : showing === "workforce" ? (
-          <WorkforcePage
-            key={`workforce-${workspace}`}
-            railOpen={railOpen}
-            onOpenRail={() => setRailOpen(true)}
-            onRecover={(place) => {
-              setSection(place === "PLUGINS" ? "plugins" : place === "MODELS" ? "models" : "general");
-              go("settings");
-            }}
+            onOpenSettings={() => goSettings("general")}
+            onOpenTrace={openTrace}
           />
         ) : showing === "approvals" ? (
           <ApprovalInboxPage
@@ -187,7 +179,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
             onOpenThread={(thread) => go("work", thread)}
             onOpenWork={(objective) => {
               setCenterObjective(objective);
-              go("center", null);
+              goSettings("work-center");
             }}
           />
         ) : (
@@ -197,10 +189,7 @@ export function App({ client, baseUrl }: { client?: RuntimeClient; baseUrl?: str
             newKind={newKind}
             onOpened={setOpen}
             onChanged={() => setHeard((count) => count + 1)}
-            onOpenTrace={(id) => {
-              setTraceId(id);
-              go("observability", null);
-            }}
+            onOpenTrace={openTrace}
             refresh={renamed}
             onSwitched={switched}
             railOpen={railOpen}

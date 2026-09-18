@@ -28,6 +28,7 @@ export {
   TrashIcon,
   WarningIcon,
 } from "./icons";
+export { Hint } from "./Hint";
 export { Markdown, siteOf } from "./Markdown";
 export { Modal } from "./Modal";
 export { PageHead } from "./PageHead";

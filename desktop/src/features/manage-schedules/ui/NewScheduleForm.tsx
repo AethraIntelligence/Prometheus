@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 
 import type { ModelEntry } from "../../../entities/provider";
 import { localClock, type Schedule } from "../../../entities/schedule";
-import type { Workflow, WorkflowDryRun } from "../../../entities/workflow";
+import { Hint } from "../../../shared/ui";
 import type { NewSchedule } from "../api/schedules";
 
 type When = "every" | "daily" | "event";
@@ -66,6 +66,27 @@ function initialFrom(schedule?: Schedule): Initial {
 /**
  * A request, when to ask it again, and which model to ask.
  *
+ * Four fields and no fifth. There used to be a "Process" list above the
+ * request, offering the declarations this machine holds - a choice nobody
+ * setting work on a clock is equipped to make, sitting above the one field
+ * they came to fill. A schedule now reaches a fixed order the other way: it
+ * runs its request the long way, and once the platform has watched the same
+ * order settle out of its own runs it offers to keep it, on the schedule's own
+ * card, in the words of that schedule. A pinned order is carried through here
+ * untouched, because editing the timing of a schedule is not a decision about
+ * how it runs.
+ *
+ * Four rows, in the order the questions are actually asked: what to call this,
+ * when it goes, what it runs with, and what it asks for. Each row is the full
+ * width of a dialog that is wide rather than tall, so the timing block lays its
+ * three choices out on one line each and the request has room to be read.
+ *
+ * It used to be one narrow column with a paragraph under the model list and
+ * another under the approvals list, which made the field somebody opened the
+ * dialog to fill the last thing below two pages of prose. Those paragraphs are
+ * worth keeping and not worth reading twice, so they moved into the mark beside
+ * each field.
+ *
  * Three ways of saying when, and exactly one is sent - the core refuses a
  * schedule that could mean two things. A time of day is typed on the person's
  * clock and goes with that clock's offset, because "every morning at nine" was
@@ -80,8 +101,6 @@ export function NewScheduleForm({
   initialName = "",
   schedule,
   models = [],
-  workflows = [],
-  onDryRun,
   disabled,
 }: {
   onCreate: (schedule: NewSchedule) => Promise<void>;
@@ -91,11 +110,6 @@ export function NewScheduleForm({
   schedule?: Schedule;
   /** Models a run may prefer, as the catalog lists them. */
   models?: ModelEntry[];
-  workflows?: Workflow[];
-  onDryRun?: (
-    workflow: Workflow,
-    inputs: Record<string, unknown>,
-  ) => Promise<WorkflowDryRun | null>;
   disabled?: boolean;
 }) {
   const start = initialFrom(schedule);
@@ -109,30 +123,13 @@ export function NewScheduleForm({
   const [model, setModel] = useState(schedule?.model ?? "");
   const [approvals, setApprovals] = useState<Approvals>(schedule?.approvals ?? "ASK");
   const [busy, setBusy] = useState(false);
-  const initialWorkflow = schedule?.workflow_name
-    ? `${schedule.workflow_name}@${schedule.workflow_version}`
-    : "";
-  const [workflowKey, setWorkflowKey] = useState(initialWorkflow);
-  const [workflowInputs, setWorkflowInputs] = useState<Record<string, unknown>>(
-    schedule?.workflow_inputs ?? {},
-  );
-  const [preview, setPreview] = useState<WorkflowDryRun | null>(null);
-  const selectedWorkflow = workflows.find(
-    (item) => `${item.name}@${item.version}` === workflowKey,
-  );
-
   // A model the catalog no longer has is still shown, so saving does not
   // silently change it; the core accepts it or says why not.
   const listed = models.some((entry) => entry.name === model);
 
   const amount = Number(count);
-  const workflowReady = selectedWorkflow
-    ? selectedWorkflow.readiness.ready && selectedWorkflow.inputs.every(
-        (input) => !input.required || workflowInputs[input.name] !== undefined,
-      )
-    : false;
   const ready =
-    (selectedWorkflow ? workflowReady : request.trim() !== "") &&
+    request.trim() !== "" &&
     (when !== "every" || (Number.isInteger(amount) && amount > 0)) &&
     (when !== "daily" || /^\d{2}:\d{2}$/.test(time)) &&
     (when !== "event" || event.trim() !== "");
@@ -141,15 +138,18 @@ export function NewScheduleForm({
     submitted.preventDefault();
     if (!ready || busy) return;
     const chosen: NewSchedule = {
-      request: selectedWorkflow ? schedule?.request ?? "" : request.trim(),
+      request: request.trim(),
       name: name.trim(),
       model,
       approvals,
     };
-    if (selectedWorkflow) {
-      chosen.workflow_name = selectedWorkflow.name;
-      chosen.workflow_version = selectedWorkflow.version;
-      chosen.workflow_inputs = workflowInputs;
+    // An order this schedule already settled on is carried, not re-chosen: the
+    // whole schedule is sent back on an edit, and leaving these out would
+    // quietly unpin it.
+    if (schedule?.workflow_name) {
+      chosen.workflow_name = schedule.workflow_name;
+      chosen.workflow_version = schedule.workflow_version ?? undefined;
+      chosen.workflow_inputs = schedule.workflow_inputs;
     }
     if (when === "every") chosen.every_minutes = amount * UNIT_MINUTES[unit];
     if (when === "daily") {
@@ -175,97 +175,9 @@ export function NewScheduleForm({
       aria-label={schedule ? "Edit schedule" : "New schedule"}
     >
       <label>
-        Process
-        <select
-          aria-label="Process"
-          value={workflowKey}
-          onChange={(changed) => {
-            const key = changed.target.value;
-            setWorkflowKey(key);
-            setPreview(null);
-            const workflow = workflows.find((item) => `${item.name}@${item.version}` === key);
-            setWorkflowInputs(
-              workflow
-                ? Object.fromEntries(
-                    workflow.inputs
-                      .filter((input) => input.default !== null && input.default !== undefined)
-                      .map((input) => [input.name, input.default]),
-                  )
-                : {},
-            );
-          }}
-          disabled={disabled || busy}
-        >
-          <option value="" disabled={Boolean(schedule?.workflow_name)}>One-off request</option>
-          {workflows.map((workflow) => (
-            <option
-              key={`${workflow.name}@${workflow.version}`}
-              value={`${workflow.name}@${workflow.version}`}
-              disabled={!workflow.readiness.ready}
-            >
-              {workflow.name} · v{workflow.version}
-              {workflow.readiness.ready ? "" : " · not ready"}
-            </option>
-          ))}
-        </select>
-      </label>
-      {selectedWorkflow ? (
-        <div className="workflow-fields">
-          <p className="note">{selectedWorkflow.description}</p>
-          {selectedWorkflow.inputs.map((input) => (
-            <label key={input.name}>
-              {input.name} {input.required && <span className="hint">required</span>}
-              {input.kind === "BOOLEAN" ? (
-                <input
-                  type="checkbox"
-                  checked={Boolean(workflowInputs[input.name])}
-                  onChange={(changed) => setWorkflowInputs((known) => ({ ...known, [input.name]: changed.target.checked }))}
-                  disabled={disabled || busy}
-                />
-              ) : (
-                <input
-                  type={input.kind === "STRING" ? "text" : "number"}
-                  value={String(workflowInputs[input.name] ?? "")}
-                  onChange={(changed) => setWorkflowInputs((known) => ({
-                    ...known,
-                    [input.name]: input.kind === "STRING" ? changed.target.value : Number(changed.target.value),
-                  }))}
-                  disabled={disabled || busy}
-                />
-              )}
-              {input.description && <span className="hint">{input.description}</span>}
-            </label>
-          ))}
-          <p className="note">
-            Version {selectedWorkflow.version} · {selectedWorkflow.profile.approvals.toLowerCase()} approvals
-            {selectedWorkflow.profile.model ? ` · model ${selectedWorkflow.profile.model}` : " · automatic model routing"}
-          </p>
-          {selectedWorkflow.readiness.issues.map((issue) => <p className="problem" key={issue}>{issue}</p>)}
-          {onDryRun && (
-            <button
-              type="button"
-              disabled={disabled || busy || !workflowReady}
-              onClick={async () => setPreview(await onDryRun(selectedWorkflow, workflowInputs))}
-            >
-              Check dry run
-            </button>
-          )}
-          {preview && <p className="note" role="status">Ready: {preview.steps.length} ordered step(s), no action executed.</p>}
-        </div>
-      ) : (
-        <label>
-          What to ask
-          <textarea
-            value={request}
-            rows={3}
-            placeholder="Summarise what changed in my notes folder yesterday"
-            onChange={(changed) => setRequest(changed.target.value)}
-            disabled={disabled || busy}
-          />
-        </label>
-      )}
-      <label>
-        Name <span className="hint">optional</span>
+        <span className="field-name">
+          Name <span className="hint">optional</span>
+        </span>
         <input
           value={name}
           placeholder="Morning digest"
@@ -358,48 +270,71 @@ export function NewScheduleForm({
         )}
       </fieldset>
 
-      {!selectedWorkflow && <label>
-        Model
-        <select
-          aria-label="Model"
-          value={model}
-          onChange={(changed) => setModel(changed.target.value)}
-          disabled={disabled || busy}
-        >
-          <option value="">Automatic - each kind of work goes where it is routed</option>
-          {model && !listed && <option value={model}>{model} (not in the catalog)</option>}
-          {models.map((entry) => (
-            <option key={entry.name} value={entry.name}>
-              {entry.name} - {entry.model}
-            </option>
-          ))}
-        </select>
-      </label>}
-      {!selectedWorkflow && <p className="note">
-        A free or busy model can be overloaded when the run starts, and the run then fails. For
-        work that matters, choose a paid or local model here. A model that cannot do part of
-        the work - seeing a screen, say - is passed over for that part.
-      </p>}
+      <div className="field-pair">
+        <label>
+          <span className="field-name">
+            Model
+            <Hint label="What choosing a model changes">
+              A free or busy model can be overloaded when the run starts, and the run then
+              fails. For work that matters, choose a paid or local model here. A model that
+              cannot do part of the work - seeing a screen, say - is passed over for that part.
+            </Hint>
+          </span>
+          <select
+            aria-label="Model"
+            value={model}
+            onChange={(changed) => setModel(changed.target.value)}
+            disabled={disabled || busy}
+          >
+            <option value="">Automatic - each kind of work goes where it is routed</option>
+            {model && !listed && <option value={model}>{model} (not in the catalog)</option>}
+            {models.map((entry) => (
+              <option key={entry.name} value={entry.name}>
+                {entry.name} - {entry.model}
+              </option>
+            ))}
+          </select>
+        </label>
 
-      {!selectedWorkflow && <label>
-        Approvals
-        <select
-          aria-label="Approvals"
-          value={approvals}
-          onChange={(changed) => setApprovals(changed.target.value as Approvals)}
+        <label>
+          <span className="field-name">
+            Approvals
+            <Hint label="What each approval setting does">
+              {APPROVAL_CHOICES.map((choice) => (
+                <span key={choice.value}>
+                  <b>{choice.label}.</b> {choice.hint}
+                </span>
+              ))}
+              Runs usually happen with nobody at the keyboard - use Run now to see what it asks
+              for first.
+            </Hint>
+          </span>
+          <select
+            aria-label="Approvals"
+            value={approvals}
+            onChange={(changed) => setApprovals(changed.target.value as Approvals)}
+            disabled={disabled || busy}
+          >
+            {APPROVAL_CHOICES.map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <label>
+        What to ask
+        <textarea
+          value={request}
+          rows={3}
+          placeholder="Summarise what changed in my notes folder yesterday"
+          onChange={(changed) => setRequest(changed.target.value)}
           disabled={disabled || busy}
-        >
-          {APPROVAL_CHOICES.map((choice) => (
-            <option key={choice.value} value={choice.value}>
-              {choice.label}
-            </option>
-          ))}
-        </select>
-      </label>}
-      {!selectedWorkflow && <p className="note">
-        {APPROVAL_CHOICES.find((choice) => choice.value === approvals)?.hint} Runs usually
-        happen with nobody at the keyboard - use Run now to see what it asks for first.
-      </p>}
+        />
+      </label>
+
       <button type="submit" disabled={disabled || busy || !ready}>
         {busy ? "Saving…" : schedule ? "Save changes" : "Schedule"}
       </button>

@@ -27,9 +27,17 @@ activated. Inputs may declare `type`, `required`, `default`, and `description`;
 cost, and wall time. The API exposes readiness and dry-run checks before a
 version is run or scheduled.
 
-Two ship as examples. `inbox-triage` is Phase 10's validation task - read what
-came in, draft the replies, and stop before sending anything. `weekly-report` is
-the shape most workflows have: gather, compute, write up.
+**Nothing ships here.** A fresh installation has no declarations at all, and
+that is the point: a person putting a task on a clock is not choosing a process,
+so a catalog entry they did not write is a question with no answer behind it.
+The window offers no way to pick one either.
+
+A declaration arrives one of two ways. Somebody writes the file - this is that
+path, and it is for whoever is reading this. Or a schedule's own successful runs
+settle into the same order often enough that the platform offers to keep it, on
+that schedule's card, in that schedule's words; confirming writes the file here
+and points the schedule at it. An improvement later is the next version beside
+it, never over it, so going back is always possible.
 
 The same version can run manually or from a time/event schedule. Schedules use
 declared per-step retry, coalesce missed times, and skip overlapping firings.

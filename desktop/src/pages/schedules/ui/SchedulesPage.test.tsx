@@ -39,13 +39,21 @@ function made(overrides: Partial<Schedule> = {}): Schedule {
   };
 }
 
-function scriptedRuntime({ running = true, saved = false, locked = "", existing = [] as unknown[], workflows = [] as Workflow[] } = {}) {
+function scriptedRuntime({
+  running = true,
+  saved = false,
+  locked = "",
+  existing = [] as unknown[],
+  workflows = [] as Workflow[],
+  offered = [] as { id: string; occurrences: number }[],
+} = {}) {
   const state = {
     schedules: [...existing] as Schedule[],
     running,
     saved,
     posted: [] as { path: string; body: unknown }[],
     put: [] as { path: string; body: Record<string, unknown> }[],
+    deleted: [] as string[],
   };
 
   const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
@@ -64,6 +72,27 @@ function scriptedRuntime({ running = true, saved = false, locked = "", existing 
       });
       state.schedules.push(created);
       return json(created);
+    }
+    if (path.startsWith("/api/schedules/") && path.endsWith("/suggestions")) {
+      return json({ available: true, suggestions: offered });
+    }
+    if (method === "POST" && path.startsWith("/api/schedules/") && path.endsWith("/order")) {
+      state.posted.push({ path, body });
+      state.schedules = state.schedules.map((one) => ({
+        ...one,
+        workflow_name: "morning-digest",
+        workflow_version: 1,
+      }));
+      return json(state.schedules[0]);
+    }
+    if (method === "DELETE" && path.endsWith("/order")) {
+      state.deleted.push(path);
+      state.schedules = state.schedules.map((one) => ({
+        ...one,
+        workflow_name: "",
+        workflow_version: null,
+      }));
+      return json(state.schedules[0]);
     }
     if (method === "POST" && path.startsWith("/api/schedules/") && path.endsWith("/run")) {
       state.posted.push({ path, body });
@@ -200,33 +229,110 @@ describe("Scheduled", () => {
     });
     show(client);
 
-    const runs = await screen.findByRole("list", { name: "Recent runs" });
+    // What a glance gets: that it is failing, and when it goes again. The rest
+    // of what these runs did is behind the summary, which says how much there
+    // is to look at.
+    expect(await screen.findByText("1 consecutive failure")).toBeInTheDocument();
+    const summary = screen.getByText("History");
+    const history = summary.closest("details") as HTMLDetailsElement;
+    expect(history.open).toBe(false);
+    expect(screen.getByText(/overlapping runs are skipped/)).not.toBeVisible();
+
+    await userEvent.click(summary);
+
+    expect(history.open).toBe(true);
+    const runs = within(history).getByRole("list", { name: "Recent runs" });
     expect(within(runs).getByText("FAILED")).toBeInTheDocument();
     expect(within(runs).getByText("DONE")).toBeInTheDocument();
     expect(within(runs).getByText("$0.12")).toBeInTheDocument();
-    expect(screen.getByText("1 consecutive failure")).toBeInTheDocument();
+    expect(within(history).getByText(/overlapping runs are skipped/)).toBeVisible();
   });
 
-  it("dry-runs and schedules an exact workflow version with typed inputs", async () => {
-    const { client, state } = scriptedRuntime({ workflows: [workflow] });
+  it("asks for a request and nothing else - no process to choose", async () => {
+    const { client } = scriptedRuntime({ workflows: [workflow] });
     show(client);
 
-    expect(await screen.findByText("weekly-report · v2")).toBeInTheDocument();
-    expect(screen.getByText(/75% success/)).toBeInTheDocument();
     await userEvent.click((await screen.findAllByRole("button", { name: "New schedule" }))[0]);
     const dialog = await screen.findByRole("dialog");
-    await userEvent.selectOptions(within(dialog).getByLabelText("Process"), "weekly-report@2");
-    expect(within(dialog).getByLabelText(/folder/)).toHaveValue("sales");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Check dry run" }));
-    expect(await within(dialog).findByText(/no action executed/)).toBeInTheDocument();
-    await userEvent.type(within(dialog).getByLabelText(/Name/), "Sales workflow");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Schedule" }));
 
-    await waitFor(() => expect(state.posted[0]?.body).toMatchObject({
-      workflow_name: "weekly-report",
-      workflow_version: 2,
-      workflow_inputs: { folder: "sales" },
-    }));
+    expect(within(dialog).getByLabelText("What to ask")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Process")).toBeNull();
+    // Nor is the catalog on the page behind it: a page called Scheduled opens
+    // on what this person scheduled.
+    expect(screen.queryByText("weekly-report · v2")).toBeNull();
+  });
+
+  it("puts what a schedule is first and what it asks for last, and explains on request", async () => {
+    const { client } = scriptedRuntime();
+    show(client);
+
+    await userEvent.click((await screen.findAllByRole("button", { name: "New schedule" }))[0]);
+    const dialog = await screen.findByRole("dialog");
+
+    const order = (element: Element) =>
+      Array.from(dialog.querySelectorAll("input, select, textarea")).indexOf(element);
+    expect(order(within(dialog).getByLabelText(/Name/))).toBe(0);
+    expect(order(within(dialog).getByLabelText("What to ask"))).toBeGreaterThan(
+      order(within(dialog).getByLabelText("Model")),
+    );
+
+    // The two paragraphs that used to stand under these lists are behind the
+    // mark beside them, so the field somebody came to set is not below a page
+    // of prose about routing.
+    // (jsdom loads no stylesheet, so what is asserted is where the words live
+    // rather than whether they are painted: inside the tooltip the mark opens,
+    // not as a paragraph standing in the form.)
+    expect(
+      within(dialog).getByText(/can be overloaded when the run starts/).closest("[role=tooltip]"),
+    ).not.toBeNull();
+    expect(
+      within(dialog).getByRole("button", { name: "What choosing a model changes" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers to keep the order a schedule settled into, and keeps it on one press", async () => {
+    const { client, state } = scriptedRuntime({
+      existing: [made({ runs: 3 })],
+      offered: [{ id: "sg1", occurrences: 3 }],
+    });
+    show(client);
+
+    expect(await screen.findByText(/ran the same way 3 times/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Keep it" }));
+
+    await waitFor(() =>
+      expect(state.posted.at(-1)).toMatchObject({
+        path: "/api/schedules/s1/order",
+        body: { suggestion_id: "sg1" },
+      }),
+    );
+  });
+
+  it("never offers an order to a schedule that has not run", async () => {
+    const { client } = scriptedRuntime({
+      existing: [made({ runs: 0 })],
+      offered: [{ id: "sg1", occurrences: 3 }],
+    });
+    show(client);
+
+    await screen.findByText("Morning digest");
+    expect(screen.queryByText(/ran the same way/)).toBeNull();
+  });
+
+  it("says a schedule runs in a settled order, and goes back on one press", async () => {
+    const { client, state } = scriptedRuntime({
+      existing: [made({ runs: 4, workflow_name: "morning-digest", workflow_version: 1 })],
+    });
+    show(client);
+
+    expect(await screen.findByText(/order it settled into/)).toBeInTheDocument();
+    // Never the declaration's name or its version: what was kept is an order,
+    // and a version number is not a thing a person here decided.
+    expect(screen.queryByText(/morning-digest/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Work it out each time" }));
+
+    await waitFor(() => expect(state.deleted).toContain("/api/schedules/s1/order"));
   });
 
   it("makes a daily schedule on the person's clock and lists it", async () => {

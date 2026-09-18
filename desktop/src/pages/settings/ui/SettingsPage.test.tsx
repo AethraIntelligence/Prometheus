@@ -471,3 +471,36 @@ describe("Settings", () => {
     expect(said[0]).toHaveTextContent("no schema yet");
   });
 });
+
+describe("Settings → Analytics", () => {
+  it("shows the screen the frame handed it in place of its own", async () => {
+    const quiet = new RuntimeClient(BASE, (async () => new Response("{}", { status: 200 })) as never);
+    render(
+      <RuntimeProvider client={quiet}>
+        <SettingsPage panels={{ workforce: <p>the workforce screen</p> }} />
+      </RuntimeProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Workforce" }));
+
+    expect(screen.getByText("the workforce screen")).toBeInTheDocument();
+    // The panel takes the column: the section's own heading is not beside it.
+    expect(screen.queryByRole("heading", { name: "Workforce", level: 1 })).toBeNull();
+  });
+
+  it("keeps the brake one press, on its own section", async () => {
+    const quiet = new RuntimeClient(
+      BASE,
+      (async () => new Response(JSON.stringify({ engaged: false, reason: "", available: true }), { status: 200 })) as never,
+    );
+    render(
+      <RuntimeProvider client={quiet}>
+        <SettingsPage />
+      </RuntimeProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Emergency stop" }));
+
+    expect(await screen.findByRole("button", { name: "Stop all work" })).toBeEnabled();
+  });
+});

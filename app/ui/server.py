@@ -421,6 +421,17 @@ class SaveSuggestion(BaseModel):
     description: str = Field(default="", max_length=500)
 
 
+class PinOrder(BaseModel):
+    """Which of a schedule's own suggestions a person confirmed.
+
+    The id and nothing else: what the declaration is called and which version it
+    becomes are the core's to decide, because nobody typed a name and nobody is
+    shown one.
+    """
+
+    suggestion_id: UUID
+
+
 class Handoff(BaseModel):
     employee: str = Field(min_length=1, max_length=120)
 
@@ -1238,6 +1249,23 @@ def _routes(app: FastAPI) -> None:
     @app.delete("/api/schedules/{schedule_id}")
     async def remove_schedule(request: Request, schedule_id: UUID) -> dict[str, Any]:
         return {"removed": await _settings_change(_service(request).delete_schedule(schedule_id))}
+
+    @app.get("/api/schedules/{schedule_id}/suggestions")
+    async def schedule_suggestions(request: Request, schedule_id: UUID) -> dict[str, Any]:
+        """What this schedule's own runs keep repeating, if anything."""
+        return await _settings_change(_service(request).list_schedule_suggestions(schedule_id))
+
+    @app.post("/api/schedules/{schedule_id}/order", status_code=201)
+    async def pin_schedule_order(
+        request: Request, schedule_id: UUID, body: PinOrder
+    ) -> dict[str, Any]:
+        return await _workforce(
+            _service(request).pin_schedule_order(schedule_id, body.suggestion_id)
+        )
+
+    @app.delete("/api/schedules/{schedule_id}/order")
+    async def unpin_schedule_order(request: Request, schedule_id: UUID) -> dict[str, Any]:
+        return await _settings_change(_service(request).unpin_schedule_order(schedule_id))
 
     @app.post("/api/schedules/{schedule_id}/run", status_code=201)
     async def run_schedule(request: Request, schedule_id: UUID) -> dict[str, Any]:

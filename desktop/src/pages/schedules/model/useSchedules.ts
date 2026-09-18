@@ -12,7 +12,6 @@ import { useCallback, useEffect, useState } from "react";
 import { providerApi, type ModelEntry } from "../../../entities/provider";
 import { scheduleApi, type Schedule } from "../../../entities/schedule";
 import { settingsApi } from "../../../entities/setting";
-import { workflowApi, type Workflow, type WorkflowDryRun, type WorkflowRun } from "../../../entities/workflow";
 import { changeSettings } from "../../../features/change-setting";
 import {
   createSchedule,
@@ -43,15 +42,14 @@ export interface SchedulesState {
   schedules: Schedule[];
   /** Models a run may prefer: the catalog's, minus what cannot write text. */
   models: ModelEntry[];
-  workflows: Workflow[];
   create: (schedule: NewSchedule) => Promise<boolean>;
   update: (id: string, schedule: NewSchedule) => Promise<boolean>;
   toggle: (schedule: Schedule) => Promise<void>;
   remove: (schedule: Schedule) => Promise<void>;
   runNow: (schedule: Schedule) => Promise<string | null>;
   turnOn: () => Promise<void>;
-  dryRun: (workflow: Workflow, inputs?: Record<string, unknown>) => Promise<WorkflowDryRun | null>;
-  runWorkflow: (workflow: Workflow, inputs?: Record<string, unknown>) => Promise<WorkflowRun | null>;
+  /** Read the list again - a schedule changed somewhere other than this page. */
+  refresh: () => Promise<void>;
 }
 
 export function useSchedules(client: RuntimeClient): SchedulesState {
@@ -62,7 +60,6 @@ export function useSchedules(client: RuntimeClient): SchedulesState {
   const [problem, setProblem] = useState("");
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [models, setModels] = useState<ModelEntry[]>([]);
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
 
   const fail = useCallback((error: unknown) => {
     const said = describe(error);
@@ -85,12 +82,6 @@ export function useSchedules(client: RuntimeClient): SchedulesState {
     } catch {
       // No catalog: the form offers the automatic choice only.
       setModels([]);
-    }
-    try {
-      const catalog = await workflowApi.all(client);
-      setWorkflows(catalog.workflows ?? []);
-    } catch {
-      setWorkflows([]);
     }
     try {
       const settings = await settingsApi.all(client);
@@ -132,7 +123,6 @@ export function useSchedules(client: RuntimeClient): SchedulesState {
     problem,
     schedules,
     models,
-    workflows,
     create: async (schedule) =>
       (await run(() => createSchedule(client, schedule))) !== undefined,
     update: async (id, schedule) =>
@@ -148,9 +138,6 @@ export function useSchedules(client: RuntimeClient): SchedulesState {
     turnOn: async () => {
       await run(() => changeSettings(client, { [SWITCH]: true }));
     },
-    dryRun: async (workflow, inputs = {}) =>
-      (await run(() => workflowApi.dryRun(client, workflow.name, workflow.version, inputs))) ?? null,
-    runWorkflow: async (workflow, inputs = {}) =>
-      (await run(() => workflowApi.run(client, workflow.name, workflow.version, inputs))) ?? null,
+    refresh: reload,
   };
 }
