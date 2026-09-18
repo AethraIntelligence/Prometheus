@@ -176,6 +176,21 @@ async def test_memory_usage_is_bounded() -> None:
     assert "memory limit" in result.error
 
 
+async def test_a_program_stopped_inside_its_allocation_still_says_which_limit() -> None:
+    """The half of the memory cap that no watcher can see.
+
+    Where the address-space rlimit is enforced the child never grows past the
+    cap: the allocation raises and it exits, faster than anything polling its
+    resident size. The refusal is the same refusal, and used to read as "exited
+    with 1" on exactly the machines that enforce the limit properly.
+    """
+    result = await tool(memory_mb=64).execute({"code": "raise MemoryError"})
+
+    assert not result.success
+    assert "memory limit" in result.error
+    assert result.output["exit_code"] != 0
+
+
 @pytest.mark.skipif(_SKIP_REAL_SANDBOX, reason="Docker sandbox unavailable locally")
 async def test_the_os_sandbox_cannot_read_a_file_outside_its_scratch_directory(
     tmp_path: Path,

@@ -437,6 +437,12 @@ class CodeExecutionTool:
 
             if process.returncode == -signal.SIGXFSZ:
                 exceeded = "disk"
+        if not exceeded and _hit_memory_cap(
+            process.returncode,
+            str(output["stderr"]),
+            host_limits=getattr(self._sandbox, "uses_host_limits", True),
+        ):
+            exceeded = "memory"
         if exceeded:
             return ToolResult(
                 success=False,
@@ -474,6 +480,41 @@ async def _read_limited(
         if len(chunk) > max(remaining, 0):
             clipped = True
     return bytes(kept), clipped
+
+
+def _hit_memory_cap(returncode: int | None, stderr: str, *, host_limits: bool) -> bool:
+    """Whether the memory cap is what ended this program, when nobody watched it end.
+
+    The watcher above catches a program whose resident size climbs past the cap
+    while it is still running, which is what happens where the address-space
+    rlimit is advisory. Where it is enforced - Linux, which is to say every
+    machine that runs this in CI - the cap is hit inside the allocation instead:
+    the child never grows, it raises `MemoryError` and exits before a poll every
+    twenty milliseconds could see anything. Same limit, same refusal, and the
+    platform used to report one of them as "exceeded the 64 MB memory limit" and
+    the other as "exited with 1".
+
+    Two signals, one per boundary. A container over its `--memory` is killed by
+    the kernel, which is a SIGKILL this process did not send - the two that it
+    does send are already accounted for above. A program under a host rlimit
+    leaves the exception's *type* on the last line of the traceback, which is
+    CPython's contract for an uncaught exception rather than a message anybody
+    wrote. Reading it is the narrowest signal available: the alternative is to
+    run the author's program inside a wrapper that exits with a code of our own,
+    which puts a frame nobody wrote into every traceback and gives generated
+    code an exit status that means something to the platform.
+    """
+    if returncode is None or returncode == 0:
+        return False
+    # A kill this process did not send. The two it does send are accounted for
+    # by the caller before asking, so what is left is the kernel or the
+    # container runtime, and over a cap that is what they do.
+    if returncode in (-9, 137):
+        return True
+    if not host_limits:
+        return False
+    last = next((line for line in reversed(stderr.splitlines()) if line.strip()), "")
+    return last == "MemoryError" or last.startswith("MemoryError:")
 
 
 async def _enforce_runtime_limits(
