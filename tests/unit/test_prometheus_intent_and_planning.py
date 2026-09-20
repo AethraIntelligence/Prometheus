@@ -315,7 +315,7 @@ async def test_replanning_is_told_what_the_last_attempt_missed() -> None:
         objective(), [definition()], revision=2, feedback=("only eleven were found",)
     )
 
-    prompt = llm.last_request.messages[0].content
+    prompt = "\n".join(message.content for message in llm.last_request.messages)
     assert "only eleven were found" in prompt
     assert "A previous plan did not satisfy the objective" in prompt
 

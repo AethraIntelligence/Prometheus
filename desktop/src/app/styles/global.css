@@ -1029,6 +1029,31 @@ html[data-shell="mac"] .app.rail-closed .head .icobtn {
   font-size: 13px;
 }
 
+/* What can be done with the open file: one button, its menu under it. */
+.file-acts {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.file-acts-more {
+  gap: 5px;
+}
+
+.file-acts-more svg {
+  width: 11px;
+  height: 11px;
+  color: var(--grey);
+}
+
+.file-said {
+  font-size: 12px;
+  color: var(--grey);
+  white-space: nowrap;
+}
+
 .preview-title {
   display: flex;
   flex-direction: column;
@@ -1338,51 +1363,84 @@ button.worked:hover {
   height: 12px;
 }
 
-/* ── approval gate ─────────────────────── */
+/* ── approval gate ─────────────────────────
+ *
+ * A card in the conversation, not a warning banner: the same white surface,
+ * hairline and radius as everything else the column holds, with the one amber
+ * thing being the chip that says what this is. The whole card used to be amber,
+ * which made the quietest gate shout louder than the answer it interrupted.
+ */
 
 .gate {
-  border: 1px solid var(--wait-line);
-  background: var(--wait-bg);
-  border-radius: 14px;
-  padding: 14px;
+  border: 1px solid var(--hair);
+  background: var(--bg);
+  border-radius: 16px;
+  padding: 15px 16px 13px;
   margin: 4px 0 14px;
 }
 
 .gate.ended {
-  opacity: 0.85;
+  opacity: 0.7;
 }
 
 .gate-top {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 6px;
+  gap: 6px;
+  margin-bottom: 9px;
+  padding: 3px 9px 3px 8px;
+  border-radius: 980px;
+  background: var(--wait-bg);
   color: var(--wait);
 }
 
 .gate-top svg {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
   flex: none;
 }
 
 .gate-top b {
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.gate-top .risk {
+  font-weight: 700;
 }
 
 .gate h4 {
-  margin: 0 0 4px;
-  font-size: 14.5px;
-  font-weight: 500;
+  margin: 0 0 5px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 
 .gate p {
-  margin: 0 0 12px;
+  margin: 0 0 10px;
   font-size: 13.5px;
-  color: var(--wait-text);
+  color: var(--grey);
   line-height: 1.5;
+}
+
+.gate p.note {
+  font-size: 12.5px;
+  color: var(--grey-2);
+}
+
+.gate p.note code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--panel);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.gate p.stale {
+  color: var(--wait-text);
 }
 
 .gate-details {
@@ -1393,10 +1451,10 @@ button.worked:hover {
   font-family: var(--mono);
   font-size: 12px;
   letter-spacing: 0;
-  background: color-mix(in srgb, var(--bg) 60%, transparent);
-  border: 1px solid var(--wait-line);
-  border-radius: 8px;
-  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  padding: 9px 11px;
 }
 
 .gate-details > div {
@@ -1404,7 +1462,7 @@ button.worked:hover {
 }
 
 .gate-details dt {
-  color: var(--wait-text);
+  color: var(--grey);
 }
 
 .gate-details dd {
@@ -1421,15 +1479,15 @@ button.worked:hover {
 }
 
 .gate-effects > div {
-  padding: 9px 10px;
-  border: 1px solid var(--wait-line);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  padding: 9px 11px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--panel-2);
 }
 
 .gate-effects dt {
   margin-bottom: 3px;
-  color: var(--wait-text);
+  color: var(--grey-2);
   font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
@@ -1439,6 +1497,7 @@ button.worked:hover {
   margin: 0;
   font-size: 12px;
   line-height: 1.4;
+  color: var(--text);
 }
 
 .gate h4.folded {
@@ -1451,26 +1510,16 @@ button.worked:hover {
 .gate-acts {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   flex-wrap: wrap;
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hair);
 }
 
-.gate-scope {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--wait-text);
-}
-
-.gate-scope select {
-  max-width: 220px;
-  border: 1px solid var(--wait-line);
-  border-radius: 7px;
-  padding: 5px 7px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
+.gate-acts .btn {
+  padding: 7px 15px;
+  font-size: 13px;
 }
 
 .gate-more {
@@ -1478,15 +1527,13 @@ button.worked:hover {
   background: none;
   border: 0;
   padding: 4px 2px;
-  font-size: 13px;
-  color: var(--wait-text);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  font-size: 12.5px;
+  color: var(--grey);
   cursor: pointer;
 }
 
 .gate-more:hover {
-  color: var(--wait);
+  color: var(--text);
 }
 
 /* ── buttons ───────────────────────────── */

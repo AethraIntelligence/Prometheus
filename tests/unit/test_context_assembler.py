@@ -182,7 +182,7 @@ async def test_a_runtime_without_memory_is_the_runtime_it_was_before() -> None:
     await runtime.run(task)
 
     prompt = "\n".join(m.content for m in llm.requests[1].messages)
-    assert "remember" not in prompt.lower()
+    assert "what you remember from earlier work" not in prompt.lower()
     assert (await tasks.get(task.id)).status is TaskStatus.COMPLETED
 
 

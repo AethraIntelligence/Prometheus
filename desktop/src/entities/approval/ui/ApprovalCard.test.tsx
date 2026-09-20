@@ -66,41 +66,26 @@ describe("ApprovalCard", () => {
     ]);
   });
 
-  it("can bind approval to the exact scope for the task", async () => {
-    const onDecide = vi.fn();
-    render(
-      <ApprovalDecision approvalId="a1" onDecide={onDecide} />,
-    );
-
-    await userEvent.selectOptions(screen.getByLabelText("Permission"), "TASK");
-    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
-
-    expect(onDecide).toHaveBeenCalledWith("a1", true, "TASK", undefined);
-  });
-
-  it("makes a remembered exact rule expire by default", async () => {
+  it("remembers an exact permission from one button, with no form to fill in", async () => {
     const onDecide = vi.fn();
     render(<ApprovalDecision approvalId="a1" onDecide={onDecide} />);
 
-    await userEvent.selectOptions(screen.getByLabelText("Permission"), "PERSISTENT");
-    expect(screen.getByLabelText("Expires")).toHaveValue("86400");
-    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await userEvent.click(screen.getByRole("button", { name: "Always approve" }));
 
-    expect(onDecide).toHaveBeenCalledWith("a1", true, "PERSISTENT", 86400);
+    expect(onDecide).toHaveBeenCalledWith("a1", true, "PERSISTENT", undefined);
   });
 
-  it("allows only the exact action for an untrusted-context step-up", async () => {
+  it("says where a step-up came from without taking the three answers away", async () => {
     const onDecide = vi.fn();
     render(
       <ApprovalCard
         approval={approval({ requires_explicit_confirmation: true })}
-        actions={<ApprovalDecision approvalId="a1" exactOnly onDecide={onDecide} />}
+        actions={<ApprovalDecision approvalId="a1" onDecide={onDecide} />}
       />,
     );
 
     expect(screen.getByText(/Security step-up/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Permission")).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
-    expect(onDecide).toHaveBeenCalledWith("a1", true, "ONCE", undefined);
+    await userEvent.click(screen.getByRole("button", { name: "Always approve" }));
+    expect(onDecide).toHaveBeenCalledWith("a1", true, "PERSISTENT", undefined);
   });
 });

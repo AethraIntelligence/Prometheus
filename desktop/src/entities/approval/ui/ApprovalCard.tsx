@@ -50,8 +50,8 @@ export function ApprovalCard({ approval, actions }: Props) {
       {approval.status_explanation && <p className="note">{approval.status_explanation}</p>}
       {approval.requires_explicit_confirmation && (
         <p className="note">
-          Security step-up: approve only this exact action. Auto approval and saved permissions
-          do not apply because untrusted content preceded it.
+          Security step-up: this action was proposed after reading external text, which can
+          carry instructions of its own. Read the exact action before saying yes.
         </p>
       )}
       {approval.scope && (

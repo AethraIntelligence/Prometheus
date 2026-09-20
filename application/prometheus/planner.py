@@ -48,6 +48,7 @@ from uuid import UUID, uuid4
 
 import structlog
 
+from application.present import dated
 from application.prometheus.workforce import describe
 from application.prompts import render
 from domain.capabilities.models import Capability, CapabilityRequirement
@@ -96,7 +97,7 @@ class ObjectivePlanner:
         )
         response = await self._llm.generate(
             LLMRequest(
-                messages=(Message.user(prompt),),
+                messages=(*dated(), Message.user(prompt)),
                 temperature=0.0,
                 response_format={"type": "json_object"},
             )

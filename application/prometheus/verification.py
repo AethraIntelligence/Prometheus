@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import structlog
 
+from application.present import dated
 from application.prompts import render
 from domain.capabilities.models import CapabilityRequirement
 from domain.employees.verification import MIN_JUDGEMENT_QUALITY, Verdict
@@ -88,7 +89,7 @@ class ObjectiveVerifier:
         )
         response = await self._llm.generate(
             LLMRequest(
-                messages=(Message.user(prompt),),
+                messages=(*dated(), Message.user(prompt)),
                 temperature=0.0,
                 response_format={"type": "json_object"},
             )

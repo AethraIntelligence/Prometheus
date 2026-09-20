@@ -54,6 +54,7 @@ import structlog
 
 from application.employee_runtime.approvals import ApprovalGate, StatusSink
 from application.employee_runtime.transcript import Transcript
+from application.present import situation
 from domain.audit.protocols import AuditLog, AuditRecord
 from domain.capabilities.models import CapabilityRequirement
 from domain.computer.interfaces import InterfaceLevel, describe, select
@@ -80,7 +81,7 @@ from domain.tasks.progress import NullProgress, ProgressEvent, ProgressKind, Pro
 from domain.tasks.task import Task, TaskStatus
 from domain.tools.artifacts import written_path
 from domain.tools.models import ToolResult
-from domain.tools.protocols import Tool, ToolRegistry
+from domain.tools.protocols import ArgumentSettler, Tool, ToolRegistry
 from domain.tools.refusals import REFUSAL_LIMIT, REFUSED, refusal_counts, withheld
 from domain.tools.results import ContextResult, for_context
 from domain.tools.telemetry import ToolCallLog, ToolCallRecord
@@ -193,7 +194,7 @@ class Executor:
                 return StepOutcome(
                     transcript=transcript,
                     finished=True,
-                    answer=self._best_answer(transcript),
+                    answer=await self._closing_answer(transcript, definition, exceeded),
                     stopped_by=exceeded,
                 )
 
@@ -391,6 +392,14 @@ class Executor:
             # being told so is information it can act on.
             log.info("tool.refused", tool=call.name, employee=definition.name, reason=str(error))
             return ToolResult.failure(str(error)), True
+
+        if isinstance(tool, ArgumentSettler):
+            # Before the gate, so that what a person is asked about and what a
+            # remembered permission names is the call that will actually run.
+            try:
+                call = replace(call, arguments=tool.settle(call.arguments))
+            except Exception as error:  # settling is a courtesy, never a gate
+                log.warning("tool.settle_failed", tool=call.name, error=str(error))
 
         gate = await self._approvals.check(
             tool,
@@ -731,6 +740,54 @@ class Executor:
                 return message.content
         return ""
 
+    async def _closing_answer(
+        self,
+        transcript: Transcript,
+        definition: EmployeeDefinition,
+        exceeded: LimitKind,
+    ) -> str:
+        """One last word from an employee that ran out of budget mid-search.
+
+        A model working through tools says nothing between them: every turn is
+        a tool call with empty content. So a run that spent its whole budget
+        reading exactly the right pages reported *nothing* - `_best_answer`
+        looked for prose that was never written, and the manager was told "the
+        task produced no output" about a transcript full of findings. The work
+        was done and then thrown away at the last step.
+
+        So the budget ends the acting, not the answering: one call, no tools
+        offered, from the transcript that already exists. It is bounded by
+        construction - a text completion can call nothing and change nothing -
+        and it is the cheapest step of the run, against the alternative of
+        having paid for eleven and kept none.
+
+        A failure here is not a failure of the task: whatever was said before
+        stands, exactly as it did when this was the only answer.
+        """
+        said = self._best_answer(transcript)
+        if said:
+            return said
+        try:
+            response = await self._llm.generate(
+                LLMRequest(
+                    messages=(
+                        *transcript.messages_for_model(),
+                        Message.user(
+                            f"You have reached the {exceeded.value.lower()} limit for this "
+                            "task and cannot act any further. Do not call any tool. Write "
+                            "your final answer now, from what you have already found: what "
+                            "you established and where it came from, and what is still "
+                            "uncertain or missing. If you found nothing usable, say that."
+                        ),
+                    ),
+                    temperature=definition.model_profile.temperature,
+                )
+            )
+        except Exception as error:
+            log.warning("task.closing_answer_failed", error=str(error))
+            return ""
+        return response.content.strip()
+
     @staticmethod
     def opening_messages(
         task: Task,
@@ -744,6 +801,11 @@ class Executor:
     ) -> tuple[Message, ...]:
         """The transcript a fresh run starts from."""
         system = system_prompt or f"You are a {definition.role.title}."
+        # What day it is, before anything else this employee is told: sent to
+        # find "the latest", a model answers with the latest it remembers,
+        # which is where its training data ends, and nothing in the transcript
+        # would contradict it (`application/present.py`).
+        system += f"\n\n# Today\n\n{situation()}"
         system += f"\n\n# Data boundary\n\n{PLATFORM_POLICY}"
         if definition.goals:
             system += "\n\nYour standing goals:\n" + "\n".join(

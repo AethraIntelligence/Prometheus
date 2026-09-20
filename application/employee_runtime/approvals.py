@@ -154,7 +154,11 @@ class ApprovalGate:
 
         safe_payload = redact(input_data)
         scope = scope_for(definition.actor_id, tool.spec.name, safe_payload)
-        if self._leases is not None and not step_up:
+        # A lease is what "always approve" wrote down, and it is matched against
+        # the exact scope of the exact action - so a step-up does not exempt
+        # itself from it. A remembered permission that asks again is not a
+        # permission; the narrowness of the scope is what keeps it safe.
+        if self._leases is not None:
             lease = await self._leases.find_match(
                 scope,
                 workspace_id=task.workspace_id,

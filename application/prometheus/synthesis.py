@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import structlog
 
+from application.present import dated
 from application.prometheus.language import DEFAULT_LANGUAGE, instruction
 from application.prometheus.supervisor import TaskOutcome
 from application.prompts import render
@@ -53,6 +54,7 @@ class Synthesizer:
         response = await self._llm.generate(
             LLMRequest(
                 messages=(
+                    *dated(),
                     *instruction(self._language),
                     Message.user(
                         render(

@@ -14,8 +14,9 @@ other, so the tools tell the gate which one this is.
 from __future__ import annotations
 
 import difflib
+import re
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from domain.approvals.gate import RiskAssessment
 from domain.capabilities.models import Capability
@@ -30,6 +31,45 @@ from infrastructure.tools.base import BaseTool
 #: Enough for a long document, small enough that one read cannot fill the model's
 #: context by itself. A bigger file is read in parts, which is what `offset` is for.
 DEFAULT_MAX_BYTES = 100_000
+
+#: A heading, a fenced block, a bullet list, a numbered list, an emphasis or a
+#: link - the marks that make a file Markdown rather than a file that happens to
+#: contain a dash.
+_MARKDOWN_MARKS = (
+    re.compile(r"^#{1,6} \S", re.MULTILINE),
+    re.compile(r"^```", re.MULTILINE),
+    re.compile(r"^\s*[-*+] \S", re.MULTILINE),
+    re.compile(r"^\s*\d+\. \S", re.MULTILINE),
+    re.compile(r"\*\*\S.*?\*\*"),
+    re.compile(r"\[[^\]]+\]\([^)]+\)"),
+)
+
+#: What a name has to be for the Markdown in it to be worth honouring. A model
+#: naming a file `.csv` or `.json` means it; `.txt` and no extension at all are
+#: what it writes when it has not thought about the question.
+_UNDECIDED_SUFFIXES = frozenset({"", ".txt"})
+
+
+def markdown_name(path: str, content: str) -> str:
+    """The name to write Markdown under, which is the one that ends in `.md`.
+
+    The model chooses the file name, and it chose `.txt` for a document of
+    headings and bullet lists - so the window showed a rendered document as raw
+    asterisks, and the file opened in a text editor rather than a reader. The
+    alternative was a sentence in the tool's description asking it to think of
+    the extension, which is a policy in a prompt: a suggestion a model weighs
+    (§67). Here it is a fact about what was written.
+
+    Only an undecided name is changed, and only for content that is actually
+    Markdown; the result reports the real path, so nothing downstream is left
+    holding a name that does not exist.
+    """
+    suffix = PurePosixPath(path).suffix.lower()
+    if suffix not in _UNDECIDED_SUFFIXES:
+        return path
+    if sum(1 for mark in _MARKDOWN_MARKS if mark.search(content)) < 2:
+        return path
+    return path[: -len(suffix)] + ".md" if suffix else path + ".md"
 
 
 class FileRoot:
@@ -170,13 +210,14 @@ class FileReadTool(FileRootTool):
 
 
 class FileWriteTool(FileRootTool):
-    """Implements `domain.tools.protocols.Tool` and `RiskAssessor`."""
+    """Implements `Tool`, `RiskAssessor`, `EffectPreviewer` and `ArgumentSettler`."""
 
     def __init__(self, root: FileRoot) -> None:
         super().__init__(
             ToolSpec.of(
                 "fs.write",
-                "Write a text file in the working directory. Overwriting an existing "
+                "Write a text file in the working directory. Markdown content is "
+                "written as a '.md' file. Overwriting an existing "
                 "file needs the user's confirmation.",
                 Param("path", description="File to write, relative to the working directory."),
                 Param("content", description="The full text to write."),
@@ -185,6 +226,11 @@ class FileWriteTool(FileRootTool):
             ),
             root,
         )
+
+    def settle(self, input_data: dict[str, object]) -> dict[str, object]:
+        path = str(input_data.get("path", ""))
+        settled = markdown_name(path, str(input_data.get("content", "")))
+        return input_data if settled == path else {**input_data, "path": settled}
 
     def assess(self, input_data: dict[str, object]) -> RiskAssessment | None:
         try:
@@ -218,7 +264,9 @@ class FileWriteTool(FileRootTool):
         }
 
     async def run(self, path: str, content: str) -> ToolResult:
-        target = self._root.resolve(path)
+        # Settled here as well as before the gate: a caller that goes straight
+        # to the tool gets the same file as one that came through a run.
+        target = self._root.resolve(markdown_name(path, content))
         target.parent.mkdir(parents=True, exist_ok=True)
         existed = target.exists()
         target.write_text(content, encoding="utf-8")

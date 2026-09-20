@@ -141,6 +141,6 @@ async def test_a_resolved_conflict_reaches_the_answer_as_a_decision() -> None:
     result = await manager.handle_objective(await manager.receive("How many were there?"))
 
     assert result.status is ObjectiveStatus.DONE
-    synthesis = llm.requests[-1].messages[0].content
+    synthesis = "\n".join(message.content for message in llm.requests[-1].messages)
     assert "already settled" in synthesis
     assert "Eleven stands" in synthesis

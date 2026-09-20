@@ -90,6 +90,48 @@ async def test_writing_a_new_file_creates_missing_directories(root: FileRoot) ->
     assert result.output["overwritten"] is False
 
 
+MARKDOWN = "# AI news\n\n- **GPT-4.5** shipped\n- Grok 3 shipped\n"
+
+
+async def test_markdown_asked_for_as_txt_is_written_as_markdown(root: FileRoot) -> None:
+    """The model names the file, and it names documents `.txt` out of habit.
+
+    The window then draws a document of headings and bullets as raw asterisks,
+    and the system opens it in a text editor. The name follows the content, and
+    the result says which file was actually written.
+    """
+    result = await FileWriteTool(root).execute({"path": "news/ai.txt", "content": MARKDOWN})
+
+    assert result.success
+    assert result.output["path"] == "news/ai.md"
+    assert (root.root / "news/ai.md").read_text() == MARKDOWN
+    assert not (root.root / "news/ai.txt").exists()
+
+
+async def test_a_name_the_model_meant_is_left_alone(root: FileRoot) -> None:
+    """Only an undecided name is settled, and only for content that is Markdown."""
+    tool = FileWriteTool(root)
+
+    await tool.execute({"path": "rows.csv", "content": MARKDOWN})
+    await tool.execute({"path": "plain.txt", "content": "just a sentence, with a dash - here"})
+
+    assert (root.root / "rows.csv").exists()
+    assert (root.root / "plain.txt").exists()
+
+
+def test_what_is_asked_about_is_the_file_that_will_be_written(root: FileRoot) -> None:
+    """Settling happens before the gate, so the approval names the real file."""
+    tool = FileWriteTool(root)
+
+    settled = tool.settle({"path": "notes.txt", "content": MARKDOWN})
+
+    assert settled["path"] == "notes.md"
+    assert tool.preview(settled)["path"] == "notes.md"
+    # `notes.txt` exists in the fixture; `notes.md` does not, and the risk
+    # follows the file that is actually at stake.
+    assert tool.assess(settled).risk_level is RiskLevel.LOW
+
+
 async def test_writing_a_new_file_is_low_risk_and_overwriting_is_not(root: FileRoot) -> None:
     """The same tool, two different actions. Only one of them needs a person."""
     tool = FileWriteTool(root)

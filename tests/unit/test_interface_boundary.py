@@ -499,7 +499,14 @@ async def test_a_scoped_decision_creates_visible_revocable_authority() -> None:
     assert await service.list_capability_leases() == []
 
 
-async def test_a_security_step_up_cannot_be_saved_as_reusable_authority() -> None:
+async def test_always_approve_is_remembered_even_on_a_security_step_up() -> None:
+    """"Always" is a permission, and a permission that asks again is not one.
+
+    The step-up says where the action came from and raises what it costs to
+    say yes; it does not decide for the person who has said yes on purpose.
+    What keeps that safe is the narrowness of what gets written down - this
+    employee, this tool, this resource.
+    """
     question = ApprovalRequest.create(
         uuid4(),
         "fs.write(path='report.md')",
@@ -513,14 +520,15 @@ async def test_a_security_step_up_cannot_be_saved_as_reusable_authority() -> Non
     await approvals.save(Approval(request=question))
     service, _ = build(waiter=waiter, approvals=approvals, leases=leases)
 
-    with pytest.raises(ApprovalsDisabledError, match="only this exact action"):
-        await service.decide_approval(
-            question.id,
-            approved=True,
-            grant=ApprovalGrant.PERSISTENT,
-        )
+    answered = await service.decide_approval(
+        question.id,
+        approved=True,
+        grant=ApprovalGrant.PERSISTENT,
+    )
 
-    assert await service.list_capability_leases() == []
+    assert answered["grant"] == "PERSISTENT"
+    [remembered] = await service.list_capability_leases()
+    assert remembered["resource"] == "path:report.md"
 
 
 async def test_what_is_waiting_says_which_questions_a_run_is_still_parked_on() -> None:

@@ -1,16 +1,23 @@
 /**
- * The two buttons. Neither answer is the quiet one: Approve carries the colour
- * of the card it sits on and Reject a full outline, so a person scanning the
- * card sees two choices rather than one choice and a way out.
+ * The three answers, as three buttons.
+ *
+ * A person reading a gate has three things to say and one of them is "yes, and
+ * stop asking me this". That used to be a select of grants and a second select
+ * of expiries sitting in front of the buttons - a form to fill in before the
+ * question could be answered, for a decision that is made in a second. The
+ * grants have not changed; what changed is that the window no longer asks the
+ * person to compose one.
+ *
+ * "Always" is `PERSISTENT` with no expiry, because a permission that quietly
+ * lapses is a permission that starts asking again without anybody choosing
+ * that. It stays exact - this employee, this tool, this resource - and Settings
+ * -> Permissions is where it is taken back.
  */
-
-import { useState } from "react";
 
 import type { ApprovalGrant } from "../../../entities/approval";
 
 interface Props {
   approvalId: string;
-  exactOnly?: boolean;
   disabled?: boolean;
   onDecide: (
     approvalId: string,
@@ -20,42 +27,25 @@ interface Props {
   ) => void | Promise<void>;
 }
 
-export function ApprovalDecision({ approvalId, exactOnly = false, disabled = false, onDecide }: Props) {
-  const [grant, setGrant] = useState<ApprovalGrant>("ONCE");
-  const [duration, setDuration] = useState("86400");
-  const durationSeconds = grant === "PERSISTENT" && duration ? Number(duration) : undefined;
+export function ApprovalDecision({ approvalId, disabled = false, onDecide }: Props) {
   return (
     <>
-      <label className="gate-scope">
-        Permission
-        <select
-          value={exactOnly ? "ONCE" : grant}
-          disabled={exactOnly || disabled}
-          onChange={(event) => setGrant(event.target.value as ApprovalGrant)}
-        >
-          <option value="ONCE">Only this action</option>
-          <option value="TASK">This exact action for this task</option>
-          <option value="PERSISTENT">Remember this exact rule</option>
-        </select>
-      </label>
-      {!exactOnly && grant === "PERSISTENT" && (
-        <label className="gate-scope">
-          Expires
-          <select disabled={disabled} value={duration} onChange={(event) => setDuration(event.target.value)}>
-            <option value="3600">In 1 hour</option>
-            <option value="86400">In 24 hours</option>
-            <option value="2592000">In 30 days</option>
-            <option value="">Never</option>
-          </select>
-        </label>
-      )}
       <button
         type="button"
-        className="btn btn-wait"
+        className="btn btn-ink"
         disabled={disabled}
-        onClick={() => void onDecide(approvalId, true, exactOnly ? "ONCE" : grant, durationSeconds)}
+        onClick={() => void onDecide(approvalId, true, "ONCE", undefined)}
       >
         Approve
+      </button>
+      <button
+        type="button"
+        className="btn btn-line"
+        disabled={disabled}
+        title="Approve this exact action and stop asking about it"
+        onClick={() => void onDecide(approvalId, true, "PERSISTENT", undefined)}
+      >
+        Always approve
       </button>
       <button
         type="button"

@@ -50,7 +50,7 @@ function DecisionDetail({
     <section className="approval-detail" aria-label="Approval details">
       <ApprovalCard
         approval={approval}
-        actions={approval.actionable ? <ApprovalDecision approvalId={approval.id} exactOnly={approval.requires_explicit_confirmation} disabled={disabled} onDecide={onDecide} /> : undefined}
+        actions={approval.actionable ? <ApprovalDecision approvalId={approval.id} disabled={disabled} onDecide={onDecide} /> : undefined}
       />
       {disabled && <p className="work-muted">Saving your decision…</p>}
       <dl className="approval-context">

@@ -34,6 +34,24 @@ class EffectPreviewer(Protocol):
     def preview(self, input_data: dict[str, Any]) -> dict[str, Any]: ...
 
 
+@runtime_checkable
+class ArgumentSettler(Protocol):
+    """An optional last word on a call's arguments, before anybody reads them.
+
+    A tool is already forgiving about how a model calls it - types coerced,
+    unknown arguments dropped. This is the same forgiveness one step earlier,
+    for the cases where the corrected call has to be the one the person is
+    shown and the one a permission is remembered for: the risk assessment, the
+    approval's scope, the audit line and the effect must all name the file that
+    is actually written, not the one first asked for.
+
+    Settling is pure and happens before any permission is decided, so it can
+    only ever change what is asked about - never whether it is asked.
+    """
+
+    def settle(self, input_data: dict[str, Any]) -> dict[str, Any]: ...
+
+
 class ToolRegistry(Protocol):
     """Permissions are enforced here, not in the caller.
 

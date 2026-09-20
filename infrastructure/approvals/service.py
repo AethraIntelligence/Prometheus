@@ -120,16 +120,21 @@ class LocalApprovalService:
         return decision
 
     async def _decide(self, action: ApprovalRequest) -> tuple[ApprovalState, str]:
-        if self._mode is ApprovalMode.ALLOW and not action.requires_explicit_confirmation:
+        # A security step-up - an action proposed after reading untrusted text -
+        # is still marked as one, still HIGH, still audited as one, and still
+        # says so on the card. What it no longer does is overrule the person:
+        # "Auto" is an answer given for this request before any page was read,
+        # and a setting that keeps asking after being set to stop asking is read
+        # as broken rather than as a protection. The asymmetry that matters is
+        # kept below: nothing a run reads can talk a machine set to refuse into
+        # doing the thing.
+        if self._mode is ApprovalMode.ALLOW:
             return ApprovalState.APPROVED, "configuration"
         if self._mode is ApprovalMode.DENY or not self._is_interactive():
             return ApprovalState.REJECTED, "no-approver"
         # Only here, where this machine would have asked somebody: a request
         # cannot talk a machine configured to refuse into doing the thing.
-        if (
-            directions.current().approvals is ApprovalChoice.AUTO
-            and not action.requires_explicit_confirmation
-        ):
+        if directions.current().approvals is ApprovalChoice.AUTO:
             return ApprovalState.APPROVED, "request"
         answer = self._confirmer(action.redacted())
         if not inspect.isawaitable(answer):

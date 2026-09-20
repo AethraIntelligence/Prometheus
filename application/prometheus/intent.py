@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import structlog
 
+from application.present import dated
 from application.prometheus.language import DEFAULT_LANGUAGE, instruction
 from application.prometheus.workforce import describe
 from application.prompts import render
@@ -84,6 +85,7 @@ class IntentReader:
                     # Only the `answer` field: the rest of this reading is
                     # machinery, and a restatement in another language would
                     # reach the planner rather than the person.
+                    *dated(),
                     *instruction(self._language, about='the "answer" field'),
                     Message.user(prompt),
                 ),
@@ -201,6 +203,7 @@ class IntentReader:
         response = await self._llm.generate(
             LLMRequest(
                 messages=(
+                    *dated(),
                     *instruction(self._language, about="your reply"),
                     Message.user(
                         render("prometheus_reply", request=request, workforce=describe(workforce))

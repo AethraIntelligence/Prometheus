@@ -5,6 +5,7 @@ from __future__ import annotations
 from application.employee_runtime.executor import Executor
 from application.employee_runtime.transcript import Transcript
 from domain.employees.limits import ExecutionLimits, LimitKind
+from domain.errors import ProviderError
 from domain.llm.models import Message, ToolCallRequest, Usage
 from domain.tasks.task import Task
 from domain.tools.models import ToolResult
@@ -220,7 +221,62 @@ async def test_the_step_budget_stops_a_loop() -> None:
 
     assert outcome.stopped_by is LimitKind.STEPS
     assert outcome.transcript.steps == 3
-    assert llm.call_count == 3
+    # Three acting steps, and one closing call that acts on nothing: the budget
+    # ends the acting, not the answering.
+    assert llm.call_count == 4
+    assert llm.requests[-1].tools == ()
+
+
+async def test_a_spent_budget_still_answers_from_what_was_found() -> None:
+    """Eleven steps of good research used to be reported as "no output".
+
+    A model working through tools writes no prose between them, so the last
+    assistant message a cut-short run had was a tool call with empty content.
+    The findings were in the transcript and nobody was ever shown them.
+    """
+    from tests.fakes.tools import FakeTool
+
+    task = Task.create("Find out what is being discussed")
+    employee = definition(tools=frozenset({"fs.read"}))
+    llm = FakeLLM(
+        [tool_reply(ToolCallRequest(id=f"c{i}", name="fs.read", arguments={})) for i in range(2)]
+        + [reply("Two sources agree it is agentic AI; the third was unreadable.")]
+    )
+
+    outcome = await Executor(
+        llm,
+        InMemoryToolRegistry([FakeTool("fs.read")]),
+        limits=ExecutionLimits(max_steps=2),
+    ).run(task, employee, opening(task, employee))
+
+    assert outcome.stopped_by is LimitKind.STEPS
+    assert outcome.answer == "Two sources agree it is agentic AI; the third was unreadable."
+    closing = llm.requests[-1].messages[-1].content
+    assert "Do not call any tool" in closing
+    assert llm.requests[-1].tools == (), "it cannot act; it is out of budget"
+
+
+async def test_a_closing_answer_that_cannot_be_written_costs_the_run_nothing() -> None:
+    """The last word is an improvement on the report, never a condition of it."""
+    from tests.fakes.tools import FakeTool
+
+    task = Task.create("Find out what is being discussed")
+    employee = definition(tools=frozenset({"fs.read"}))
+    llm = FakeLLM(
+        [
+            tool_reply(ToolCallRequest(id="c1", name="fs.read", arguments={})),
+            ProviderError("the provider is unreachable"),
+        ]
+    )
+
+    outcome = await Executor(
+        llm,
+        InMemoryToolRegistry([FakeTool("fs.read")]),
+        limits=ExecutionLimits(max_steps=1),
+    ).run(task, employee, opening(task, employee))
+
+    assert outcome.stopped_by is LimitKind.STEPS
+    assert outcome.answer == ""
 
 
 async def test_the_cost_budget_stops_an_expensive_loop() -> None:

@@ -4,12 +4,14 @@
  * Beside rather than over it: the answer that names the file is the reason to
  * look at the file, and a preview that covered it would make the person choose
  * between the two. The file is shown the way it would be read - a PDF as pages,
- * Markdown rendered, text as text - and anything else is one button away from
- * the application the system opens it with.
+ * Markdown rendered, text as text - and what can be done with it is in the one
+ * menu in its header, which offers only what this kind of file and this surface
+ * can actually do.
  */
 
 import { kindOf, type Artifact } from "../../../entities/conversation";
-import { canOpenFiles, openFile, useRuntime } from "../../../shared/api";
+import { FileActions } from "../../../features/use-artifact";
+import { canOpenFiles, useRuntime } from "../../../shared/api";
 import { CloseIcon, Markdown } from "../../../shared/ui";
 import { useFileContent } from "../model/useFileContent";
 
@@ -31,15 +33,7 @@ export function FilePreview({ objectiveId, artifact, onClose }: Props) {
           <b>{artifact.name}</b>
           <span>{artifact.path}</span>
         </span>
-        {canOpenFiles() && artifact.location && (
-          <button
-            type="button"
-            className="btn btn-line"
-            onClick={() => void openFile(artifact.location)}
-          >
-            Open
-          </button>
-        )}
+        <FileActions artifact={artifact} text={content.text} />
         <button type="button" className="icobtn" aria-label="Close preview" onClick={onClose}>
           <CloseIcon />
         </button>

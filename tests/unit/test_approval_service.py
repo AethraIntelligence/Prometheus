@@ -75,7 +75,16 @@ async def test_allow_mode_is_still_recorded(repository) -> None:
 
 
 @pytest.mark.parametrize("automatic", ["configuration", "request"])
-async def test_security_step_up_is_never_approved_automatically(repository, automatic) -> None:
+async def test_a_security_step_up_is_marked_but_does_not_overrule_the_person(
+    repository, automatic
+) -> None:
+    """Auto was answered before any page was read, and it is still an answer.
+
+    The step-up keeps what it is for - HIGH, its own policy source, its own
+    sentence on the card - and stops there. A choice the person made that goes
+    on asking anyway reads as a broken setting, which teaches them to stop
+    reading the question.
+    """
     asked: list[ApprovalRequest] = []
     service = LocalApprovalService(
         repository,
@@ -88,7 +97,20 @@ async def test_security_step_up_is_never_approved_automatically(repository, auto
     with given(Directions(approvals=ApprovalChoice.AUTO)):
         assert await service.request(action) is ApprovalState.APPROVED
 
-    assert asked == [action.redacted()]
+    assert asked == []
+    stored = await repository.get(action.id)
+    assert stored.resolved_by == automatic
+
+
+async def test_a_step_up_is_still_refused_where_the_machine_refuses(repository) -> None:
+    """The asymmetry the step-up rests on: a run can never talk a machine into yes."""
+    service = LocalApprovalService(
+        repository, mode=ApprovalMode.DENY, confirmer=lambda item: True
+    )
+    action = replace(request(), requires_explicit_confirmation=True)
+
+    with given(Directions(approvals=ApprovalChoice.AUTO)):
+        assert await service.request(action) is ApprovalState.REJECTED
 
 
 async def test_the_question_is_written_down_before_it_is_answered(repository) -> None:

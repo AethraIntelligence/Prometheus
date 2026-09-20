@@ -120,11 +120,7 @@ export function ChatPage({
           key={approval.id}
           approval={approval}
           actions={approval.live ? (
-            <ApprovalDecision
-              approvalId={approval.id}
-              exactOnly={approval.requires_explicit_confirmation}
-              onDecide={decide}
-            />
+            <ApprovalDecision approvalId={approval.id} onDecide={decide} />
           ) : undefined}
         />
       ))}

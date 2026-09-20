@@ -47,7 +47,7 @@ def test_the_shipped_researcher_loads_from_its_declaration_alone() -> None:
     assert researcher.role.title == "Research Specialist"
     assert researcher.goals
     assert researcher.memory_scope is MemoryScope.EMPLOYEE_PRIVATE
-    assert researcher.limits.max_steps == 12
+    assert researcher.limits.max_steps == 20
     assert researcher.system_prompt.startswith("You are a Research Specialist")
     # Phase 4: it searches and reads pages, and has no tool it does not need.
     assert "web.search" in researcher.allowed_tools

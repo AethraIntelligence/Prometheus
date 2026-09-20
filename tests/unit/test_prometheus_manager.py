@@ -308,7 +308,7 @@ async def test_the_planner_is_told_what_the_direct_answer_missed() -> None:
 
     await manager.handle_objective(await manager.receive("Leave me a summary file"))
 
-    planning = llm.requests[2].messages[0].content
+    planning = "\n".join(message.content for message in llm.requests[2].messages)
     assert "no file was written" in planning
 
 
@@ -527,7 +527,7 @@ async def test_a_direct_answer_is_verified_against_having_done_nothing() -> None
     objective = await manager.receive("Read both and leave me a comparison file")
     await manager.handle_objective(objective)
 
-    checking = llm.requests[-1].messages[0].content
+    checking = "\n".join(message.content for message in llm.requests[-1].messages)
     assert "What was actually done" in checking
     assert NOTHING_WAS_DONE in checking
 

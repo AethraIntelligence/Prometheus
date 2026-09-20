@@ -36,11 +36,17 @@ def outcome() -> TaskOutcome:
 
 
 def system_messages(llm: FakeLLM) -> list[str]:
+    """The system messages about language, which are the ones under test.
+
+    Every stage also states what day it is (`application/present.py`), and that
+    is not a language instruction: it is sent whatever the setting says, and a
+    test that counted it would fail whenever anything else was added beside it.
+    """
     return [
         message.content
         for request in llm.requests
         for message in request.messages
-        if message.role is Role.SYSTEM
+        if message.role is Role.SYSTEM and not message.content.startswith("Today is")
     ]
 
 
