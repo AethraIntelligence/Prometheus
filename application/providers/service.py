@@ -182,7 +182,7 @@ class ProviderService:
         connection = await self._require(connection_name, workspace_id)
         if self._discover is None:
             return InstalledModels()
-        return await self._discover(connection.kind, connection.base_url)
+        return await self._discover(connection.kind, connection.base_url, connection.secret_name)
 
     async def context_of(
         self, connection_name: str, model: str, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID
@@ -191,7 +191,9 @@ class ProviderService:
         if self._inspect is None or not connection_name:
             return None
         connection = await self._require(connection_name, workspace_id)
-        return await self._inspect.context_tokens(connection.kind, connection.base_url, model)
+        return await self._inspect.context_tokens(
+            connection.kind, connection.base_url, model, connection.secret_name
+        )
 
     async def add_model(
         self, entry: ModelEntry, workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID

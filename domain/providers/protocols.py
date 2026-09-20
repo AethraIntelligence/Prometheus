@@ -71,9 +71,16 @@ class ModelDiscovery(Protocol):
     Given the kind as well as the address, because which question to ask - and
     whether there is one - depends on what is at the other end. Asking every
     address the one runner's question is what this replaced.
+
+    `secret_name` is the *name* of the credential the connection was given, not
+    its value: a service that needs a key to list what it offers is asked with
+    one resolved inside the adapter at the moment of the call, and no secret
+    passes through this layer (ADR 0004).
     """
 
-    async def __call__(self, kind: str, base_url: str) -> InstalledModels: ...
+    async def __call__(
+        self, kind: str, base_url: str, secret_name: str = ""
+    ) -> InstalledModels: ...
 
 
 class ModelInspector(Protocol):
@@ -86,4 +93,6 @@ class ModelInspector(Protocol):
     None means it could not be told, and the caller keeps its default.
     """
 
-    async def context_tokens(self, kind: str, base_url: str, model: str) -> int | None: ...
+    async def context_tokens(
+        self, kind: str, base_url: str, model: str, secret_name: str = ""
+    ) -> int | None: ...

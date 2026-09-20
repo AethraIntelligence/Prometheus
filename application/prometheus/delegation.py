@@ -54,9 +54,11 @@ from uuid import UUID
 
 import structlog
 
-from application.prometheus.workforce import describe
+from application.prometheus.workforce import describe, profile
 from application.prompts import render
 from domain.capabilities.models import CapabilityRequirement
+from domain.decisions.models import ChoiceQuestion, Option
+from domain.decisions.protocols import Decider
 from domain.employees.definition import EmployeeDefinition
 from domain.employees.protocols import EmployeeRegistry
 from domain.errors import DelegationError
@@ -73,6 +75,15 @@ from domain.workforce.readiness import WorkforceReadiness
 from domain.workforce.routing import MIN_DELEGATION_QUALITY, Requirement, holders
 
 log = structlog.get_logger(__name__)
+
+#: How sure a decision model must be, measured, before its choice is taken
+#: without the text model's. Below it - or unmeasured - the question goes the
+#: long way, because who does the work commits a whole employee run.
+DELEGATION_CONFIDENCE = 0.6
+
+#: A typed choice lists every candidate as an option; past this many, the
+#: question is asked the long way. Well within what either backend takes.
+MAX_OPTIONS = 26
 
 
 def manager_actor(workforce: list[EmployeeDefinition]) -> Actor:
@@ -114,9 +125,15 @@ class CapabilityDelegator:
         *,
         requirement: Requirement | None = None,
         readiness: WorkforceReadiness | None = None,
+        decider: Decider | None = None,
     ) -> None:
+        """`decider` is asked first where one is given - the composition root
+        gives one that answers only through a model built to decide - and its
+        choice stands only when it is measured as sure (`DELEGATION_CONFIDENCE`).
+        Anything else is asked of `llm` as before."""
         self._llm = llm
         self._registry = registry
+        self._decider = decider
         self._requirement = requirement
         # None where nothing can tell - a test's workforce, a surface built
         # without tools. Everybody is then taken as able, which is how
@@ -412,9 +429,49 @@ class CapabilityDelegator:
         log.info("prometheus.no_one_declares", task_id=str(task.id), needed=needed)
         return fallback
 
+    async def _decide(
+        self, task: Task, candidates: list[EmployeeDefinition]
+    ) -> tuple[EmployeeDefinition, str] | None:
+        """The decision model's choice, when there is one and it is measured as sure."""
+        if self._decider is None or len(candidates) > MAX_OPTIONS:
+            return None
+        try:
+            answer = await self._decider.choose(
+                ChoiceQuestion(
+                    state=task.goal,
+                    question=render("prometheus_delegation_choice").strip(),
+                    options=tuple(Option(d.name, profile(d)) for d in candidates),
+                    purpose="delegation",
+                )
+            )
+        except Exception as error:  # a second opinion that fails is not a failed hand-off
+            log.warning("prometheus.decider_failed", task_id=str(task.id), error=str(error))
+            return None
+        by_name = {d.name: d for d in candidates}
+        chosen = by_name.get(answer.key or "")
+        sure = answer.confidence is not None and answer.confidence >= DELEGATION_CONFIDENCE
+        log.info(
+            "prometheus.delegation_decided",
+            task_id=str(task.id),
+            employee=answer.key,
+            confidence=answer.confidence,
+            source=answer.source,
+            taken=bool(chosen and sure),
+        )
+        if chosen is None or not sure or answer.confidence is None:
+            return None
+        return chosen, _measured(answer.confidence)
+
     async def _ask(
         self, task: Task, candidates: list[EmployeeDefinition]
     ) -> tuple[EmployeeDefinition, str, SharedContext, bool]:
+        decided = await self._decide(task, candidates)
+        if decided is not None:
+            # Nothing is handed down besides the name, and on purpose: the
+            # prose path's facts and constraints are written from the task text
+            # and the cards alone, so they restate what the employee is given.
+            picked, why = decided
+            return picked, why, SharedContext(), False
         prompt = render("prometheus_delegation", goal=task.goal, candidates=describe(candidates))
         response = await self._llm.generate(
             LLMRequest(
@@ -453,6 +510,10 @@ class CapabilityDelegator:
             ),
             False,
         )
+
+
+def _measured(confidence: float) -> str:
+    return f"chosen by a decision model, {confidence:.0%} sure"
 
 
 def _why_only(requirement: Requirement | None) -> str:

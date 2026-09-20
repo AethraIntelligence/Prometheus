@@ -26,6 +26,9 @@ class Capability(StrEnum):
     #: retrieval asks the router for a model rather than naming one (ADR 0003).
     EMBEDDING = "EMBEDDING"
     EMAIL = "EMAIL"
+    #: Answers typed questions - choose, score, true or false - and writes no
+    #: text. An entry offering only this is never handed a prompt to complete.
+    DECISION = "DECISION"
 
 
 @dataclass(frozen=True, slots=True)

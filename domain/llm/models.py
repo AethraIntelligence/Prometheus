@@ -102,6 +102,10 @@ class TaskKind(StrEnum):
     #: Turning text into a vector. A kind of work rather than a kind of model,
     #: for the same reason the others are: the catalog says which entry does it.
     EMBEDDING = "EMBEDDING"
+    #: A typed question with a closed set of answers (`domain/decisions/`).
+    #: Its own kind so a person can send it somewhere other than extraction -
+    #: a small fast model, or a model built to decide rather than to write.
+    DECISION = "DECISION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +164,18 @@ class LLMRequest:
     temperature: float = 0.2
     max_tokens: int | None = None
     response_format: dict[str, Any] | None = None
+    #: How many alternatives to report per generated token, where the provider
+    #: can. None asks for nothing, which is every request but a decision's.
+    top_logprobs: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TokenLogprob:
+    """One generated token and the likeliest alternatives at that position."""
+
+    token: str
+    logprob: float
+    alternatives: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,3 +185,6 @@ class LLMResponse:
     tool_calls: tuple[ToolCallRequest, ...] = ()
     usage: Usage = field(default_factory=Usage)
     finish_reason: FinishReason = FinishReason.STOP
+    #: Filled only when asked for and the provider reported them. Empty means
+    #: "not measured", never "improbable".
+    logprobs: tuple[TokenLogprob, ...] = ()

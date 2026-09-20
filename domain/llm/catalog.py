@@ -39,6 +39,10 @@ class Privacy(StrEnum):
     LOCAL = "LOCAL"
     REMOTE = "REMOTE"
 
+#: Capabilities that describe a model which does not complete prompts. An
+#: entry offering nothing else is kept out of every piece of text work.
+NON_TEXT = frozenset({Capability.EMBEDDING, Capability.DECISION})
+
 #: What an entry is assumed to take when nobody said and nothing could be asked.
 DEFAULT_CONTEXT_TOKENS = 8_192
 
@@ -95,14 +99,21 @@ class ModelEntry:
         return Capability.EMBEDDING in self.capabilities
 
     @property
+    def decides(self) -> bool:
+        """Answers typed questions without writing text (`domain/decisions/`)."""
+        return Capability.DECISION in self.capabilities
+
+    @property
     def generates_text(self) -> bool:
-        """False for an entry that only turns text into vectors.
+        """False for an entry that only turns text into vectors, or only decides.
 
         Such an entry satisfies any requirement that names no capability - and
         the manager's own stages name none - so without this a chat request was
-        sent to `nomic-embed-text`, which answered "does not support chat".
+        sent to `nomic-embed-text`, which answered "does not support chat". A
+        model built to decide is the same case: it takes a question and options,
+        and a plan prompt sent to it would come back as an error.
         """
-        return not self.capabilities or self.capabilities != frozenset({Capability.EMBEDDING})
+        return not self.capabilities or not self.capabilities <= NON_TEXT
 
     def cost_of(self, prompt_tokens: int, output_tokens: int) -> float:
         return (

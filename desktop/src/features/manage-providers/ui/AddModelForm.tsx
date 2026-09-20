@@ -9,11 +9,22 @@
  * on the disk - with a line saying it is not answering, because nothing picked
  * from it will run until it is. A blank text field with no reason was what a
  * stopped runner used to look like, and it read as "this machine has nothing".
+ *
+ * What a model may be picked for follows the connection: a service that only
+ * answers typed decisions gets that capability and none of the text ones,
+ * because the set that fits is known from the kind and a wrong one here is a
+ * model the router either never offers or offers for work it cannot do.
  */
 
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { Connection, InstalledModels } from "../../../entities/provider";
+
+/** What a text model is usually for; the starting ticks for every other kind. */
+const TEXT_DEFAULTS = ["TEXT_REASONING", "TOOL_CALLING"];
+
+/** A model that answers typed decisions and writes nothing. */
+const DECISION_DEFAULTS = ["DECISION"];
 
 export interface ModelSubmission {
   name: string;
@@ -32,7 +43,13 @@ interface Props {
   disabled?: boolean;
 }
 
-export function AddModelForm({ connections, installed, onAdd, known, disabled }: Props) {
+export function AddModelForm({
+  connections,
+  installed,
+  onAdd,
+  known,
+  disabled,
+}: Props) {
   const [name, setName] = useState("");
   // As in the connection form: the list arrives after the first render, so the
   // choice falls back to the first one rather than being captured from nothing.
@@ -45,11 +62,19 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
   // runner that was not up a moment ago.
   const [attempt, setAttempt] = useState(0);
   const choices = found?.models ?? [];
-  const [capabilities, setCapabilities] = useState<string[]>(["TEXT_REASONING", "TOOL_CALLING"]);
+  const [capabilities, setCapabilities] = useState<string[]>(TEXT_DEFAULTS);
   const [privacy, setPrivacy] = useState<"" | "LOCAL" | "REMOTE">("");
   const [busy, setBusy] = useState(false);
-  const inferredPrivacy =
-    connections.find((item) => item.name === connection)?.kind === "local" ? "LOCAL" : "REMOTE";
+  const kind = connections.find((item) => item.name === connection)?.kind;
+  const inferredPrivacy = kind === "local" ? "LOCAL" : "REMOTE";
+
+  // Follows the connection until somebody ticks a box themselves, which is
+  // what `touched` records: a person's choice is not undone by a re-render.
+  const [touched, setTouched] = useState(false);
+  useEffect(() => {
+    if (!touched)
+      setCapabilities(kind === "typesafe" ? DECISION_DEFAULTS : TEXT_DEFAULTS);
+  }, [kind, touched]);
 
   useEffect(() => {
     let current = true;
@@ -95,12 +120,14 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
             ? `${runner} has no models yet. Pull one, then check again.`
             : "";
 
-  const toggle = (value: string) =>
+  const toggle = (value: string) => {
+    setTouched(true);
     setCapabilities((current) =>
       current.includes(value)
         ? current.filter((item) => item !== value)
         : [...current, value],
     );
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -122,7 +149,11 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
   };
 
   return (
-    <form className="add-integration" onSubmit={submit} aria-label="Add a model">
+    <form
+      className="add-integration"
+      onSubmit={submit}
+      aria-label="Add a model"
+    >
       <label>
         Entry name
         <input
@@ -153,7 +184,9 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
         Prompt location
         <select
           value={privacy || inferredPrivacy}
-          onChange={(event) => setPrivacy(event.target.value as "LOCAL" | "REMOTE")}
+          onChange={(event) =>
+            setPrivacy(event.target.value as "LOCAL" | "REMOTE")
+          }
           disabled={disabled || busy}
         >
           <option value="LOCAL">Stays on this machine</option>
@@ -213,7 +246,10 @@ export function AddModelForm({ connections, installed, onAdd, known, disabled }:
           </label>
         ))}
       </fieldset>
-      <button type="submit" disabled={disabled || busy || !name.trim() || !model.trim()}>
+      <button
+        type="submit"
+        disabled={disabled || busy || !name.trim() || !model.trim()}
+      >
         {busy ? "Adding…" : "Add model"}
       </button>
     </form>

@@ -923,7 +923,11 @@ def conversation(
 
 
 def message(
-    item: Objective, *, thinking: bool = False, artifacts: list[dict[str, Any]] | None = None
+    item: Objective,
+    *,
+    thinking: bool = False,
+    artifacts: list[dict[str, Any]] | None = None,
+    memory_used: bool = False,
 ) -> dict[str, Any]:
     """One turn of a conversation: what was asked, and what came back.
 
@@ -935,6 +939,11 @@ def message(
 
     `artifacts` are the files the work left behind (`artifacts.py`), so a turn
     can show the file and not only a sentence saying it was written.
+
+    `memory_used` is whether this turn was given any memory at all, so an
+    interface can offer to explain the recollection only where there is one:
+    the detail stays a second request, and a turn that recalled nothing says
+    nothing rather than saying it emptily.
     """
     answer = item.result
     return {
@@ -944,6 +953,7 @@ def message(
         "answered": answer is not None,
         "directions": directions(item.directions),
         "artifacts": artifacts or [],
+        "memory_used": memory_used,
     }
 
 
@@ -1207,6 +1217,7 @@ def model_entry(entry: ModelEntry, *, used_for: tuple[str, ...] = ()) -> dict[st
         # embedding and a chat model for everything else, and never the reverse.
         "embeds": entry.embeds,
         "generates_text": entry.generates_text,
+        "decides": entry.decides,
         "used_for": list(used_for),
     }
 

@@ -139,6 +139,44 @@ def test_an_answer_says_which_memories_it_was_given_and_why(
     assert client.get(f"/api/objectives/{uuid4()}/memory").status_code == 404
 
 
+def test_a_thread_says_which_turns_were_given_a_memory(
+    settings: Settings, client: TestClient
+) -> None:
+    """The offer to explain a recollection belongs only to answers that had one.
+
+    Read for the whole thread at once, so the detail stays a second request:
+    opening "Memory used" to be told there was none is the bug this answers.
+    """
+    conversation = Conversation.create("Invoices")
+    recalled = Objective.create("Where are the invoices?", conversation_id=conversation.id)
+    alone = Objective.create("Hello", conversation_id=conversation.id)
+    item = MemoryItem.create(
+        "Invoices live in finance/2026", scope=MemoryScope.WORKSPACE, kind=MemoryKind.SEMANTIC
+    )
+
+    async def seed(container):
+        await container.conversation_repository.save(conversation)
+        await container.objective_repository.save(recalled)
+        await container.objective_repository.save(alone)
+        await container.memory.remember(item)
+        await container.memory_uses.record(
+            [
+                MemoryUse(
+                    memory_id=item.id,
+                    objective_id=recalled.id,
+                    reader="manager",
+                    reason='It mentions "invoices"; it belongs to this workspace.',
+                )
+            ]
+        )
+
+    run(settings, seed)
+
+    thread = client.get(f"/api/conversations/{conversation.id}").json()
+    marked = {message["id"]: message["memory_used"] for message in thread["messages"]}
+    assert marked == {str(recalled.id): True, str(alone.id): False}
+
+
 def test_a_thread_brief_lists_decisions_and_open_questions(
     settings: Settings, client: TestClient
 ) -> None:

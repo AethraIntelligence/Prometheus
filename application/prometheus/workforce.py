@@ -33,6 +33,11 @@ def describe(definitions: list[EmployeeDefinition]) -> str:
     return "\n\n".join(_card(definition) for definition in definitions)
 
 
+def profile(definition: EmployeeDefinition) -> str:
+    """One card without its heading, for a question whose option already names them."""
+    return _card(definition).split("\n", 1)[1]
+
+
 def _card(definition: EmployeeDefinition) -> str:
     lines = [f"## {definition.name}", f"Role: {definition.role.title}"]
     if definition.role.description:

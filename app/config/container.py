@@ -16,6 +16,7 @@ from app.config.general import FileSettingsEditor
 from app.config.settings import Settings, get_settings
 from application.computer.screen_reader import LLMScreenReader
 from application.conversations.session import SessionMemory
+from application.decisions.text import TextDecider
 from application.employee_runtime.approvals import ApprovalGate
 from application.employee_runtime.executor import Executor
 from application.employee_runtime.planner import Planner
@@ -57,11 +58,14 @@ from application.workforce.profiles import WorkforceProfiles
 from application.workforce.readiness import ReadinessService
 from application.workspaces.service import WorkspaceService
 from domain.approvals.protocols import ApprovalWaiter
+from domain.decisions.protocols import Decider
 from domain.employees.definition import EmployeeDefinition
 from domain.errors import PrometheusError
+from domain.workforce.routing import MIN_DELEGATION_QUALITY
 from infrastructure.container import Container
+from infrastructure.decisions.routed import RoutedDecider
 from infrastructure.knowledge.extraction import Extractors
-from infrastructure.llm.discovery import LocalModelDiscovery
+from infrastructure.llm.discovery import ConnectionModelDiscovery
 from infrastructure.llm.guide import load_guide
 from infrastructure.llm.providers import KINDS
 from infrastructure.mcp.connector import cached_connector, mcp_connector
@@ -316,7 +320,7 @@ def build_manager(container: Container) -> PrometheusManager:
         intent=IntentReader(
             container.llm_for(*IntentReader.routing()),
             language=language,
-            triage=container.llm_for(*IntentReader.routing()),
+            triage=build_decider(container),
         ),
         planner=ObjectivePlanner(container.llm_for(*ObjectivePlanner.routing())),
         supervisor=Supervisor(
@@ -325,6 +329,9 @@ def build_manager(container: Container) -> PrometheusManager:
                 container.llm_for(*CapabilityDelegator.routing()),
                 registry,
                 readiness=build_readiness(container),
+                decider=build_decider(
+                    container, text=False, min_quality=MIN_DELEGATION_QUALITY
+                ),
             ),
             progress=container.progress,
             escalation=_RoutedEscalation(container),
@@ -350,6 +357,25 @@ def build_manager(container: Container) -> PrometheusManager:
             else None
         ),
         traces=container.traces,
+    )
+
+
+def build_decider(
+    container: Container, *, text: bool = True, min_quality: float = 0.0
+) -> Decider:
+    """Typed decisions, answered by whatever `decision` is routed to.
+
+    `text=False` answers only through a model built to decide, for a caller
+    that asks a text model its own way. The catalog is read through the
+    container on every call, because a person changing the route or adding a
+    model replaces it (`use_catalog`).
+    """
+    return RoutedDecider(
+        TextDecider(container.llm_for(*TextDecider.routing())) if text else None,
+        catalog=lambda: container.model_catalog,
+        typed=lambda choice: container.llm_factory.for_decisions(choice),
+        local_only=bool(getattr(container.settings, "local_models_only", False)),
+        min_quality=min_quality,
     )
 
 
@@ -789,7 +815,7 @@ def build_providers(container: Container) -> ProviderService:
         if not container.catalog_source.is_overridden:
             container.use_catalog(await container.catalog_source.load())
 
-    discovery = LocalModelDiscovery()
+    discovery = ConnectionModelDiscovery(secrets=container.secret_resolver)
     return ProviderService(
         container.connections,
         container.catalog_repository,

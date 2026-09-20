@@ -16,7 +16,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { watchObjective, type ActivityEvent } from "../../../entities/activity";
-import { approvalApi, type Approval, type ApprovalGrant } from "../../../entities/approval";
+import {
+  approvalApi,
+  type Approval,
+  type ApprovalGrant,
+} from "../../../entities/approval";
 import {
   NO_DIRECTIONS,
   conversationApi,
@@ -146,7 +150,9 @@ export function useChat(
         // An embedding model cannot answer anybody. Which entries can is the
         // catalog's own declaration, read rather than guessed at.
         setModels(
-          (catalog.models ?? []).filter((entry) => entry.capabilities.includes("TEXT_REASONING")),
+          (catalog.models ?? []).filter((entry) =>
+            entry.capabilities.includes("TEXT_REASONING"),
+          ),
         );
       } catch {
         // Without a list the chip is not shown and the router chooses, which is
@@ -206,7 +212,10 @@ export function useChat(
     unwatch.current?.();
     watching.current = objectiveId;
     unwatch.current = watchObjective(client, objectiveId, (event) => {
-      setTrails((seen) => ({ ...seen, [objectiveId]: [...(seen[objectiveId] ?? []), event] }));
+      setTrails((seen) => ({
+        ...seen,
+        [objectiveId]: [...(seen[objectiveId] ?? []), event],
+      }));
       // The answer is written to the store by the runtime, not carried in the
       // stream. The final event says when it is worth reading again.
       if (event.kind === "RESULT" && event.objective_id === objectiveId) {
@@ -256,7 +265,6 @@ export function useChat(
           const opened = await conversationApi.open(client, "", newKind);
           current = { ...opened, messages: [] };
           adopt(current);
-          told.current.onOpened?.(opened.id);
           fresh = true;
         }
         const into = current.id;
@@ -270,9 +278,19 @@ export function useChat(
           fresh ? directions : { ...directions, folder: "" },
         );
         setThread((now) =>
-          now && now.id === into ? { ...now, messages: [...now.messages, message] } : now,
+          now && now.id === into
+            ? { ...now, messages: [...now.messages, message] }
+            : now,
         );
-        if (fresh) void reread(into);
+        // The frame hears about a new thread only once its first request is
+        // in. It answers by naming this thread, and a frame that remounts the
+        // page on that name would otherwise throw away the request being sent
+        // and reload a thread the server does not yet have a turn for - which
+        // left the window on the empty greeting with the thread in the list.
+        if (fresh) {
+          told.current.onOpened?.(into);
+          void reread(into);
+        }
         told.current.onChanged?.();
       } catch (error) {
         fail(error);
@@ -309,26 +327,32 @@ export function useChat(
 
       const threadId = thread.id;
       if (next.approvals !== previousApprovals) {
-        void conversationApi.setApprovals(client, threadId, next.approvals).catch((error) => {
-          if (shown.current === threadId) {
-            setDirections((current) =>
-              current.approvals === next.approvals
-                ? { ...current, approvals: previousApprovals }
-                : current,
-            );
-          }
-          fail(error);
-        });
+        void conversationApi
+          .setApprovals(client, threadId, next.approvals)
+          .catch((error) => {
+            if (shown.current === threadId) {
+              setDirections((current) =>
+                current.approvals === next.approvals
+                  ? { ...current, approvals: previousApprovals }
+                  : current,
+              );
+            }
+            fail(error);
+          });
       }
       if (next.model !== previousModel) {
-        void conversationApi.setModel(client, threadId, next.model).catch((error) => {
-          if (shown.current === threadId) {
-            setDirections((current) =>
-              current.model === next.model ? { ...current, model: previousModel } : current,
-            );
-          }
-          fail(error);
-        });
+        void conversationApi
+          .setModel(client, threadId, next.model)
+          .catch((error) => {
+            if (shown.current === threadId) {
+              setDirections((current) =>
+                current.model === next.model
+                  ? { ...current, model: previousModel }
+                  : current,
+              );
+            }
+            fail(error);
+          });
       }
     },
     [client, directions.approvals, directions.model, thread, fail],
@@ -351,7 +375,8 @@ export function useChat(
   // where nothing is open, which is the only place it can still be answered.
   const threadId = thread?.id ?? null;
   const asked = useMemo(
-    () => approvals.filter((item) => (item.conversation_id ?? null) === threadId),
+    () =>
+      approvals.filter((item) => (item.conversation_id ?? null) === threadId),
     [approvals, threadId],
   );
 
@@ -363,8 +388,17 @@ export function useChat(
       durationSeconds?: number,
     ) => {
       try {
-        await decideApproval(client, approvalId, approved, "", grant, durationSeconds);
-        setApprovals((waiting) => waiting.filter((item) => item.id !== approvalId));
+        await decideApproval(
+          client,
+          approvalId,
+          approved,
+          "",
+          grant,
+          durationSeconds,
+        );
+        setApprovals((waiting) =>
+          waiting.filter((item) => item.id !== approvalId),
+        );
       } catch (error) {
         fail(error);
       }

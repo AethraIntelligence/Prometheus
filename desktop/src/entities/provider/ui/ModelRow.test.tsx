@@ -18,6 +18,7 @@ function entry(overrides: Partial<ModelEntry> = {}): ModelEntry {
     dimensions: 0,
     embeds: false,
     generates_text: true,
+    decides: false,
     used_for: ["EXECUTION"],
     ...overrides,
   };

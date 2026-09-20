@@ -52,6 +52,12 @@ def current_profile(
                 routes[kind.value] = "unroutable"
                 continue
             routes[kind.value] = f"{choice.entry} ({choice.provider}/{choice.model})"
+    decider = _decision_model(catalog)
+    if decider is not None and not baseline:
+        # The router only ever answers with a text model, and decisions routed
+        # to a model built to decide would otherwise profile as if they were
+        # not: two different machines under one fingerprint.
+        routes[TaskKind.DECISION.value] = f"{decider.name} ({decider.provider}/{decider.model})"
     models = {
         entry.name: (
             f"{entry.provider}/{entry.model} q={entry.quality} "
@@ -64,3 +70,9 @@ def current_profile(
         for entry in catalog.entries
     }
     return profile_of(routes, models=models, baseline=baseline)
+
+
+def _decision_model(catalog: ModelCatalog) -> ModelEntry | None:
+    name = catalog.defaults.get(TaskKind.DECISION)
+    entry = next((item for item in catalog.entries if item.name == name), None)
+    return entry if entry is not None and entry.decides and not entry.generates_text else None

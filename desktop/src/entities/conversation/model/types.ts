@@ -39,7 +39,11 @@ export interface Directions {
   folder?: string;
 }
 
-export const NO_DIRECTIONS: Directions = { approvals: "ASK", model: "", folder: "" };
+export const NO_DIRECTIONS: Directions = {
+  approvals: "ASK",
+  model: "",
+  folder: "",
+};
 
 /**
  * A file the work left behind, as the runtime recorded it.
@@ -82,6 +86,13 @@ export interface Message {
   finished_at: string | null;
   /** The files this turn's work wrote. Absent from an older runtime. */
   artifacts?: Artifact[];
+  /**
+   * Whether this turn was given any memory at all. Why each was chosen is a
+   * second request, asked only if somebody opens it - but an answer that
+   * recalled nothing is not offered the question. Absent from an older
+   * runtime, where nothing is offered rather than an empty drawer.
+   */
+  memory_used?: boolean;
 }
 
 export interface Conversation {

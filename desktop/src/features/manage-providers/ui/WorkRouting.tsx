@@ -6,9 +6,10 @@
  * real option rather than an absence: without a default the platform ranks the
  * candidates itself, which is what a fresh installation does.
  *
- * Each row offers the models that can do that kind of work, read off the two
+ * Each row offers the models that can do that kind of work, read off the
  * flags the runtime sends: an embedding model for embedding, a model that
- * writes for everything else. Offering all of them was how the document index
+ * writes or a model built to decide for decisions, a model that writes for
+ * everything else. Offering all of them was how the document index
  * could be pointed at a chat model and planning at `nomic-embed-text`.
  */
 
@@ -45,7 +46,11 @@ export function WorkRouting({
                 <option value="">the router decides</option>
                 {models
                   .filter((entry) =>
-                    kind === "EMBEDDING" ? entry.embeds : entry.generates_text,
+                    kind === "EMBEDDING"
+                      ? entry.embeds
+                      : kind === "DECISION"
+                        ? entry.generates_text || entry.decides
+                        : entry.generates_text,
                   )
                   .map((entry) => (
                     <option key={entry.name} value={entry.name}>

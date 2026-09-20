@@ -18,11 +18,15 @@ not stop working because a table was added.
 
 from __future__ import annotations
 
+from domain.decisions.protocols import Decider
 from domain.errors import ConfigurationError
 from domain.llm.models import ModelChoice
 from domain.llm.protocols import LLM
 from domain.llm.telemetry import LLMCallLog
 from domain.secrets.protocols import SecretResolver
+from infrastructure.decisions.typesafe import BASE_URL as TYPESAFE_URL
+from infrastructure.decisions.typesafe import PROVIDER_NAME as TYPESAFE
+from infrastructure.decisions.typesafe import TypeSafeDecider
 from infrastructure.llm.anthropic import AnthropicProvider
 from infrastructure.llm.catalog import ModelCatalog
 from infrastructure.llm.connections import ConnectionDirectory
@@ -73,6 +77,7 @@ class ProviderFactory:
         self._connections = connections
         self._secrets = secrets
         self._clients: dict[tuple[str, str, str], LLM] = {}
+        self._deciders: dict[tuple[str, str, str], TypeSafeDecider] = {}
 
     def for_choice(self, choice: ModelChoice) -> LLM:
         # The connection is part of the identity: two accounts on one vendor
@@ -117,10 +122,37 @@ class ProviderFactory:
                 server=self._local_server(address),
                 **self._timeout_kwargs(),
             )
+        if choice.provider == TYPESAFE:
+            raise ConfigurationError(
+                f"'{choice.model}' answers typed decisions and writes no text. Route "
+                "only the decision kind of work to it."
+            )
         raise ConfigurationError(
             f"Unknown provider '{choice.provider}'. Providers are registered in "
             "infrastructure/llm/factory.py and their models in models.toml."
         )
+
+    def for_decisions(self, choice: ModelChoice) -> Decider:
+        """A client for a model built to decide, which `for_choice` never builds.
+
+        Kept apart because the two answer different contracts: an `LLM`
+        completes a prompt, a `Decider` picks an option. Mapping one onto the
+        other would hand a plan prompt to something that cannot read one.
+        """
+        if choice.provider != TYPESAFE:
+            raise ConfigurationError(f"'{choice.provider}' does not serve typed decisions.")
+        key = (choice.provider, choice.model, choice.connection)
+        if key not in self._deciders:
+            self._deciders[key] = TypeSafeDecider(
+                self._require_key(choice),
+                model=choice.model,
+                base_url=self._address(choice, TYPESAFE_URL),
+                entry=choice.entry,
+                catalog=self._catalog,
+                call_log=self._call_log,
+                retry_policy=self._retry_policy,
+            )
+        return self._deciders[key]
 
     def for_embeddings(self, choice: ModelChoice) -> OpenAICompatibleEmbeddings:
         """A client for the embedding model the router chose.
@@ -212,3 +244,6 @@ class ProviderFactory:
             if closer is not None:
                 await closer()
         self._clients.clear()
+        for decider in self._deciders.values():
+            await decider.aclose()
+        self._deciders.clear()

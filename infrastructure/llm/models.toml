@@ -51,6 +51,27 @@ output_cost_per_1k_usd = 0.0
 quality = 0.5
 dimensions = 768
 
+# A model built to decide rather than to write: it takes a question and a set of
+# options and answers with one of them and how likely each was. It never writes
+# text, so an entry offering only DECISION is kept out of every other kind of
+# work, and routing `decision` to it is the whole of switching it on. If it
+# cannot answer - no key, a rate limit, an outage - the question goes to the text
+# model and the log says why. Add the connection (kind "typesafe") in Settings,
+# then uncomment. `jev-latest` moves with each release; pin a versioned id such
+# as `jev-1.13.0` once thresholds are tuned against it. Input tokens only are
+# charged ($42 per billion); context is 64k, of which 32k for the state.
+#
+# [models.jev]
+# provider = "typesafe"
+# model = "jev-latest"
+# connection = "typesafe"
+# capabilities = ["DECISION"]
+# context_tokens = 32000
+# input_cost_per_1k_usd = 0.000042
+# output_cost_per_1k_usd = 0.0
+# quality = 0.6
+# privacy = "REMOTE"
+
 # Which entry each kind of work reaches for first.
 [defaults]
 planning = "balanced"
@@ -58,5 +79,6 @@ execution = "balanced"
 verification = "fast"
 synthesis = "balanced"
 extraction = "fast"
+decision = "fast"
 conversation = "balanced"
 embedding = "embedding"

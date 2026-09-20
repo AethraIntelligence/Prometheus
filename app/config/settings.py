@@ -103,7 +103,13 @@ class Settings(BaseSettings):
     )
 
     # --- Paths ---------------------------------------------------------------
-    data_dir: Path = Field(default_factory=_default_data_dir)
+    #: Called through the module rather than bound here: a `default_factory`
+    #: holding the function object cannot be replaced, and the suite's
+    #: isolation of the developer's own data directory is exactly that
+    #: replacement. Bound directly, every test that named no data directory
+    #: wrote into `~/.prometheus` - which is how a test run left a second
+    #: master key beside somebody's real one and stopped their runtime.
+    data_dir: Path = Field(default_factory=lambda: _default_data_dir())
     #: Where everything is kept. Unset means the SQLite file in `data_dir`,
     #: which is what `clone && run` gets and what the packaged window needs.
     #: A PostgreSQL URL - including a Supabase one, which is the same thing -

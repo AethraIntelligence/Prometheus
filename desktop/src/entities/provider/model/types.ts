@@ -45,6 +45,8 @@ export interface ModelEntry {
   embeds: boolean;
   /** Decided by the core: whether it can be given text to write. */
   generates_text: boolean;
+  /** Decided by the core: whether it answers typed decisions. */
+  decides: boolean;
   /** Kinds of work currently routed here, decided by the core. */
   used_for: string[];
   /** The model's contract, as the core states it: quality band, whether its

@@ -24,6 +24,8 @@ from application.prometheus.language import DEFAULT_LANGUAGE, instruction
 from application.prometheus.workforce import describe
 from application.prompts import render
 from domain.capabilities.models import CapabilityRequirement
+from domain.decisions.models import ChoiceQuestion, Option
+from domain.decisions.protocols import Decider
 from domain.employees.definition import EmployeeDefinition
 from domain.llm.json_output import extract_object
 from domain.llm.models import LLMRequest, Message, RoutingHints, TaskKind
@@ -32,16 +34,23 @@ from domain.workforce.intent import Intent
 
 log = structlog.get_logger(__name__)
 
+#: How sure the triage has to be that a request is talk before it is believed,
+#: where the backend measured it. Below it the request is work: the two ways of
+#: being wrong are not symmetrical, and a slow answer beats an invented one.
+TALK_CONFIDENCE = 0.7
+
+TALK, WORK = "reply", "work"
+
 
 class IntentReader:
     """Free text in, `Intent` out."""
 
     def __init__(
-        self, llm: LLM, *, language: str = DEFAULT_LANGUAGE, triage: LLM | None = None
+        self, llm: LLM, *, language: str = DEFAULT_LANGUAGE, triage: Decider | None = None
     ) -> None:
-        """`triage` is the model asked for a second opinion before a reading of
-        "no work" is believed. Without one the reading stands on its own, which
-        is what a scripted test wants and what a strong model can carry."""
+        """`triage` is asked for a second opinion before a reading of "no work"
+        is believed. Without one the reading stands on its own, which is what a
+        scripted test wants and what a strong model can carry."""
         self._llm = llm
         self._language = language
         self._triage = triage
@@ -90,7 +99,32 @@ class IntentReader:
 
         needs_work = bool(parsed.get("needs_work", True))
         answer = str(parsed.get("answer", "")).strip()
-        if not needs_work and not documents and not await self._is_talk(request):
+        criteria = _as_criteria(parsed.get("acceptance_criteria"))
+        constraints = _as_mapping(parsed.get("constraints"))
+        # Documents are not part of this test, unlike the other direction's.
+        # A passage retrieved for "hello" is what the similarity floor exists
+        # for, not evidence that anything has to be done - and with three
+        # documents in the workspace, the exemption copied from the other
+        # branch is what let a greeting be planned twice.
+        groundless = needs_work and not criteria and not constraints
+        # A machine with no triage never overrules in this direction: absence
+        # means "believe the reading", and the reading said work.
+        overruled = groundless and self._triage is not None and await self._is_talk(request)
+        if overruled:
+            # The other direction, and the reading's own words are what make it
+            # worth doubting: work with nothing to satisfy and nothing to
+            # respect is a reading that could not say what would be done. A
+            # hosted model read "hello, how are you" that way and the platform
+            # wrote a file, had it rejected, planned again and stopped to ask
+            # somebody's permission - for a greeting.
+            #
+            # Only that case. A reading that produced a criterion has stated
+            # what the work is for, and is believed: turning real work into a
+            # sentence is the worse failure of the two, and the reason the
+            # doubt goes one way for a reading that says anything at all.
+            log.info("prometheus.work_overruled", restatement=parsed.get("restatement", ""))
+            needs_work, answer = False, ""
+        if not needs_work and not documents and not overruled and not await self._is_talk(request):
             # A second opinion, asked as one narrow question, before a reply is
             # believed. The reading's own flag is one field of a long form, and
             # a local model filled it "no work" for today's weather, an
@@ -117,9 +151,9 @@ class IntentReader:
 
         intent = Intent(
             restatement=str(parsed.get("restatement", "")).strip() or request,
-            constraints=_as_mapping(parsed.get("constraints")),
+            constraints=constraints,
             preferences=_as_criteria(parsed.get("preferences")),
-            acceptance_criteria=_as_criteria(parsed.get("acceptance_criteria")),
+            acceptance_criteria=criteria,
             needs_work=needs_work,
             answer="" if needs_work else answer,
         )
@@ -133,17 +167,35 @@ class IntentReader:
         return intent
 
     async def _is_talk(self, request: str) -> bool:
-        """True only for a clear "reply from what you know"; anything else is work."""
+        """True only for a clear "reply from what you know"; anything else is work.
+
+        Clear means the reply option, and - where the backend measured it -
+        measured at `TALK_CONFIDENCE` or better. An unreadable answer is work.
+        Both directions of doubt ask this same question, so the two readings
+        cannot be sorted by two different standards.
+        """
         if self._triage is None:
             return True
-        response = await self._triage.generate(
-            LLMRequest(
-                messages=(Message.user(render("prometheus_triage", request=request)),),
-                temperature=0.0,
-                max_tokens=5,
+        answer = await self._triage.choose(
+            ChoiceQuestion(
+                state=request,
+                question=render("prometheus_triage"),
+                # Reply first: the letters the triage has always been asked
+                # for, A for a reply and B for work, stay what they were.
+                options=(
+                    Option(TALK, render("prometheus_triage_reply").strip()),
+                    Option(WORK, render("prometheus_triage_work").strip()),
+                ),
+                purpose="triage",
             )
         )
-        return response.content.strip()[:1].upper() == "A"
+        log.info(
+            "prometheus.triage",
+            answer=answer.key,
+            confidence=answer.confidence,
+            source=answer.source,
+        )
+        return answer.is_sure(TALK, at_least=TALK_CONFIDENCE)
 
     async def _reply(self, request: str, workforce: list[EmployeeDefinition]) -> str:
         response = await self._llm.generate(

@@ -420,6 +420,7 @@ class PrometheusService:
         # person may have pointed it elsewhere since.
         if chosen is not None:
             chosen = replace(chosen, folder=conversation.folder)
+        recalled = await self._recalled(thread)
         return {
             **views.conversation(
                 conversation,
@@ -434,10 +435,25 @@ class PrometheusService:
                     item,
                     thinking=self._d.runs.is_thinking(item.id),
                     artifacts=await self._artifacts(item),
+                    memory_used=item.id in recalled,
                 )
                 for item in thread
             ],
         }
+
+    async def _recalled(self, thread: list[Objective]) -> set[UUID]:
+        """Which turns of a thread were given a memory, asked in one question.
+
+        A failed read says none: a thread must open even where the record of
+        what was recalled cannot be read, and the worst of that is an
+        explanation nobody is offered.
+        """
+        if self._d.memory_uses is None or not thread:
+            return set()
+        try:
+            return await self._d.memory_uses.used_by([item.id for item in thread])
+        except Exception:
+            return set()
 
     async def _artifacts(self, objective: Objective) -> list[dict[str, Any]]:
         """The files an objective's tasks wrote, where they are on this machine now.

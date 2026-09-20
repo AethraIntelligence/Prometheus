@@ -37,6 +37,7 @@ const MODEL_CAPABILITIES = [
   "CODE",
   "VISION",
   "EMBEDDING",
+  "DECISION",
 ];
 
 /**
@@ -50,6 +51,7 @@ const TASK_KINDS = [
   "VERIFICATION",
   "SYNTHESIS",
   "EXTRACTION",
+  "DECISION",
   "CONVERSATION",
   "EMBEDDING",
 ];

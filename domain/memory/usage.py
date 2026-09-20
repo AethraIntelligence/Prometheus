@@ -13,6 +13,7 @@ forgotten was used.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -43,3 +44,15 @@ class MemoryUseLog(Protocol):
     async def for_task(self, task_id: UUID) -> list[MemoryUse]: ...
 
     async def for_memory(self, memory_id: UUID, *, limit: int = 20) -> list[MemoryUse]: ...
+
+    async def used_by(self, objective_ids: Sequence[UUID]) -> set[UUID]:
+        """Which of these objectives were given a memory at all.
+
+        Asked for a whole thread at once, because the only question an
+        interface has before somebody wants the detail is whether there is any:
+        offering "Memory used" under an answer that was given none is an
+        invitation to open an empty drawer. Reading each turn's uses in full to
+        answer it would be one round trip per turn plus its plans, for a
+        boolean.
+        """
+        ...

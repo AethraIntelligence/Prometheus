@@ -24,6 +24,7 @@ from domain.llm.models import (
     LLMResponse,
     Message,
     Role,
+    TokenLogprob,
     ToolCallRequest,
     Usage,
 )
@@ -110,6 +111,9 @@ class ChatCompletionsProvider:
             payload["tools"] = [_tool_to_wire(tool, names) for tool in request.tools]
         if request.response_format is not None:
             payload["response_format"] = request.response_format
+        if request.top_logprobs is not None:
+            payload["logprobs"] = True
+            payload["top_logprobs"] = request.top_logprobs
         return payload
 
     def _from_payload(
@@ -136,6 +140,7 @@ class ChatCompletionsProvider:
                 latency_ms=latency_ms,
             ),
             finish_reason=_FINISH_REASONS.get(choice.get("finish_reason"), FinishReason.STOP),
+            logprobs=_logprobs_from_wire(choice.get("logprobs")),
         )
 
     def _headers(self) -> dict[str, str]:
@@ -196,6 +201,34 @@ def _error_in_body(body: Any) -> tuple[int, str] | None:
     except (TypeError, ValueError):
         code = 502
     return code, str(error.get("message") or error)
+
+
+def _logprobs_from_wire(raw: Any) -> tuple[TokenLogprob, ...]:
+    """Token probabilities, where the server reported them in the usual shape.
+
+    Anything else reads as none rather than failing the call: probabilities are
+    a measurement laid over an answer, and a server that shapes them oddly has
+    still answered.
+    """
+    content = raw.get("content") if isinstance(raw, dict) else None
+    if not isinstance(content, list):
+        return ()
+    tokens: list[TokenLogprob] = []
+    try:
+        for item in content:
+            tokens.append(
+                TokenLogprob(
+                    token=str(item["token"]),
+                    logprob=float(item["logprob"]),
+                    alternatives=tuple(
+                        (str(alt["token"]), float(alt["logprob"]))
+                        for alt in item.get("top_logprobs") or ()
+                    ),
+                )
+            )
+    except (KeyError, TypeError, ValueError):
+        return ()
+    return tuple(tokens)
 
 
 def _message_to_wire(message: Message, names: dict[str, str] | None = None) -> dict[str, Any]:

@@ -11,7 +11,11 @@
 import type { ReactNode } from "react";
 
 import { ActivityTrail, type ActivityEvent } from "../../../entities/activity";
-import { MessageTurn, type Artifact, type Message } from "../../../entities/conversation";
+import {
+  MessageTurn,
+  type Artifact,
+  type Message,
+} from "../../../entities/conversation";
 import { MemoryUsedButton } from "../../../features/explain-memory";
 import { Greeting } from "./Greeting";
 
@@ -26,7 +30,11 @@ interface Props {
   empty?: ReactNode;
   /** A file a turn produced was chosen. */
   onOpenFile?: (message: Message, artifact: Artifact) => void;
-  /** Offer "Memory used" under each answer. Off where no runtime is behind the view. */
+  /**
+   * Offer "Memory used" under an answer that was given one. Off where no
+   * runtime is behind the view; a turn that recalled nothing never offers it,
+   * because opening it to read that there was none is worse than silence.
+   */
   explainMemory?: boolean;
   /** Open the durable causal trace for a turn. */
   onOpenTrace?: (objectiveId: string) => void;
@@ -54,22 +62,35 @@ export function ConversationView({
   return (
     <ol className="turns">
       {messages.map((message) => {
-        const events = message.id === running ? (busy ? activity : []) : (trails[message.id] ?? []);
+        const events =
+          message.id === running
+            ? busy
+              ? activity
+              : []
+            : (trails[message.id] ?? []);
         return (
           <MessageTurn
             key={message.id}
             message={message}
-            work={events.length > 0 ? <ActivityTrail events={events} /> : undefined}
+            work={
+              events.length > 0 ? <ActivityTrail events={events} /> : undefined
+            }
             memory={
-              explainMemory && message.answered ? (
+              explainMemory && message.answered && message.memory_used ? (
                 <MemoryUsedButton objectiveId={message.id} />
               ) : undefined
             }
-            actions={message.answered && onOpenTrace ? (
-              <button type="button" className="worked still" onClick={() => onOpenTrace(message.id)}>
-                Open trace
-              </button>
-            ) : undefined}
+            actions={
+              message.answered && onOpenTrace ? (
+                <button
+                  type="button"
+                  className="worked still"
+                  onClick={() => onOpenTrace(message.id)}
+                >
+                  Open trace
+                </button>
+              ) : undefined
+            }
             onOpenFile={onOpenFile}
           />
         );

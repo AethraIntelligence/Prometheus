@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import json
 
+from application.decisions.text import TextDecider
 from application.prometheus.intent import IntentReader
 from application.prometheus.planner import ObjectivePlanner
 from application.prometheus.workforce import describe
+from domain.decisions.models import ChoiceAnswer
 from domain.tasks.task import TaskCreatedBy
 from domain.workforce.protocols import Objective
+from tests.fakes.decisions import FakeDecider
 from tests.fakes.employees import definition
 from tests.fakes.llm import FakeLLM, reply
 
@@ -98,11 +101,75 @@ async def test_a_reading_of_no_work_is_overruled_by_a_narrower_question() -> Non
     llm = FakeLLM([reply(json.dumps({"needs_work": False, "answer": "Sunny, 18 degrees."}))])
     triage = FakeLLM([reply("B")])
 
-    intent = await IntentReader(llm, triage=triage).read("What is the weather in Milan now?", [])
+    intent = await IntentReader(llm, triage=TextDecider(triage)).read(
+        "What is the weather in Milan now?", []
+    )
 
     assert intent.needs_work
     assert intent.answer == ""
     assert "What is the weather in Milan now?" in triage.last_request.messages[-1].content
+
+
+async def test_a_greeting_read_as_work_with_nothing_to_satisfy_is_overruled() -> None:
+    """What a hosted model did with "hello, how are you": work, no criteria, and
+    a file written, rejected, replanned and put to the user for permission."""
+    llm = FakeLLM(
+        [reply(json.dumps({"needs_work": True, "restatement": "greet the user"})), reply("Hi!")]
+    )
+    triage = FakeDecider([ChoiceAnswer(key="reply", confidence=1.0)])
+
+    intent = await IntentReader(llm, triage=triage).read("Hello there, how are you?", [])
+
+    assert intent.is_conversation
+    assert intent.answer == "Hi!"
+    assert len(triage.questions) == 1, "asked once, not once per direction"
+
+
+async def test_a_quoted_document_does_not_make_a_greeting_into_work() -> None:
+    """Retrieval answers "hello" with a passage whenever a workspace holds one;
+    the doubt about a groundless work reading is not waived for that."""
+    llm = FakeLLM([reply(json.dumps({"needs_work": True})), reply("Hi!")])
+    triage = FakeDecider([ChoiceAnswer(key="reply", confidence=1.0)])
+
+    intent = await IntentReader(llm, triage=triage).read(
+        "Hello there, how are you?", [], documents=("[Handbook] The office opens at nine.",)
+    )
+
+    assert intent.is_conversation and intent.answer == "Hi!"
+
+
+async def test_work_the_reading_could_describe_is_never_overruled() -> None:
+    """A criterion is the reading saying what the work is for, so it is believed
+    - even where the triage would have called the sentence talk."""
+    llm = FakeLLM(
+        [reply(json.dumps({"needs_work": True, "acceptance_criteria": ["a file exists"]}))]
+    )
+    triage = FakeDecider([ChoiceAnswer(key="reply", confidence=1.0)])
+
+    intent = await IntentReader(llm, triage=triage).read("Write me a haiku in a file", [])
+
+    assert intent.needs_work
+    assert triage.questions == []
+
+
+async def test_a_doubtful_triage_leaves_a_groundless_work_reading_alone() -> None:
+    llm = FakeLLM([reply(json.dumps({"needs_work": True}))])
+    unsure = ChoiceAnswer(key="reply", probabilities={"reply": 0.6}, confidence=0.6)
+
+    intent = await IntentReader(llm, triage=FakeDecider([unsure])).read("Find the news", [])
+
+    assert intent.needs_work
+
+
+async def test_talk_the_triage_is_unsure_of_is_treated_as_work() -> None:
+    """A reply measured below the bar is not believed: an invented answer costs
+    more than a slow one."""
+    llm = FakeLLM([reply(json.dumps({"needs_work": False, "answer": "It is sunny."}))])
+    unsure = ChoiceAnswer(key="reply", probabilities={"reply": 0.55, "work": 0.45}, confidence=0.55)
+
+    intent = await IntentReader(llm, triage=FakeDecider([unsure])).read("Is it sunny?", [])
+
+    assert intent.needs_work
 
 
 async def test_an_answer_from_the_users_own_documents_is_not_second_guessed() -> None:
@@ -111,7 +178,7 @@ async def test_an_answer_from_the_users_own_documents_is_not_second_guessed() ->
     )
     triage = FakeLLM([])
 
-    intent = await IntentReader(llm, triage=triage).read(
+    intent = await IntentReader(llm, triage=TextDecider(triage)).read(
         "How much is express delivery?",
         [],
         documents=("[Delivery policy] Express delivery costs twelve euros.",),
@@ -124,7 +191,7 @@ async def test_an_answer_from_the_users_own_documents_is_not_second_guessed() ->
 async def test_talk_both_readings_agree_on_is_answered() -> None:
     llm = FakeLLM([reply(json.dumps({"needs_work": False, "answer": "Hello!"}))])
 
-    intent = await IntentReader(llm, triage=FakeLLM([reply("A")])).read("Hello", [])
+    intent = await IntentReader(llm, triage=TextDecider(FakeLLM([reply("A")]))).read("Hello", [])
 
     assert intent.is_conversation
     assert intent.answer == "Hello!"
@@ -134,7 +201,7 @@ async def test_work_is_never_second_guessed_into_talk() -> None:
     llm = FakeLLM([reply(json.dumps({"needs_work": True, "acceptance_criteria": ["a file"]}))])
     triage = FakeLLM([])
 
-    intent = await IntentReader(llm, triage=triage).read("Write me a file", [])
+    intent = await IntentReader(llm, triage=TextDecider(triage)).read("Write me a file", [])
 
     assert intent.needs_work
     assert triage.requests == [], "only a reading of no work is checked"

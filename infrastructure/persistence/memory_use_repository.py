@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from domain.errors import StorageError, StorageNotInitializedError
 from domain.memory.usage import MemoryUse
 from domain.workspace.models import WorkspaceId
-from infrastructure.persistence.models import MemoryUseRow
+from infrastructure.persistence.models import MemoryUseRow, PlanRow, TaskRow
 from infrastructure.persistence.session import session_scope
 
 
@@ -94,6 +94,38 @@ class SqlMemoryUseLog:
             )
             return [_to_use(row) for row in rows]
 
+    async def used_by(self, objective_ids: Sequence[UUID]) -> set[UUID]:
+        ids = [str(item) for item in objective_ids]
+        if not ids:
+            return set()
+        async with self._session() as session:
+            found = {
+                UUID(value)
+                for value in await session.scalars(
+                    select(MemoryUseRow.objective_id)
+                    .where(MemoryUseRow.objective_id.in_(ids))
+                    .distinct()
+                )
+                if value
+            }
+            rest = [item for item in ids if UUID(item) not in found]
+            if rest:
+                # A task's use names the task, never the objective: the run that
+                # records it knows its plan and not what the plan was for. So the
+                # objective is reached the way the store already relates them.
+                found.update(
+                    UUID(value)
+                    for value in await session.scalars(
+                        select(PlanRow.objective_id)
+                        .join(TaskRow, TaskRow.plan_id == PlanRow.id)
+                        .join(MemoryUseRow, MemoryUseRow.task_id == TaskRow.id)
+                        .where(PlanRow.objective_id.in_(rest))
+                        .distinct()
+                    )
+                    if value
+                )
+            return found
+
     async def _where(self, condition) -> list[MemoryUse]:
         async with self._session() as session:
             rows = await session.scalars(
@@ -116,6 +148,12 @@ class InMemoryMemoryUseLog:
 
     async def for_task(self, task_id: UUID) -> list[MemoryUse]:
         return [deepcopy(u) for u in self._uses if u.task_id == task_id]
+
+    async def used_by(self, objective_ids: Sequence[UUID]) -> set[UUID]:
+        # Without the plans and tasks a store holds, only what a use names
+        # itself can be answered: this backend keeps no other rows to join.
+        wanted = set(objective_ids)
+        return {u.objective_id for u in self._uses if u.objective_id in wanted}
 
     async def for_memory(self, memory_id: UUID, *, limit: int = 20) -> list[MemoryUse]:
         found = [u for u in self._uses if u.memory_id == memory_id]

@@ -223,7 +223,7 @@ async def test_a_model_can_only_name_a_connection_that_exists() -> None:
 async def test_what_the_runner_already_has_is_offered_rather_than_typed() -> None:
     """A field where a person types a model name accepts a typo silently."""
 
-    async def discover(kind: str, base_url: str) -> InstalledModels:
+    async def discover(kind: str, base_url: str, secret_name: str = "") -> InstalledModels:
         assert (kind, base_url) == ("local", "http://127.0.0.1:11434/v1")
         return InstalledModels(("gemma4:31b-cloud", "lfm2:24b"), supported=True, reachable=True)
 
@@ -236,7 +236,9 @@ async def test_what_the_runner_already_has_is_offered_rather_than_typed() -> Non
 
 async def test_the_context_of_a_model_is_asked_of_the_runner_that_serves_it() -> None:
     class Inspector:
-        async def context_tokens(self, kind: str, base_url: str, model: str) -> int | None:
+        async def context_tokens(
+            self, kind: str, base_url: str, model: str, secret_name: str = ""
+        ) -> int | None:
             return 32768 if (kind, model) == ("local", "lfm2:24b") else None
 
     providers, _, _, _ = service(inspect=Inspector())

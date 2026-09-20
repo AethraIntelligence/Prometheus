@@ -29,10 +29,14 @@ from domain.memory.models import (
 )
 from domain.memory.ranking import SUPERSEDED_RETENTION
 from domain.memory.usage import MemoryUse
-from domain.workforce.protocols import Objective
+from domain.tasks.task import Task, TaskCreatedBy
+from domain.workforce.protocols import Objective, Plan
 from infrastructure.memory.sql import SqlMemory
 from infrastructure.persistence.memory_use_repository import SqlMemoryUseLog
+from infrastructure.persistence.objective_repository import SqlObjectiveRepository
+from infrastructure.persistence.plan_repository import SqlPlanRepository
 from infrastructure.persistence.session_repository import SqlSessionStateRepository
+from infrastructure.persistence.task_repository import SqlTaskRepository
 
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
@@ -122,6 +126,36 @@ async def test_uses_are_recorded_and_read_back_by_objective_task_and_memory(
     assert [use.reader for use in await log.for_objective(objective_id)] == ["manager"]
     assert [use.reason for use in await log.for_task(task_id)] == ["It mentions q3"]
     assert len(await log.for_memory(memory_id)) == 2
+
+
+async def test_a_turn_counts_as_having_recalled_what_its_tasks_recalled(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A task's use names the task; the thread asks about objectives.
+
+    The window offers to explain a recollection only where there was one, and
+    most recollection happens inside the tasks - so the two are related here,
+    through the plan, rather than by the manager's own uses standing in for it.
+    """
+    log = SqlMemoryUseLog(session_factory)
+    objective = Objective.create("Where are the invoices?")
+    quiet = Objective.create("Hello")
+    plan_id = uuid4()
+    task = replace(
+        Task.create("Find them", created_by=TaskCreatedBy.PROMETHEUS), plan_id=plan_id
+    )
+    await SqlObjectiveRepository(session_factory).save(objective)
+    await SqlTaskRepository(session_factory).save(task)
+    await SqlPlanRepository(session_factory).save(
+        Plan(id=plan_id, objective_id=objective.id, tasks=(task,))
+    )
+    await log.record(
+        [MemoryUse(memory_id=uuid4(), reason="It mentions invoices", task_id=task.id,
+                   reader="task")]
+    )  # fmt: skip
+
+    assert await log.used_by([objective.id, quiet.id]) == {objective.id}
+    assert await log.used_by([]) == set()
 
 
 async def test_a_thread_brief_survives_a_restart(

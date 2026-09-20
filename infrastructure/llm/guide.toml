@@ -302,6 +302,12 @@ label = "Google Gemini"
 verdict = "NOT_YET"
 text = "Not connected directly yet. Use Gemini models through OpenRouter with the same results."
 
+[[providers]]
+kind = "typesafe"
+label = "TypeSafe (decisions)"
+verdict = "SUPPORTED"
+text = "A model built to decide rather than to write, for the decision kind of work only. Fast, cheap and calibrated; if it cannot answer, decisions go to your text model. Best in English."
+
 # --- What a model has to be able to do -------------------------------------------
 
 [[requirements]]

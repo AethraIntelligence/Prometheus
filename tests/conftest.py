@@ -95,6 +95,12 @@ def _ignore_the_developers_env_file(
     # there would switch it off in every test that never named a data dir.
     home = tmp_path_factory.mktemp("prometheus-home")
     monkeypatch.setattr("app.config.settings._default_data_dir", lambda: home)
+    # And said again as the environment, which is what a subprocess a test
+    # starts reads. The patch above covers this process; this covers its
+    # children, and states the isolation where anything reading settings can
+    # see it. A test that wants its own directory sets the variable after this
+    # fixture has run, and wins.
+    monkeypatch.setenv("PROMETHEUS_DATA_DIR", str(home))
     # Nor does one start a model server on the machine running it.
     monkeypatch.setenv("PROMETHEUS_LOCAL_LLM_AUTOSTART", "false")
     # Nor touch the login keychain of whoever runs it. The keychain adapter has

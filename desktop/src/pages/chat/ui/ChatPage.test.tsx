@@ -31,6 +31,11 @@ function scriptedRuntime() {
     directions: [] as { approvals: string; model: string }[],
     threadApprovals: "ASK",
     threadModel: "",
+    // How many times the thread has been read, and a gate the test can hold
+    // the first request behind: over HTTP a request takes longer than a read,
+    // and the window must not depend on which lands first.
+    threadReads: 0,
+    sending: null as Promise<void> | null,
   };
 
   const respond = (path: string, init?: RequestInit) => {
@@ -51,7 +56,10 @@ function scriptedRuntime() {
     if (path.endsWith("/api/approvals")) return { approvals: state.approvals };
     if (path.endsWith("/api/workspaces")) {
       return {
-        workspaces: [workspace("default", "Default", true), workspace("work", "Work", false)],
+        workspaces: [
+          workspace("default", "Default", true),
+          workspace("work", "Work", false),
+        ],
       };
     }
     if (path.endsWith("/api/conversations") && init?.method === "POST") {
@@ -130,7 +138,10 @@ function scriptedRuntime() {
         title: "News",
         created_at: "2026-09-08T09:00:00+00:00",
         updated_at: "2026-09-08T09:00:00+00:00",
-        directions: { approvals: state.threadApprovals, model: state.threadModel },
+        directions: {
+          approvals: state.threadApprovals,
+          model: state.threadModel,
+        },
         messages: [
           {
             ...message(true),
@@ -150,7 +161,10 @@ function scriptedRuntime() {
         ],
       };
     }
-    if (path.endsWith("/api/conversations/c5/approvals") && init?.method === "PUT") {
+    if (
+      path.endsWith("/api/conversations/c5/approvals") &&
+      init?.method === "PUT"
+    ) {
       state.threadApprovals = JSON.parse(String(init.body)).approvals;
       return {
         id: "c5",
@@ -159,16 +173,23 @@ function scriptedRuntime() {
         messages: [message(true)],
       };
     }
-    if (path.endsWith("/api/conversations/c5/model") && init?.method === "PUT") {
+    if (
+      path.endsWith("/api/conversations/c5/model") &&
+      init?.method === "PUT"
+    ) {
       state.threadModel = JSON.parse(String(init.body)).model;
       return {
         id: "c5",
         title: "News",
-        directions: { approvals: state.threadApprovals, model: state.threadModel },
+        directions: {
+          approvals: state.threadApprovals,
+          model: state.threadModel,
+        },
         messages: [message(true)],
       };
     }
     if (path.includes("/api/conversations/c1")) {
+      state.threadReads += 1;
       return {
         id: "c1",
         title: state.title,
@@ -210,18 +231,26 @@ function scriptedRuntime() {
     };
   };
 
-  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => ({
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    json: async () => respond(url, init),
-    // Blob-shaped rather than jsdom's Blob, which has no `text()`.
-    blob: async () => ({
-      type: "text/plain",
-      text: async () =>
-        url.includes("/api/objectives/o5/file?path=raw_news.txt") ? "1. News" : "",
-    }),
-  }));
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    // Held only where a test says so: over HTTP a request takes longer than a
+    // read of the thread, and which of the two lands first is not something
+    // the window may depend on.
+    if (url.endsWith("/messages") && state.sending) await state.sending;
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => respond(url, init),
+      // Blob-shaped rather than jsdom's Blob, which has no `text()`.
+      blob: async () => ({
+        type: "text/plain",
+        text: async () =>
+          url.includes("/api/objectives/o5/file?path=raw_news.txt")
+            ? "1. News"
+            : "",
+      }),
+    };
+  });
 
   return { state, fetchMock };
 }
@@ -252,7 +281,9 @@ describe("the desktop window", () => {
 
     await user.click(await screen.findByRole("button", { name: "Ask" }));
     expect(screen.getByRole("heading", { name: "Ask" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Ask Prometheus anything.")).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("Ask Prometheus anything."),
+    ).toBeInTheDocument();
     await user.type(
       screen.getByLabelText("Tell Prometheus what you need"),
       "What is in my notes?{Enter}",
@@ -265,7 +296,9 @@ describe("the desktop window", () => {
     const user = userEvent.setup();
     render(<App client={new RuntimeClient(BASE)} />);
 
-    expect(await screen.findByText("What would you like me to do?")).toBeInTheDocument();
+    expect(
+      await screen.findByText("What would you like me to do?"),
+    ).toBeInTheDocument();
 
     await user.type(
       screen.getByLabelText("Tell Prometheus what you need"),
@@ -281,16 +314,56 @@ describe("the desktop window", () => {
     // The runtime finishes. The window learns it by re-reading the thread,
     // never by deciding for itself that enough time has passed.
     runtime.state.answered = true;
-    await waitFor(() => expect(screen.getByText("Sorted into four folders.")).toBeInTheDocument(), {
-      timeout: 4000,
+    await waitFor(
+      () =>
+        expect(
+          screen.getByText("Sorted into four folders."),
+        ).toBeInTheDocument(),
+      {
+        timeout: 4000,
+      },
+    );
+  });
+
+  it("stays on the thread it just opened, however slowly the request lands", async () => {
+    // The frame remounts the page when the open thread changes, so a page that
+    // announced its new thread before the request was in had its own state
+    // thrown away and reloaded a thread the runtime had no turn for yet: the
+    // window sat on the greeting with the thread in the list beside it.
+    let land = () => {};
+    runtime.state.sending = new Promise<void>((resolve) => {
+      land = resolve;
     });
+    const user = userEvent.setup();
+    render(<App client={new RuntimeClient(BASE)} />);
+    await screen.findByText("What would you like me to do?");
+
+    await user.type(
+      screen.getByLabelText("Tell Prometheus what you need"),
+      "Sort these files{Enter}",
+    );
+    // The thread exists; its first request has not landed yet. A page that
+    // announced it here would be remounted and would read an empty thread.
+    await waitFor(() => expect(runtime.state.openedKinds).toEqual(["TASK"]));
+    await new Promise((settle) => setTimeout(settle, 0));
+    expect(runtime.state.threadReads).toBe(0);
+    land();
+
+    expect(
+      await screen.findByText("Sort these files", { selector: ".bubble" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("What would you like me to do?"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the workforce it was told about, and nothing it was not", async () => {
     render(<App client={new RuntimeClient(BASE)} />);
 
     expect(await screen.findByText("Researcher")).toBeInTheDocument();
-    expect(screen.getByText("Prometheus decides who takes what.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Prometheus decides who takes what."),
+    ).toBeInTheDocument();
   });
 
   it("puts a question waiting on the person in front of them", async () => {
@@ -309,7 +382,9 @@ describe("the desktop window", () => {
 
     render(<App client={new RuntimeClient(BASE)} />);
 
-    expect(await screen.findByText("Prometheus wants to send an email")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Prometheus wants to send an email"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
@@ -330,7 +405,9 @@ describe("the desktop window", () => {
 
     const { unmount } = render(<App client={new RuntimeClient(BASE)} />);
     expect(await screen.findByText("Researcher")).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText(/write raw_news.txt/)).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText(/write raw_news.txt/)).not.toBeInTheDocument(),
+    );
     unmount();
 
     render(
@@ -338,7 +415,9 @@ describe("the desktop window", () => {
         <ChatPage conversationId="c9" />
       </RuntimeProvider>,
     );
-    expect(await screen.findByText("Prometheus wants to write raw_news.txt")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Prometheus wants to write raw_news.txt"),
+    ).toBeInTheDocument();
   });
 
   it("opens a file an answer produced beside the conversation", async () => {
@@ -348,11 +427,17 @@ describe("the desktop window", () => {
       </RuntimeProvider>,
     );
 
-    await userEvent.click(await screen.findByRole("button", { name: /raw_news.txt/ }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: /raw_news.txt/ }),
+    );
 
-    const preview = await screen.findByRole("complementary", { name: "Preview: raw_news.txt" });
+    const preview = await screen.findByRole("complementary", {
+      name: "Preview: raw_news.txt",
+    });
     expect(await within(preview).findByText("1. News")).toBeInTheDocument();
-    await userEvent.click(within(preview).getByRole("button", { name: "Close preview" }));
+    await userEvent.click(
+      within(preview).getByRole("button", { name: "Close preview" }),
+    );
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 
@@ -369,7 +454,9 @@ describe("the desktop window", () => {
 
     render(<App client={new RuntimeClient(BASE)} />);
 
-    expect(await screen.findByText("The local database has no schema yet.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("The local database has no schema yet."),
+    ).toBeInTheDocument();
   });
 
   it("stops from where send was, and the turn then reads as stopped", async () => {
@@ -384,8 +471,12 @@ describe("the desktop window", () => {
     await user.click(await screen.findByRole("button", { name: "Stop" }));
 
     expect(runtime.state.cancelled).toBe(true);
-    expect(await screen.findByText("Stopped before it was finished.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    expect(
+      await screen.findByText("Stopped before it was finished."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Stop" }),
+    ).not.toBeInTheDocument();
   });
 
   it("sends the approvals and model chosen under the field with the request", async () => {
@@ -395,7 +486,9 @@ describe("the desktop window", () => {
 
     await user.selectOptions(screen.getByLabelText("Approvals"), "AUTO");
     const model = await screen.findByLabelText("Model");
-    expect(screen.queryByRole("option", { name: "vectors" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "vectors" }),
+    ).not.toBeInTheDocument();
     await user.selectOptions(model, "balanced");
     await user.type(
       screen.getByLabelText("Tell Prometheus what you need"),
@@ -403,7 +496,9 @@ describe("the desktop window", () => {
     );
 
     await waitFor(() =>
-      expect(runtime.state.directions).toEqual([{ approvals: "AUTO", model: "balanced" }]),
+      expect(runtime.state.directions).toEqual([
+        { approvals: "AUTO", model: "balanced" },
+      ]),
     );
   });
 
@@ -417,7 +512,9 @@ describe("the desktop window", () => {
       "Sort these files{Enter}",
     );
 
-    await waitFor(() => expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument(),
+    );
   });
 
   it("persists an approval change made inside a session", async () => {
@@ -429,7 +526,9 @@ describe("the desktop window", () => {
     );
 
     await screen.findByLabelText("Approvals");
-    await waitFor(() => expect(screen.getByLabelText("Approvals")).toBeEnabled());
+    await waitFor(() =>
+      expect(screen.getByLabelText("Approvals")).toBeEnabled(),
+    );
     await user.selectOptions(screen.getByLabelText("Approvals"), "AUTO");
     await waitFor(() => expect(runtime.state.threadApprovals).toBe("AUTO"));
     first.unmount();
@@ -439,7 +538,9 @@ describe("the desktop window", () => {
         <ChatPage conversationId="c5" />
       </RuntimeProvider>,
     );
-    await waitFor(() => expect(screen.getByLabelText("Approvals")).toHaveValue("AUTO"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Approvals")).toHaveValue("AUTO"),
+    );
     expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
   });
 
@@ -462,7 +563,9 @@ describe("the desktop window", () => {
         <ChatPage conversationId="c5" />
       </RuntimeProvider>,
     );
-    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("balanced"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Model")).toHaveValue("balanced"),
+    );
   });
 
   it("opens a thread on what it is set to, not on the defaults", async () => {
@@ -472,9 +575,15 @@ describe("the desktop window", () => {
       </RuntimeProvider>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText("Approvals")).toHaveValue("DENY"));
-    expect(await screen.findByLabelText("Model")).toHaveValue("scheduled-model");
-    expect(screen.getByText("scheduled-model", { selector: "b" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Approvals")).toHaveValue("DENY"),
+    );
+    expect(await screen.findByLabelText("Model")).toHaveValue(
+      "scheduled-model",
+    );
+    expect(
+      screen.getByText("scheduled-model", { selector: "b" }),
+    ).toBeInTheDocument();
   });
 
   it("renames a task and deletes it from the list", async () => {
@@ -500,7 +609,9 @@ describe("the desktop window", () => {
 
     await waitFor(() => expect(runtime.state.title).toBe("Supplier files"));
 
-    await user.click(screen.getByRole("button", { name: "Options for Supplier files" }));
+    await user.click(
+      screen.getByRole("button", { name: "Options for Supplier files" }),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     await user.click(
       within(screen.getByRole("dialog")).getByRole("button", {
@@ -509,6 +620,8 @@ describe("the desktop window", () => {
     );
 
     await waitFor(() => expect(runtime.state.deleted).toBe(true));
-    expect(await screen.findByText("What would you like me to do?")).toBeInTheDocument();
+    expect(
+      await screen.findByText("What would you like me to do?"),
+    ).toBeInTheDocument();
   });
 });

@@ -36,6 +36,11 @@ KINDS: tuple[ProviderKind, ...] = (
     ProviderKind("anthropic", "Anthropic"),
     ProviderKind("gemini", "Google Gemini"),
     ProviderKind("openrouter", "OpenRouter"),
+    #: Answers typed decisions, never text: it is routed only the `decision`
+    #: kind of work (`infrastructure/decisions/`).
+    ProviderKind(
+        "typesafe", "TypeSafe (decisions)", default_base_url="https://api.typesafe.ai"
+    ),
     ProviderKind(
         "local",
         "Local model runner",

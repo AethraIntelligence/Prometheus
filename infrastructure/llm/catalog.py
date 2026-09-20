@@ -17,7 +17,7 @@ from pathlib import Path
 
 from domain.capabilities.models import Capability, CapabilityRequirement
 from domain.errors import ConfigurationError
-from domain.llm.catalog import ModelEntry, Privacy, default_privacy
+from domain.llm.catalog import NON_TEXT, ModelEntry, Privacy, default_privacy
 
 __all__ = ["DEFAULT_CATALOG_PATH", "ModelCatalog", "ModelEntry", "Privacy", "default_privacy"]
 from domain.llm.models import TaskKind
@@ -115,7 +115,7 @@ class ModelCatalog:
             entry
             for entry in self.entries
             if requirement.is_satisfied_by(entry.capabilities)
-            and (entry.generates_text or Capability.EMBEDDING in requirement.required)
+            and (entry.generates_text or bool(requirement.required & NON_TEXT))
             and (
                 requirement.min_context_tokens is None
                 or entry.context_tokens >= requirement.min_context_tokens
