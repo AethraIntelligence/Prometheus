@@ -1000,6 +1000,10 @@ def _routes(app: FastAPI) -> None:
         return {
             "available": service.knowledge_available,
             "documents": await _guarded(service.list_documents()),
+            # In the same answer as the list, because they are read together:
+            # a surface polling while a document indexes would otherwise ask
+            # twice for one screen.
+            "indexing": service.indexing_documents(),
         }
 
     @app.post("/api/documents", status_code=201)

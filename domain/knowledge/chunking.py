@@ -18,6 +18,14 @@ table or a minified file, and any cut is arbitrary.
 **Overlap, because a fact can straddle a boundary.** The last part of one
 passage begins the next, so a sentence naming the subject and the following
 sentence stating the number are retrievable together whichever half matched.
+
+And because of that overlap, putting the passages back together is a rule of
+its own rather than a join - `rejoin`. Re-indexing reads the text back out of
+the stored passages, and joining them plainly writes every overlap into the
+text a second time: a document re-indexed four times was twice its own length,
+with sentences repeated at each boundary, and a model was quoted the duplicates
+as though the document said them twice. It compounds on its own, because
+changing the embedding model re-indexes every document on the machine.
 """
 
 from __future__ import annotations
@@ -79,3 +87,41 @@ def chunk(
     if current.strip():
         passages.append(current.strip())
     return passages
+
+
+def rejoin(passages: list[str] | tuple[str, ...]) -> str:
+    """Put cut passages back into text, undoing the overlap between them.
+
+    The inverse of `chunk`'s second rule, and it lives beside it for that
+    reason: whoever changes how much of one passage begins the next changes
+    this. It works off what the passages actually share rather than off
+    `DEFAULT_OVERLAP_CHARS` - a document may have been cut by another version,
+    or with another setting, and text is not worth corrupting over a constant.
+
+    Where two passages share nothing, they are joined as they are. A guess that
+    removed text would be worse than a join that keeps a sentence twice.
+    """
+    parts = [passage for passage in passages if passage.strip()]
+    if not parts:
+        return ""
+    text = parts[0]
+    for passage in parts[1:]:
+        text = f"{text}\n\n{passage[_shared(text, passage) :].lstrip()}"
+    return text.strip()
+
+
+def _shared(before: str, after: str) -> int:
+    """How much of `after` the end of `before` already says.
+
+    The longest one, searched from the longest candidate down: a short repeated
+    word at a boundary ("The") would otherwise be taken for the overlap and the
+    rest of it written twice anyway.
+    """
+    # Twice the default, because a passage cut with a larger overlap must still
+    # be rejoined correctly - and a bound is what keeps this from scanning a
+    # whole passage looking for a coincidence.
+    most = min(len(before), len(after), DEFAULT_OVERLAP_CHARS * 2)
+    for size in range(most, 0, -1):
+        if before.endswith(after[:size]):
+            return size
+    return 0

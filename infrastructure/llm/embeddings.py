@@ -18,6 +18,20 @@ entry says what to expect so that a store can be planned; this reports what was
 actually produced, because that is what gets written onto the chunk and what a
 later query is compared against.
 
+**A question and a passage are not embedded the same way.** Several models - the
+e5 family, nomic-embed-text - are trained asymmetrically: the question is
+prefixed one way and the text answering it another, and asking without the
+prefixes costs several points of similarity on every comparison, which reads as
+a slightly worse answer nobody can attribute to anything. The prefixes are the
+model's, so they are declared on its catalog entry and applied here.
+
+**A prefix makes it a different producer, and `model` says so.** Adding one
+changes every vector the same model returns, and the stored vectors would go on
+being compared against new queries by name alone - the exact silent mismatch
+ADR 0016 exists to prevent. So the identity written onto a chunk carries the
+scheme, and turning prefixes on re-indexes the workspace the way changing the
+model does, because as far as anything comparing vectors is concerned it is one.
+
 **A server that is not there is a configuration problem with a clear fix**, and
 the error says so - the same rule the local chat provider follows. Retrieval
 above catches it and falls back to the text index rather than failing a run.
@@ -52,6 +66,8 @@ class OpenAICompatibleEmbeddings:
         model: str,
         api_key: str | None = None,
         dimensions: int = 0,
+        query_prefix: str = "",
+        passage_prefix: str = "",
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         client: httpx.AsyncClient | None = None,
         server: OnDemandServer | None = None,
@@ -59,6 +75,8 @@ class OpenAICompatibleEmbeddings:
         self._server = server
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._query_prefix = query_prefix
+        self._passage_prefix = passage_prefix
         self._api_key = api_key
         self._declared = dimensions
         self._seen = 0
@@ -67,14 +85,28 @@ class OpenAICompatibleEmbeddings:
 
     @property
     def model(self) -> str:
-        return self._model
+        """The model, and how it was asked, because the two make the vector.
+
+        Plain where there are no prefixes, so a machine that already has an
+        indexed workspace is not told to re-index it for nothing.
+        """
+        if not self._query_prefix and not self._passage_prefix:
+            return self._model
+        return f"{self._model} [{self._query_prefix}|{self._passage_prefix}]"
 
     @property
     def dimension(self) -> int:
         """What this model actually produces, once it has produced anything."""
         return self._seen or self._declared
 
+    async def embed_query(self, text: str) -> Vector:
+        vectors = await self._post([f"{self._query_prefix}{text}"])
+        return vectors[0] if vectors else ()
+
     async def embed(self, texts) -> list[Vector]:
+        return await self._post([f"{self._passage_prefix}{text}" for text in texts])
+
+    async def _post(self, texts: Sequence[str]) -> list[Vector]:
         wanted = [text for text in texts]
         if not wanted:
             return []
@@ -152,7 +184,13 @@ class RoutedEmbeddings:
         return current.dimension if current is not None else 0
 
     async def embed(self, texts: Sequence[str]) -> list[Vector]:
+        return await self._current().embed(texts)
+
+    async def embed_query(self, text: str) -> Vector:
+        return await self._current().embed_query(text)
+
+    def _current(self) -> EmbeddingProvider:
         current = self._resolve()
         if current is None:
             raise ConfigurationError("No model in the catalog can turn text into vectors.")
-        return await current.embed(texts)
+        return current

@@ -156,11 +156,18 @@ async def _load_catalog(container: Container) -> None:
     read runs on the file it shipped with, which is the configuration a fresh
     clone has and a perfectly good one. Failing to start because a settings
     table is unreadable would turn an editable preference into a hard dependency.
+
+    The restore is *inside* the guard, which it was not - and in the same place
+    in the order, because an overridden catalog still reaches connections a
+    person stored. A clone with no schema raised out of this before the promise
+    above could be kept, so a command that only wanted to print the catalog -
+    `prometheus models` - could not run until somebody had migrated a database
+    it does not read.
     """
-    await container.connection_directory.restore()
-    if container.catalog_source.is_overridden:
-        return
     try:
+        await container.connection_directory.restore()
+        if container.catalog_source.is_overridden:
+            return
         container.use_catalog(await container.catalog_source.load())
     except PrometheusError as error:
         container.logger.warning("catalog.not_loaded", error=str(error))

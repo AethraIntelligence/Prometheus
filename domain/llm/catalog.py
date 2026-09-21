@@ -68,6 +68,14 @@ class ModelEntry:
     #: full of vectors of one size has to be able to say so before a query is
     #: made rather than after it returns a wrong answer (ADR 0016).
     dimensions: int = 0
+    #: What an embedding model wants put in front of a question and in front of
+    #: a passage. Several of them - the e5 family, nomic-embed-text - were
+    #: trained with asymmetric prefixes and score a question against a passage
+    #: several points lower without them, which is a worse answer nobody can
+    #: see. Declared per entry because it belongs to the model, exactly as
+    #: `dimensions` does, and empty for a model that wants none (bge-m3).
+    query_prefix: str = ""
+    passage_prefix: str = ""
     privacy: Privacy = Privacy.REMOTE
     #: Typical time to a full answer, in milliseconds, as measured or stated.
     #: Zero is unknown, which ranks as neither fast nor slow.

@@ -50,6 +50,70 @@ class DocumentStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class IndexingStage(StrEnum):
+    """Where a document is inside the one operation a person is waiting on.
+
+    The stages are the ones that cost time and can be reported honestly:
+    reading the file, cutting it into passages, embedding them. `EMBEDDING` is
+    the only one with a fraction under it, because it is the only one done in
+    countable pieces - a batch at a time (`KnowledgeService.BATCH`). Reporting a
+    made-up percentage for the other two would be an interface lying about work
+    it cannot see.
+    """
+
+    READING = "READING"
+    CHUNKING = "CHUNKING"
+    EMBEDDING = "EMBEDDING"
+    DONE = "DONE"
+    FAILED = "FAILED"
+
+
+@dataclass(frozen=True, slots=True)
+class IndexingProgress:
+    """What is happening to one document right now.
+
+    Keyed by `key` rather than by the document id, because the first stage runs
+    before there is a document: a file is read, and only text that came out of
+    it becomes a record. So a person adding three files sees three rows from the
+    moment they chose them, and each acquires its id as it gets one.
+
+    This is not a `ProgressEvent`. That vocabulary is six kinds belonging to a
+    task an employee runs (`domain/tasks/progress.py`), and adding a seventh for
+    a document nobody was assigned would move the coupling into every interface
+    rather than remove it. Indexing is not work the workforce did - it is the
+    lifecycle of something the user handed over, and it is reported as state
+    somebody can read at any moment rather than as events they must have been
+    watching for.
+    """
+
+    #: The file's path while that is all there is, the document id once there
+    #: is one. Stable for the whole operation either way.
+    key: str
+    title: str
+    stage: IndexingStage
+    #: Passages embedded and passages in total. Both zero until the text has
+    #: been cut, and total stays zero where nothing can embed.
+    done: int = 0
+    total: int = 0
+    document_id: UUID | None = None
+    error: str = ""
+    at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def fraction(self) -> float:
+        """How much of the countable part is finished, or 0.0 where nothing is.
+
+        Zero means "no fraction to show", not "none of it done": an interface
+        draws a bar that is moving rather than one that is empty, which is the
+        difference between "working" and "stuck".
+        """
+        return self.done / self.total if self.total else 0.0
+
+    @property
+    def finished(self) -> bool:
+        return self.stage in (IndexingStage.DONE, IndexingStage.FAILED)
+
+
 @dataclass(frozen=True, slots=True)
 class Document:
     """One thing the user brought, and where it came from."""

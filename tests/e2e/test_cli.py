@@ -266,3 +266,60 @@ def test_employees_lists_every_declaration(monkeypatch, tmp_path) -> None:
         assert "organizer" in result.stdout
     finally:
         get_settings.cache_clear()
+
+
+def test_models_shows_the_model_this_installation_stored(monkeypatch, tmp_path) -> None:
+    """A model re-pointed in the window is the one that runs, and the one shown.
+
+    `models` printed the shipped file, so a person who had chosen another
+    embedding model was told they were on the default - in the command whose
+    whole job is to answer that question, and while everything else on the
+    machine used their choice. It is also how a measurement gets attributed to
+    the wrong model: `knowledge-eval` built its container the same way and
+    reported the shipped model's numbers under the shipped model's name.
+
+    Written synchronously because it drives the command the way a terminal
+    does, and the command runs a loop of its own.
+    """
+    import asyncio
+
+    from app.config.settings import get_settings
+    from domain.capabilities.models import Capability
+    from domain.llm.catalog import ModelEntry
+    from domain.llm.models import TaskKind
+    from infrastructure.persistence.catalog_repository import SqlCatalogRepository
+    from infrastructure.persistence.models import Base
+    from infrastructure.persistence.session import create_engine, create_session_factory
+
+    url = f"sqlite+aiosqlite:///{tmp_path / 'store.db'}"
+
+    async def seed() -> None:
+        engine = create_engine(url)
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        repository = SqlCatalogRepository(create_session_factory(engine))
+        await repository.save_entry(
+            ModelEntry(
+                name="embedding",
+                provider="local",
+                model="a-model-nobody-ships",
+                capabilities=frozenset({Capability.EMBEDDING}),
+                dimensions=1024,
+            )
+        )
+        await repository.set_default(TaskKind.EMBEDDING, "embedding")
+        await engine.dispose()
+
+    asyncio.run(seed())
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("PROMETHEUS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PROMETHEUS_DATABASE_URL", url)
+    monkeypatch.delenv("PROMETHEUS_MODEL_CATALOG_PATH", raising=False)
+    try:
+        result = runner.invoke(app, ["models"])
+    finally:
+        get_settings.cache_clear()
+
+    assert result.exit_code == 0, result.output
+    assert "a-model-nobody-ships" in result.output

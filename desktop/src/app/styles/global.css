@@ -2366,6 +2366,182 @@ html[data-shell="mac"] .settings-rail {
   color: var(--wait);
 }
 
+/* Indexing: a bar under the row it belongs to, the width of the text above it.
+   Where the runtime can count passages the bar fills; where it cannot - a file
+   being read reports no percentage anybody should believe - the same bar
+   travels instead, because "working" and "stuck" have to look different. */
+.indexing {
+  margin: 8px 0 0;
+}
+
+.indexing-bar {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.indexing-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ink);
+  transition: width 0.4s ease;
+}
+
+.indexing-bar.unknown > span {
+  width: 35%;
+  animation: indexing-travel 1.2s ease-in-out infinite;
+}
+
+@keyframes indexing-travel {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(285%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indexing-bar.unknown > span {
+    width: 100%;
+    animation: none;
+    opacity: 0.35;
+  }
+}
+
+.indexing .note {
+  margin: 6px 0 0;
+}
+
+/* Asking the documents something. One row, because it is one act - the field
+   and the button of the modal form stack, which is right in a dialog and reads
+   as an unfinished form on a page. */
+.doc-search {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 12px;
+}
+
+.doc-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.doc-search button {
+  flex: 0 0 auto;
+}
+
+/* A retrieved passage is a quotation, and is set as one: the text indented
+   behind a rule, with where it came from and how it was found underneath.
+   The list is ranked and drawn as one - the position is the point, because a
+   passage that came back fourth is one a budget of three would have cut. */
+.passage {
+  padding: 13px 15px;
+  margin: 0;
+  background: transparent;
+}
+
+.passage header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.passage-rank {
+  flex: 0 0 auto;
+  width: 19px;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--grey);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.passage strong {
+  font-size: 14px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.passage header .badge {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.passage .quotation {
+  margin: 9px 0 0;
+  padding-left: 11px;
+  border-left: 2px solid var(--hair-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* A passage is a page of text. Shown whole, two results fill the window with a
+   wall nobody reads - which hides the ranking, the thing this exists to show. */
+.passage .quotation.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.passage .linkish {
+  margin-top: 7px;
+  font-size: 12.5px;
+  color: var(--grey);
+}
+
+.passage-facts {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--grey-2);
+}
+
+/* The path is the citation and can be long; it gives way to the scores, which
+   are short and are what the row is compared on. */
+.passage-source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.passage-scores {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.passage-scores b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* A file with no record yet is dimmer than the documents around it: it is not
+   yet one of them, and it may still turn out not to become one. */
+.document.pending strong {
+  color: var(--grey);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

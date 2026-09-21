@@ -241,7 +241,21 @@ class Settings(BaseSettings):
     #: The cosine similarity below which a passage is not the answer to a
     #: question. It depends on the embedding model: measured on bge-m3 and
     #: nomic-embed-text here, unrelated questions reached 0.51 and relevant
-    #: ones started at 0.56. Changing the model is a reason to measure again.
+    #: ones started at 0.56. Changing the model is a reason to measure again -
+    #: and so is changing its prefixes, which raise every score by about 0.05.
+    #: Measured again on nomic-embed-text with them, over the eval corpus: an
+    #: unrelated question tops out at 0.475 and a relevant passage starts at
+    #: 0.538, so this still falls in the gap. `prometheus knowledge-eval` is
+    #: how that is checked rather than assumed.
+    #:
+    #: It stays here because the shipped catalog's embedding model is the one
+    #: it was measured on. Another model wants another number, and by a wider
+    #: margin than it looks: bge-m3 compresses the same corpus into a lower
+    #: band - measured over Russian contacts, the right passage scores 0.507 to
+    #: 0.599 and everything else at most 0.506 - so 0.53 cuts through the
+    #: middle of the right answers. End to end over 108 contacts it retrieved
+    #: 3 of 6; at 0.48, 6 of 6, each first, with nothing returned for an
+    #: off-topic question. Changing the model means running the eval again.
     knowledge_min_similarity: float = 0.53
 
     # --- Local interface -----------------------------------------------------

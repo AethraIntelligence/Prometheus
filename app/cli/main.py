@@ -210,6 +210,12 @@ def spend() -> None:
 def models() -> None:
     """Show the model catalog and which entry each kind of work defaults to."""
     container = build_container()
+    # What this installation holds, not what it shipped with. Models are added
+    # and routed in the window and stored here; printing the file instead told
+    # a person their embedding model was the shipped default while the runtime
+    # had been using the one they chose - the same defect the document commands
+    # carry a comment about, in the command whose whole job is to answer this.
+    asyncio.run(load_catalog(container))
     catalog = container.model_catalog
     defaults = {name: kind for kind, name in catalog.defaults.items()}
 
@@ -395,6 +401,99 @@ def memory_eval(
                     factory = create_session_factory(engine)
                     report = await run_retrieval_evals(
                         lambda: SqlMemory(factory), backend="sqlite"
+                    )
+                finally:
+                    await engine.dispose()
+            typer.echo(render_report(report))
+            passed = passed and report.passed
+        return passed
+
+    if backend not in ("memory", "sqlite", "both"):
+        typer.secho("--backend must be memory, sqlite or both.", fg="red", err=True)
+        raise typer.Exit(code=2)
+    if not asyncio.run(_run()):
+        raise typer.Exit(code=1)
+
+
+@app.command(name="knowledge-eval")
+def knowledge_eval(
+    backend: str = typer.Option("both", "--backend", help="memory, sqlite, or both."),
+    embeddings: bool = typer.Option(
+        True,
+        "--embeddings/--no-embeddings",
+        help="Use the configured embedding model. Without one, cases that need "
+        "meaning are skipped rather than failed.",
+    ),
+) -> None:
+    """Retrieval evals over documents: relevance, precision, grounding, isolation.
+
+    Against a throwaway store seeded with a fixed corpus, never the real one -
+    an eval that wrote into somebody's documents would be a way to corrupt them.
+    The embedding model is this machine's, because that is the thing most worth
+    measuring: the same corpus scores differently under two models, and the
+    report says which one it ran with.
+    """
+    import tempfile
+
+    from application.knowledge.evals import render_report, run_knowledge_evals
+    from infrastructure.knowledge.retriever import HybridRetriever
+    from infrastructure.knowledge.store import InMemoryKnowledgeStore
+
+    settings = get_settings()
+    container = build_container(settings)
+
+    def retriever(store):
+        return HybridRetriever(
+            store,
+            embeddings=container.embeddings if embeddings else None,
+            min_similarity=settings.knowledge_min_similarity,
+        )
+
+    async def _run() -> bool:
+        # The stored catalog before anything is embedded. An eval that measures
+        # the shipped default while the runtime uses the model chosen in the
+        # window is a harness quietly holding up the thing it is checking -
+        # which is exactly what it did, and it reported the wrong model's
+        # numbers with the wrong model's name printed beside them.
+        await load_catalog(container)
+        chosen = container.embeddings if embeddings else None
+        if chosen is not None and not chosen.model:
+            # Asked for, and not there. Said plainly rather than reported as a
+            # lexical run somebody would read as the hybrid one.
+            typer.secho(
+                "No embedding model is configured; running on words alone.",
+                fg="yellow",
+                err=True,
+            )
+        passed = True
+        if backend in ("memory", "both"):
+            report = await run_knowledge_evals(
+                InMemoryKnowledgeStore, retriever, embeddings=chosen, backend="in-memory"
+            )
+            typer.echo(render_report(report))
+            passed = passed and report.passed
+        if backend in ("sqlite", "both"):
+            from infrastructure.knowledge.store import SqlKnowledgeStore
+            from infrastructure.persistence.models import Base
+            from infrastructure.persistence.session import (
+                create_engine,
+                create_session_factory,
+            )
+
+            with tempfile.TemporaryDirectory() as directory:
+                engine = create_engine(f"sqlite+aiosqlite:///{directory}/eval.db")
+                try:
+                    # `create_all` builds the text index too - it is part of
+                    # the schema rather than of the adapter - so half of
+                    # retrieval is not quietly missing from the run measuring it.
+                    async with engine.begin() as connection:
+                        await connection.run_sync(Base.metadata.create_all)
+                    factory = create_session_factory(engine)
+                    report = await run_knowledge_evals(
+                        lambda: SqlKnowledgeStore(factory),
+                        retriever,
+                        embeddings=chosen,
+                        backend="sqlite",
                     )
                 finally:
                     await engine.dispose()

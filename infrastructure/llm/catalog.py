@@ -58,6 +58,8 @@ class ModelCatalog:
                         output_cost_per_1k_usd=float(spec.get("output_cost_per_1k_usd", 0.0)),
                         quality=float(spec.get("quality", 0.5)),
                         dimensions=int(spec.get("dimensions", 0)),
+                        query_prefix=str(spec.get("query_prefix", "")),
+                        passage_prefix=str(spec.get("passage_prefix", "")),
                         privacy=Privacy(str(spec["privacy"]).upper())
                         if spec.get("privacy")
                         else default_privacy(spec["provider"]),

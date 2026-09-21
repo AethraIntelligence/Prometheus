@@ -176,6 +176,8 @@ class ProviderFactory:
             model=choice.model,
             api_key=None if local else self._require_key(choice),
             dimensions=entry.dimensions if entry else 0,
+            query_prefix=entry.query_prefix if entry else "",
+            passage_prefix=entry.passage_prefix if entry else "",
             server=self._local_server(address) if local else None,
         )
 

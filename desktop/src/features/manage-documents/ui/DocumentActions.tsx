@@ -16,24 +16,28 @@ import type { Document } from "../../../entities/document";
  */
 export function DocumentActions({
   document,
+  busy: working = false,
   onUpdate,
   onReindex,
   onRemove,
 }: {
   document: Document;
+  /** The runtime is already doing something to this one: offer nothing else. */
+  busy?: boolean;
   onUpdate: (id: string) => Promise<void>;
   onReindex: (id: string) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [mine, setMine] = useState(false);
+  const busy = mine || working;
   const [confirming, setConfirming] = useState(false);
 
   const run = (action: (id: string) => Promise<void>) => async () => {
-    setBusy(true);
+    setMine(true);
     try {
       await action(document.id);
     } finally {
-      setBusy(false);
+      setMine(false);
       setConfirming(false);
     }
   };

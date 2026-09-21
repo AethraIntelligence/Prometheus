@@ -273,7 +273,14 @@ class SqlKnowledgeStore:
                 for row, title, source in found.all()
             ]
 
-    async def matching(self, query_text: str, limit: int) -> dict[str, float]:
+    async def matching(
+        self,
+        query_text: str,
+        limit: int,
+        *,
+        workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
+        document_ids: frozenset[UUID] = frozenset(),
+    ) -> dict[str, float]:
         """Chunk ids the text index matched, as a fraction of the best hit.
 
         Takes the user's words rather than a query expression: the syntax is
@@ -281,10 +288,30 @@ class SqlKnowledgeStore:
         building one would be a caller that knows which. Normalised here, as
         memory's rank is, so that what the domain blends is comparable between
         one index and another (ADR 0016).
+
+        The scope is in the SQL and not in the caller, because the limit is
+        applied here. Leaving the filtering to whoever reads the answer let
+        forty passages of another workspace fill a limit of twenty, and the one
+        passage in this one - which contained the word searched for - came back
+        not at all. With no embedding model configured, that is a document that
+        cannot be found by anything.
         """
         words = [word for word in findall(r"\w+", query_text) if len(word) > 1]
         if not words:
             return {}
+        scope: dict[str, Any] = {"workspace_id": str(workspace_id)}
+        narrowing = ""
+        if document_ids:
+            # Named one at a time rather than through `IN :ids`: the statement
+            # is textual on both dialects, and an expanding bind parameter is
+            # one more thing that differs between them.
+            names = [f"doc_{index}" for index, _ in enumerate(document_ids)]
+            scope.update(
+                {name: str(one) for name, one in zip(names, document_ids, strict=True)}
+            )
+            narrowing = " AND chunks.document_id IN (" + ", ".join(
+                f":{name}" for name in names
+            ) + ")"
         async with self._session() as session:
             if is_postgres(session):
                 # `|`, not `plainto_tsquery`'s implicit `and`: the other branch
@@ -298,21 +325,28 @@ class SqlKnowledgeStore:
                         f"SELECT id, ts_rank({vector}, query) AS rank "
                         "FROM chunks, to_tsquery('simple', :words) AS query "
                         f"WHERE {vector} @@ query "
+                        "AND chunks.workspace_id = :workspace_id"
+                        f"{narrowing} "
                         "ORDER BY rank DESC LIMIT :limit"
                     ),
-                    {"words": " | ".join(words), "limit": limit},
+                    {"words": " | ".join(words), "limit": limit, **scope},
                 )
                 hits = rows.all()
                 best = max((float(rank) for _, rank in hits), default=0.0)
             else:
                 rows = await session.execute(
                     text(
-                        "SELECT chunk_id, rank FROM chunks_fts "
-                        "WHERE chunks_fts MATCH :expression ORDER BY rank LIMIT :limit"
+                        "SELECT chunks_fts.chunk_id, chunks_fts.rank FROM chunks_fts "
+                        "JOIN chunks ON chunks.id = chunks_fts.chunk_id "
+                        "WHERE chunks_fts MATCH :expression "
+                        "AND chunks.workspace_id = :workspace_id"
+                        f"{narrowing} "
+                        "ORDER BY chunks_fts.rank LIMIT :limit"
                     ),
                     {
                         "expression": " OR ".join(f'"{word}"' for word in words),
                         "limit": limit,
+                        **scope,
                     },
                 )
                 hits = rows.all()
@@ -385,16 +419,30 @@ class InMemoryKnowledgeStore:
             found.extend((chunk, document.title, document.source) for chunk in chunks)
         return found
 
-    async def matching(self, query_text: str, limit: int) -> dict[str, float]:
+    async def matching(
+        self,
+        query_text: str,
+        limit: int,
+        *,
+        workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
+        document_ids: frozenset[UUID] = frozenset(),
+    ) -> dict[str, float]:
         """Word overlap, because there is no index here and there is no pretending.
 
         Deliberately crude: this exists so a test and an in-memory container can
         exercise the *blend* without a file, and a second search implementation
         that claimed to be the real one would be a second thing to keep true.
+        It honours the scope, because a fake that answers a wider question than
+        the real one hides exactly the defect this parameter was added for.
         """
         words = {word.casefold() for word in findall(r"\w+", query_text) if len(word) > 1}
         scores: dict[str, float] = {}
-        for chunks in self._chunks.values():
+        for document_id, chunks in self._chunks.items():
+            document = self._documents.get(document_id)
+            if document is None or document.workspace_id != workspace_id:
+                continue
+            if document_ids and document_id not in document_ids:
+                continue
             for chunk in chunks:
                 content = chunk.content.casefold()
                 hits = sum(1 for word in words if word in content)

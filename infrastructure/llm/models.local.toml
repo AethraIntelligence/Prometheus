@@ -88,6 +88,15 @@ output_cost_per_1k_usd = 0.0
 quality = 0.5
 dimensions = 768
 
+# nomic-embed-text is trained asymmetrically: a question and the passage that
+# answers it are prefixed differently, and asking without the prefixes costs
+# several points of similarity on every comparison - a slightly worse answer
+# with nothing to attribute it to. A model that wants none (bge-m3) leaves
+# these out. Changing them re-indexes the workspace, because as far as anything
+# comparing vectors is concerned it is a different model.
+query_prefix = "search_query: "
+passage_prefix = "search_document: "
+
 [defaults]
 planning = "local-strong"
 execution = "local-strong"

@@ -12,6 +12,13 @@ it. That matters twice: `clone && run` keeps working with no model configured,
 and a retrieval that has quietly become lexical-only is visible rather than
 inferred from disappointing answers.
 
+**Both halves are scoped, and the lexical one is scoped by the index rather
+than afterwards.** The limit is the index's, so passages from another workspace
+do not just get discarded on the way back - they occupy the places the right
+ones needed. One workspace with forty matching passages made a single matching
+passage in another unfindable, and on a machine with no embedding model
+unfindable is the whole answer.
+
 **A vector written by another model is not compared.** The chunk states what
 embedded it, and a mismatch drops it out of the semantic half instead of
 producing a number from two things that mean different things (ADR 0016). The
@@ -73,7 +80,10 @@ class HybridRetriever:
             return []
 
         lexical = await self._index.matching(
-            query.text, max(query.limit * CANDIDATE_FACTOR, 20)
+            query.text,
+            max(query.limit * CANDIDATE_FACTOR, 20),
+            workspace_id=query.workspace_id,
+            document_ids=query.document_ids,
         )
         semantic, compared = await self._semantic(query, candidates)
 
@@ -116,16 +126,18 @@ class HybridRetriever:
         if self._embeddings is None or not self._embeddings.model:
             return {}, False
         try:
-            vectors = await self._embeddings.embed([query.text])
+            # `embed_query`, because a question is not a passage: models trained
+            # asymmetrically prefix the two differently, and one call for both
+            # is how that gets lost.
+            asked = await self._embeddings.embed_query(query.text)
         except Exception as error:
             # A retrieval that fell back to lexical is worth far more than a run
             # that failed because an embedding server was down, and the log line
             # is what tells somebody the answers got worse for a reason.
             log.warning("knowledge.embedding_failed", error=str(error))
             return {}, False
-        if not vectors:
+        if not asked:
             return {}, False
-        asked = vectors[0]
         model, dimension = self._embeddings.model, len(asked)
         scores: dict[str, float] = {}
         stale = compared = 0

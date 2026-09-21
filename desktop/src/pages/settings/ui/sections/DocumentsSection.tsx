@@ -8,8 +8,13 @@
 
 import { useState } from "react";
 
-import { DocumentCard, type Document } from "../../../../entities/document";
+import {
+  DocumentCard,
+  PendingDocumentCard,
+  type Document,
+} from "../../../../entities/document";
 import { AddDocumentForm, DocumentActions } from "../../../../features/manage-documents";
+import { DocumentSearch } from "../../../../features/search-documents";
 import { chooseFiles, useRuntime } from "../../../../shared/api";
 import { Modal, PlusIcon } from "../../../../shared/ui";
 import { useDocuments } from "../../model/useDocuments";
@@ -45,6 +50,17 @@ export function DocumentsSection() {
     }
   };
 
+  // A document is matched to its progress by id; a file still being read has
+  // none yet, and those are the rows drawn on their own above the list - in the
+  // order the runtime reports them, which is the order they were chosen.
+  const byDocument = new Map(
+    documents.indexing.filter((one) => one.document_id).map((one) => [one.document_id, one]),
+  );
+  const known = new Set(documents.documents.map((one) => one.id));
+  const pending = documents.indexing.filter(
+    (one) => !one.document_id || !known.has(one.document_id),
+  );
+
   return (
     <>
       <p className="lede">
@@ -72,23 +88,28 @@ export function DocumentsSection() {
                 type="button"
                 className="addbtn"
                 onClick={() => void addDocuments()}
-                disabled={!documents.ready}
+                disabled={!documents.ready || documents.busy}
               >
                 <PlusIcon />
-                New document
+                {documents.busy ? "Working…" : "New document"}
               </button>
             </div>
             <div className="card">
-              {documents.documents.length === 0 && documents.ready && (
-                <p className="card-empty">Nothing added yet.</p>
-              )}
+              {documents.documents.length === 0 &&
+                pending.length === 0 &&
+                documents.ready && <p className="card-empty">Nothing added yet.</p>}
+              {pending.map((one) => (
+                <PendingDocumentCard key={one.key} indexing={one} />
+              ))}
               {documents.documents.map((document: Document) => (
                 <DocumentCard
                   key={document.id}
                   document={document}
+                  indexing={byDocument.get(document.id)}
                   actions={
                     <DocumentActions
                       document={document}
+                      busy={byDocument.get(document.id)?.finished === false}
                       onUpdate={updateDocument}
                       onReindex={documents.reindex}
                       onRemove={documents.remove}
@@ -98,6 +119,11 @@ export function DocumentsSection() {
               ))}
             </div>
           </section>
+
+          {/* Under the list, because it answers a question about what is in it.
+              Offered only once there is something to ask about: an empty search
+              over an empty workspace teaches nothing. */}
+          {documents.documents.length > 0 && <DocumentSearch client={client} />}
 
           {adding && (
             <Modal

@@ -848,6 +848,18 @@ class PrometheusService:
         found = await self._d.knowledge.list(workspace_id=await self._here())
         return [views.document(item) for item in found]
 
+    def indexing_documents(self) -> list[dict[str, Any]]:
+        """What is being read or embedded at this moment.
+
+        Not awaited and not stored: indexing happens inside the request that
+        asked for it, so the surface waiting on that request has to learn this
+        from a second one. State rather than a stream, because a person who
+        opened the screen halfway through would have missed every event.
+        """
+        if self._d.knowledge is None:
+            return []
+        return [views.indexing(one) for one in self._d.knowledge.progress()]
+
     async def add_document(
         self, path: str, *, title: str = "", media_type: str = ""
     ) -> dict[str, Any]:

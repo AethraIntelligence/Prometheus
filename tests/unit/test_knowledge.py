@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from application.knowledge.service import KnowledgeService
 from domain.errors import PrometheusError
-from domain.knowledge.chunking import chunk
+from domain.knowledge.chunking import chunk, rejoin
 from domain.knowledge.models import DocumentStatus, KnowledgeQuery
 from domain.knowledge.ranking import blend, cosine, coverage, normalise
 from domain.workspace.models import WorkspaceId
@@ -55,6 +55,11 @@ class FakeEmbeddings:
             ]
             vectors.append(tuple(counts[: self._dimension] or [1.0]))
         return vectors
+
+    async def embed_query(self, text):
+        # No prefixes, so a question is embedded exactly as a passage is -
+        # which is the contract's own answer for a model that wants none.
+        return (await self.embed([text]))[0]
 
 
 class BrokenEmbeddings(FakeEmbeddings):
@@ -385,6 +390,53 @@ async def test_the_text_index_finds_a_passage_by_a_word_in_it(
     assert found and "Refunds" in found[0].title
 
 
+async def test_another_workspace_cannot_crowd_a_passage_out_of_the_text_index(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The index applies the limit, so the index has to apply the scope too.
+
+    Filtering the answer afterwards is not the same thing and cannot be made
+    into it: the passages of another workspace do not merely get discarded on
+    the way back, they take the places of the ones that should have come back.
+    Forty of them against a limit of twenty left this workspace's only matching
+    passage out of the answer entirely - and on a machine with no embedding
+    model, the lexical half is the whole of retrieval.
+    """
+    store = SqlKnowledgeStore(session_factory)
+    knowledge = KnowledgeService(store=store, extractors=Extractors(), embeddings=None)
+    for index in range(40):
+        await knowledge.add_text(
+            f"Delivery note number {index} about delivery.",
+            title=f"noise-{index}",
+            workspace_id=WorkspaceId("theirs"),
+        )
+    await knowledge.add_text(
+        "Delivery here takes five days.", title="Mine", workspace_id=WorkspaceId("mine")
+    )
+
+    hits = await store.matching("delivery", 20, workspace_id=WorkspaceId("mine"))
+    assert len(hits) == 1
+
+    found = await HybridRetriever(store).retrieve(
+        KnowledgeQuery(text="how long is delivery?", workspace_id=WorkspaceId("mine"))
+    )
+    assert [passage.title for passage in found] == ["Mine"]
+
+
+async def test_narrowing_to_a_document_narrows_the_text_index_too(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A query naming documents is answered from those documents, by both halves."""
+    store = SqlKnowledgeStore(session_factory)
+    knowledge = KnowledgeService(store=store, extractors=Extractors(), embeddings=None)
+    wanted = await knowledge.add_text("Delivery here takes five days.", title="Wanted")
+    await knowledge.add_text("Delivery elsewhere takes ten days.", title="Other")
+
+    hits = await store.matching("delivery", 20, document_ids=frozenset({wanted.id}))
+
+    assert len(hits) == 1
+
+
 class FixedEmbeddings:
     """Every text that mentions a word gets one direction, everything else another."""
 
@@ -403,6 +455,9 @@ class FixedEmbeddings:
         return [
             (1.0, 0.0) if self._word in text.casefold() else (0.3, 0.95) for text in texts
         ]
+
+    async def embed_query(self, text):
+        return (await self.embed([text]))[0]
 
 
 async def test_one_unrelated_document_is_not_returned_for_everything() -> None:
@@ -478,3 +533,254 @@ async def test_a_newer_version_of_the_file_replaces_the_document_in_place(tmp_pa
     assert updated.source == str(second)
     assert [c.content for c in await store.chunks_for(document.id)] == ["Delivery takes two days."]
     assert len(await store.list()) == 1
+
+
+# --- What is happening to it right now ----------------------------------------
+
+
+class Watcher:
+    """Implements `domain.knowledge.protocols.IndexingObserver`: keeps the lot."""
+
+    def __init__(self) -> None:
+        self.seen: list = []
+
+    def report(self, progress) -> None:
+        self.seen.append(progress)
+
+
+async def test_adding_a_file_reports_every_stage_it_passes_through(tmp_path: Path) -> None:
+    """A person waiting two minutes is told what is being waited for.
+
+    The stages are asserted in order because that order is the claim: reading
+    before cutting, cutting before embedding. A set of the stages seen would
+    pass for a service that reported them backwards.
+    """
+    watcher = Watcher()
+    knowledge = KnowledgeService(
+        store=InMemoryKnowledgeStore(),
+        extractors=Extractors(),
+        embeddings=FakeEmbeddings(),
+        observer=watcher,
+    )
+    path = tmp_path / "policy.md"
+    path.write_text("Delivery is within five days.\n\n" * 20, encoding="utf-8")
+
+    await knowledge.add_file(path)
+
+    stages = [one.stage.value for one in watcher.seen]
+    assert stages[0] == "READING"
+    assert "CHUNKING" in stages
+    assert "EMBEDDING" in stages
+    assert stages[-1] == "DONE"
+    # The path is what identifies it from the first report, before there is a
+    # document - that is what lets a row appear the moment the file is chosen.
+    assert watcher.seen[0].key == str(path)
+    assert watcher.seen[0].document_id is None
+    assert watcher.seen[-1].document_id is not None
+
+
+async def test_embedding_reports_how_many_passages_are_done(tmp_path: Path) -> None:
+    """The fraction is real: it is passages embedded over passages there are."""
+    watcher = Watcher()
+    knowledge = KnowledgeService(
+        store=InMemoryKnowledgeStore(),
+        extractors=Extractors(),
+        embeddings=FakeEmbeddings(),
+        observer=watcher,
+    )
+    path = tmp_path / "long.md"
+    path.write_text("A paragraph about deliveries and refunds.\n\n" * 200, encoding="utf-8")
+
+    await knowledge.add_file(path)
+
+    embedding = [one for one in watcher.seen if one.stage.value == "EMBEDDING"]
+    assert embedding, "a document of 200 paragraphs is more than one batch"
+    assert all(one.total > 0 for one in embedding)
+    assert [one.done for one in embedding] == sorted(one.done for one in embedding)
+    assert watcher.seen[-1].fraction == 1.0
+
+
+async def test_a_file_that_cannot_be_read_says_so_rather_than_going_quiet(
+    tmp_path: Path,
+) -> None:
+    """The failure is the last word about it, not the absence of one.
+
+    The window shows what the monitor holds; a document that raised and left
+    nothing behind would leave a bar turning forever.
+    """
+    knowledge = service()
+    path = tmp_path / "empty.md"
+    path.write_text("   ", encoding="utf-8")
+
+    with pytest.raises(PrometheusError):
+        await knowledge.add_file(path)
+
+    last = knowledge.progress()[-1]
+    assert last.stage.value == "FAILED"
+    assert last.finished
+    assert last.error
+
+
+async def test_what_finished_is_dropped_once_it_is_old(tmp_path: Path) -> None:
+    """Kept for a moment so a poll can see it, then gone.
+
+    Dropped at the instant it ended, a failure would be invisible on the one
+    screen built to show it: the poll that learns of it is the one after the
+    last one that saw it working.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    knowledge = service()
+    path = tmp_path / "note.md"
+    path.write_text("Deliveries are quick.", encoding="utf-8")
+    await knowledge.add_file(path)
+
+    assert knowledge.progress(), "just finished is still reported"
+    monitor = knowledge._monitor
+    assert monitor.active(now=datetime.now(UTC) + timedelta(minutes=5)) == []
+
+
+# --- Putting it back together -------------------------------------------------
+
+
+def test_rejoining_passages_gives_back_the_text_they_were_cut_from() -> None:
+    """`rejoin` is the inverse of the overlap rule, and is tested as one."""
+    text = "\n\n".join(
+        f"Paragraph {number}: delivery, refunds, and what applies to each. " * 3
+        for number in range(20)
+    )
+    passages = chunk(text)
+
+    assert len(passages) > 1, "the document has to be cut for this to mean anything"
+    # Compared word for word: cutting strips the whitespace it cut on, and a
+    # test that demanded the blank space back would be testing the wrong claim.
+    # What must survive is the text, and each sentence exactly once.
+    assert " ".join(rejoin(passages).split()) == " ".join(text.split())
+
+
+def test_passages_that_share_nothing_are_joined_as_they_are() -> None:
+    """A guess that removed text would be worse than a repeated sentence."""
+    assert rejoin(["First.", "Second."]) == "First.\n\nSecond."
+    assert rejoin([]) == ""
+
+
+async def test_re_indexing_a_document_does_not_grow_it() -> None:
+    """What re-indexing reads back is the document, not the document plus seams.
+
+    The passages overlap on purpose, so joining them plainly writes every
+    overlap into the text again - and re-indexing is not a rare act a person
+    performs deliberately: changing the embedding model does it to every
+    document on the machine. Four rounds made one document twice its length,
+    with the sentences at each boundary repeated, and a model was quoted them.
+    """
+    store = InMemoryKnowledgeStore()
+    knowledge = KnowledgeService(store=store, extractors=Extractors(), embeddings=None)
+    text = "\n\n".join(
+        f"Paragraph {number}: delivery, refunds, and what applies to each. " * 3
+        for number in range(20)
+    )
+    document = await knowledge.add_text(text, title="Policy")
+    first = [one.content for one in await store.chunks_for(document.id)]
+
+    for _ in range(4):
+        await knowledge.reindex(document.id)
+
+    assert [one.content for one in await store.chunks_for(document.id)] == first
+
+
+# --- A question is not a passage ----------------------------------------------
+
+
+class Recorder:
+    """An embedding server that answers, and keeps what it was sent."""
+
+    def __init__(self) -> None:
+        self.sent: list[list[str]] = []
+
+    async def post(self, url, json=None, headers=None):
+        import httpx
+
+        self.sent.append(list(json["input"]))
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"index": index, "embedding": [1.0, 0.0]}
+                    for index, _ in enumerate(json["input"])
+                ]
+            },
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_a_question_and_a_passage_are_prefixed_the_way_the_model_wants() -> None:
+    """Asymmetric models want them prefixed differently, and asking one way
+    for both costs similarity on every comparison with nothing to blame."""
+    from infrastructure.llm.embeddings import OpenAICompatibleEmbeddings
+
+    server = Recorder()
+    embeddings = OpenAICompatibleEmbeddings(
+        base_url="http://localhost:11434/v1",
+        model="nomic-embed-text",
+        query_prefix="search_query: ",
+        passage_prefix="search_document: ",
+        client=server,
+    )
+
+    await embeddings.embed(["Delivery takes five days."])
+    await embeddings.embed_query("how long does delivery take?")
+
+    assert server.sent[0] == ["search_document: Delivery takes five days."]
+    assert server.sent[1] == ["search_query: how long does delivery take?"]
+
+
+async def test_turning_prefixes_on_makes_the_stored_vectors_stale() -> None:
+    """A prefix changes every vector, so it changes who produced them.
+
+    Without this the stored vectors would go on being compared with new
+    queries on the strength of a matching name - the silent mismatch ADR 0016
+    exists to prevent - and nothing would ask for a re-index.
+    """
+    from infrastructure.llm.embeddings import OpenAICompatibleEmbeddings
+
+    plain = OpenAICompatibleEmbeddings(
+        base_url="http://localhost:11434/v1", model="nomic-embed-text", client=Recorder()
+    )
+    prefixed = OpenAICompatibleEmbeddings(
+        base_url="http://localhost:11434/v1",
+        model="nomic-embed-text",
+        query_prefix="search_query: ",
+        passage_prefix="search_document: ",
+        client=Recorder(),
+    )
+
+    # Plain is the name itself, so a machine that already indexed a workspace
+    # is not told to do it again for nothing.
+    assert plain.model == "nomic-embed-text"
+    assert prefixed.model != plain.model
+    assert "nomic-embed-text" in prefixed.model
+
+
+async def test_a_document_is_re_indexed_when_the_prefix_scheme_changes() -> None:
+    """The whole point of saying it on the chunk: `reindex_stale` acts on it."""
+
+    class Plain(FakeEmbeddings):
+        pass
+
+    store = InMemoryKnowledgeStore()
+    knowledge = KnowledgeService(
+        store=store, extractors=Extractors(), embeddings=Plain("nomic-embed-text")
+    )
+    document = await knowledge.add_text("Delivery takes five days.", title="Delivery")
+
+    later = KnowledgeService(
+        store=store,
+        extractors=Extractors(),
+        embeddings=FakeEmbeddings("nomic-embed-text [search_query: |search_document: ]"),
+    )
+    assert await later.reindex_stale() == 1
+
+    chunks = await store.chunks_for(document.id)
+    assert chunks[0].embedding_model.startswith("nomic-embed-text [")

@@ -32,7 +32,7 @@ from domain.employees.definition import EmployeeDefinition
 from domain.integrations.catalog import FieldKind, Plugin
 from domain.integrations.models import Integration
 from domain.integrations.specs import spec_for
-from domain.knowledge.models import Document, Passage
+from domain.knowledge.models import Document, IndexingProgress, Passage
 from domain.llm.catalog import ModelEntry
 from domain.llm.telemetry import LLMCallRecord
 from domain.memory.models import MemoryItem
@@ -1004,6 +1004,29 @@ def document(item: Document) -> dict[str, Any]:
         "error": item.error,
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def indexing(item: IndexingProgress) -> dict[str, Any]:
+    """One document being read or embedded, as something to draw.
+
+    `fraction` is computed here rather than by each interface, for the reason
+    `searchable` is: how far along a document is has one answer, and a second
+    copy of the arithmetic in a window is a second place it can be wrong. Zero
+    means there is no fraction to show yet - a bar that moves without claiming a
+    number - and never that no progress has been made.
+    """
+    return {
+        "key": item.key,
+        "document_id": str(item.document_id) if item.document_id else "",
+        "title": item.title,
+        "stage": item.stage.value,
+        "done": item.done,
+        "total": item.total,
+        "fraction": round(item.fraction, 4),
+        "finished": item.finished,
+        "error": item.error,
+        "at": item.at.isoformat(),
     }
 
 

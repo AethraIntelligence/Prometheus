@@ -161,6 +161,33 @@ async def test_a_document_is_not_offered_as_something_the_employee_remembers() -
     assert not any("Returns run" in line for line in assembled.recollections())
 
 
+async def test_a_task_searches_on_its_goal_and_not_on_what_it_was_handed() -> None:
+    """The question is the goal. What came with it is already an answer.
+
+    `SharedContext.facts` carries whole passages the manager retrieved and
+    framed, so searching on them searches on this search's own output: the
+    question's embedding is averaged with a page of text nobody asked about,
+    and the coverage floor - a share of the query's words - stops being
+    reachable, which throws away every passage found on its words alone.
+    """
+    retriever = OnePassage("Express delivery arrives the next working day.")
+    passage = (
+        "<<<EXTERNAL_CONTENT origin=Some report>>>\n"
+        "Quarterly revenue rose in every region except the north, where a "
+        "warehouse move delayed dispatches for three weeks.\n"
+        "<<<END_EXTERNAL_CONTENT>>>"
+    )
+    task = Task.create("How fast is express delivery?")
+
+    await ContextAssembler(None, retriever=retriever).assemble(
+        task,
+        definition(),
+        SharedContext(facts=(passage, "The user prefers Markdown")),
+    )
+
+    assert retriever.asked == [task.goal]
+
+
 async def test_a_retrieval_that_fails_costs_the_run_its_citations_and_nothing_else() -> None:
     class Broken:
         async def retrieve(self, query):

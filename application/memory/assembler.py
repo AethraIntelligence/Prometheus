@@ -149,7 +149,16 @@ class ContextAssembler:
         try:
             passages = await self._retriever.retrieve(
                 KnowledgeQuery(
-                    text=" ".join((task.goal, *context.facts)),
+                    # The goal, and not the goal plus everything passed in. The
+                    # facts already contain whole passages the manager retrieved
+                    # and framed, so searching on them is searching on this
+                    # search's own output: the question's embedding is averaged
+                    # with a page of text it did not ask about, and the coverage
+                    # floor - a share of the *query's* words - becomes
+                    # unreachable, so a passage found on its words alone is
+                    # thrown away. Measured on a realistic task: 0.18 against a
+                    # floor of 0.5, where the goal alone scored 0.25.
+                    text=task.goal,
                     workspace_id=task.workspace_id,
                     limit=self._knowledge_limit,
                 )

@@ -28,6 +28,7 @@ from uuid import UUID
 from domain.knowledge.models import (
     Chunk,
     Document,
+    IndexingProgress,
     KnowledgeQuery,
     Passage,
     Vector,
@@ -84,8 +85,22 @@ class PassageIndex(Protocol):
         """Every passage in the workspace, with its document's title and source."""
         ...
 
-    async def matching(self, query_text: str, limit: int) -> dict[str, float]:
-        """What the text index matched, as a fraction of its own best hit."""
+    async def matching(
+        self,
+        query_text: str,
+        limit: int,
+        *,
+        workspace_id: WorkspaceId = DEFAULT_WORKSPACE_ID,
+        document_ids: frozenset[UUID] = frozenset(),
+    ) -> dict[str, float]:
+        """What the text index matched, as a fraction of its own best hit.
+
+        Scoped exactly as `candidates` is, and for a reason a caller cannot fix
+        afterwards: the limit is applied by the index, so passages belonging to
+        another workspace do not merely get dropped later - they take the places
+        of the ones that should have come back. A machine with two workspaces
+        searched the whole of itself and answered from the wrong part of it.
+        """
         ...
 
 
@@ -96,13 +111,46 @@ class Retriever(Protocol):
 class EmbeddingProvider(Protocol):
     @property
     def model(self) -> str:
-        """Which model produced these vectors. Written onto every chunk."""
+        """What produced these vectors. Written onto every chunk.
+
+        Not only the model's name: two vectors are comparable when the same
+        model produced them *the same way*, and a model asked with a prefix
+        answers differently from the same model asked without one. So a
+        provider that puts something in front of what it embeds says so here,
+        and `comparable_with` - and therefore `reindex_stale` - treats a change
+        of scheme as what it is, a change of producer.
+        """
         ...
 
     @property
     def dimension(self) -> int: ...
 
-    async def embed(self, texts: Sequence[str]) -> list[Vector]: ...
+    async def embed(self, texts: Sequence[str]) -> list[Vector]:
+        """Vectors for passages being stored."""
+        ...
+
+    async def embed_query(self, text: str) -> Vector:
+        """The vector for a question, which is not the same call.
+
+        Several embedding models are trained asymmetrically - a question and
+        the passage answering it are prefixed differently - and one call for
+        both halves is how that gets lost. A model wanting no prefixes answers
+        this identically to `embed([text])[0]`, which is what makes it safe to
+        route every query through it.
+        """
+        ...
+
+
+class IndexingObserver(Protocol):
+    """Told where a document has got to, for whoever is waiting on it.
+
+    One method and no return: an observer is expendable and the work is not,
+    exactly as a `ProgressSink` is. It must not raise and must not block - a
+    document that failed to index because somebody was watching it would be the
+    worst kind of defect to find.
+    """
+
+    def report(self, progress: IndexingProgress) -> None: ...
 
 
 class TextExtractor(Protocol):
